@@ -4,7 +4,7 @@ import { logger } from "../config/logger.js";
 import { ApiError } from "../utils/api-error.js";
 import { ZodError } from "zod";
 
-export const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
+export const errorHandler: ErrorRequestHandler = (error, request, response, _next) => {
   if (
     typeof error === "object" &&
     error !== null &&
@@ -45,8 +45,19 @@ export const errorHandler: ErrorRequestHandler = (error, _request, response, _ne
     return;
   }
 
-  logger.error({ err: error }, "Unhandled request error");
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
+    response.status(404).json({
+      error: { code: "NOT_FOUND", message: "The requested record was not found." },
+    });
+    return;
+  }
+
+  logger.error({ err: error, requestId: request.id }, "Unhandled request error");
   response.status(500).json({
-    error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred." },
+    error: {
+      code: "INTERNAL_ERROR",
+      message: "An unexpected error occurred.",
+      ...(typeof request.id === "string" ? { requestId: request.id } : {}),
+    },
   });
 };

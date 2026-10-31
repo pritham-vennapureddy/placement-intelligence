@@ -2,18 +2,20 @@
   "name": "placement-intelligence",
   "private": true,
   "workspaces": [
+    "shared",
     "backend",
     "frontend"
   ],
   "scripts": {
-    "dev": "concurrently -k \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\"",
-    "build": "npm run build --workspace backend && npm run build --workspace frontend",
-    "test": "npm run test --workspace backend",
+    "dev": "npm run build --workspace shared && concurrently -k -n shared,api,web \"npm run dev --workspace shared\" \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\"",
+    "build": "npm run build --workspace shared && npm run build --workspace backend && npm run build --workspace frontend",
+    "test": "npm run build --workspace shared && npm run test --workspace backend",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "typecheck": "npm run build --workspace shared && tsc --noEmit -p backend/tsconfig.json && tsc --noEmit -p frontend/tsconfig.json"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

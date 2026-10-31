@@ -49,6 +49,7 @@ model User {
   ledTeam               Team?           @relation("TeamLead")
   teamsCreated          Team[]           @relation("TeamCreator")
   sheetConnections      SheetConnection[] @relation("SheetConnectionCreator")
+  idempotencyKeys       IdempotencyKey[]
 }
 
 model Role {
@@ -133,19 +134,32 @@ model RefreshToken {
 }
 
 model Company {
-  id            String          @id @default(uuid()) @db.Uuid
-  name          String
-  status        CompanyStatus   @default(ACTIVE)
-  notes         String?
-  createdById   String          @db.Uuid
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  createdBy     User            @relation("CompanyCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  jobRequests   JobRequest[]
-  assignments   PSMAssignment[]
+  id               String        @id @default(uuid()) @db.Uuid
+  // Entered manually for now; filled from HubSpot later. Name is not a key.
+  hubspotCompanyId String?       @unique
+  name             String
+  status           CompanyStatus @default(ACTIVE)
+  notes            String?
+  website          String?
+  industry         String?
+  location         String?
+  archivedAt       DateTime?
+  createdById      String        @db.Uuid
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  createdBy        User          @relation("CompanyCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  jobRequests      JobRequest[]
 
   @@index([name])
   @@index([status, createdAt])
+}
+
+model Skill {
+  id             String            @id @default(uuid()) @db.Uuid
+  name           String
+  normalizedName String            @unique
+  createdAt      DateTime          @default(now())
+  jobRequests    JobRequestSkill[]
 }
 
 model Product {
@@ -172,6 +186,7 @@ model JobRequest {
   requestDate             DateTime          @db.Date
   deadline                DateTime?         @db.Date
   status                  JobRequestStatus  @default(DRAFT)
+  archivedAt              DateTime?
   createdById             String            @db.Uuid
   createdAt               DateTime          @default(now())
   updatedAt               DateTime          @updatedAt
@@ -180,31 +195,41 @@ model JobRequest {
   psmOwner                User?             @relation("JobRequestOwner", fields: [psmOwnerId], references: [id], onDelete: SetNull)
   createdBy               User              @relation("JobRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
   assignments             PSMAssignment[]
+  skills                  JobRequestSkill[]
 
   @@index([companyId, status])
   @@index([productId, status])
   @@index([psmOwnerId, status])
   @@index([deadline, status])
-  @@unique([id, companyId])
 }
 
+model JobRequestSkill {
+  jobRequestId String     @db.Uuid
+  skillId      String     @db.Uuid
+  isMandatory  Boolean    @default(true)
+  jobRequest   JobRequest @relation(fields: [jobRequestId], references: [id], onDelete: Cascade)
+  skill        Skill      @relation(fields: [skillId], references: [id], onDelete: Restrict)
+
+  @@id([jobRequestId, skillId])
+  @@index([skillId])
+}
+
+// Ownership is per job request. One row per (re)assignment; `endedAt` closes the
+// previous one. The migration adds a partial unique index allowing one open row per job.
 model PSMAssignment {
-  id           String      @id @default(uuid()) @db.Uuid
-  companyId    String      @db.Uuid
-  jobRequestId String?     @db.Uuid
-  assignedToId String      @db.Uuid
-  assignedById String?     @db.Uuid
-  assignedAt   DateTime    @default(now())
+  id           String     @id @default(uuid()) @db.Uuid
+  jobRequestId String     @db.Uuid
+  assignedToId String     @db.Uuid
+  assignedById String?    @db.Uuid
+  assignedAt   DateTime   @default(now())
   endedAt      DateTime?
   notes        String?
-  company      Company     @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  jobRequest   JobRequest? @relation(fields: [jobRequestId, companyId], references: [id, companyId], onDelete: Restrict)
-  assignedTo   User        @relation("AssignmentOwner", fields: [assignedToId], references: [id], onDelete: Restrict)
-  assignedBy   User?       @relation("AssignmentCreator", fields: [assignedById], references: [id], onDelete: SetNull)
+  jobRequest   JobRequest @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  assignedTo   User       @relation("AssignmentOwner", fields: [assignedToId], references: [id], onDelete: Restrict)
+  assignedBy   User?      @relation("AssignmentCreator", fields: [assignedById], references: [id], onDelete: SetNull)
 
-  @@index([companyId, endedAt])
-  @@index([jobRequestId, companyId, endedAt])
-  @@index([assignedToId, assignedAt])
+  @@index([jobRequestId, endedAt])
+  @@index([assignedToId, endedAt])
 }
 
 model AuditLog {
@@ -214,9 +239,29 @@ model AuditLog {
   entityType String
   entityId   String
   metadata   Json?
+  requestId  String?
+  ipAddress  String?
   createdAt  DateTime @default(now())
   actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([entityType, entityId, createdAt])
   @@index([actorId, createdAt])
+}
+
+// Duplicate-request protection for mutating calls that send an Idempotency-Key header.
+model IdempotencyKey {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @db.Uuid
+  key            String
+  method         String
+  path           String
+  requestHash    String
+  responseStatus Int?
+  responseBody   Json?
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([expiresAt])
 }

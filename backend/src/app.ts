@@ -1,12 +1,15 @@
+import { randomUUID } from "node:crypto";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { pinoHttp } from "pino-http";
+import { REQUEST_ID_HEADER } from "@placement/shared";
 import { env } from "./config/env.js";
 import { logger } from "./config/logger.js";
 import { errorHandler } from "./middleware/error-handler.js";
+import { sendData } from "./utils/http.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes.js";
 import { neonRouter } from "./modules/neon/neon.routes.js";
@@ -21,8 +24,18 @@ app.use(helmet());
 app.use(cors({
   origin: env.FRONTEND_ORIGIN,
   credentials: true,
+  exposedHeaders: [REQUEST_ID_HEADER, "Idempotent-Replayed"],
 }));
-app.use(pinoHttp({ logger }));
+app.use(pinoHttp({
+  logger,
+  // Accept a well-formed upstream request ID, otherwise mint one; echo it back.
+  genReqId: (request, response) => {
+    const incoming = request.headers[REQUEST_ID_HEADER.toLowerCase()];
+    const id = typeof incoming === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(incoming) ? incoming : randomUUID();
+    response.setHeader(REQUEST_ID_HEADER, id);
+    return id;
+  },
+}));
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 app.use("/api", rateLimit({
@@ -33,7 +46,7 @@ app.use("/api", rateLimit({
 }));
 
 app.get("/api/health", (_request, response) => {
-  response.json({ data: { status: "ok" } });
+  sendData(response, { status: "ok" });
 });
 app.use("/api/auth", authRouter);
 app.use("/api/dashboard", dashboardRouter);
