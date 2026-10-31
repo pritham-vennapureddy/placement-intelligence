@@ -1,6 +1,8 @@
+import { IDEMPOTENCY_HEADER, type ApiErrorBody } from "@placement/shared";
 import type {
-  ApiErrorResponse,
   AuthUser,
+  CatalogOption,
+  DashboardFilters,
   DashboardSummary,
   SheetConnection,
   SheetHeader,
@@ -21,10 +23,16 @@ export class ApiError extends Error {
     message: string,
     public readonly status: number,
     public readonly code: string,
+    public readonly requestId?: string,
   ) {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/** A fresh key per user action; reuse it only when retrying that same action. */
+export function newIdempotencyKey(): string {
+  return crypto.randomUUID();
 }
 
 export function setAccessToken(token: string | null): void {
@@ -35,7 +43,7 @@ export function setSessionExpiredHandler(handler: () => void): void {
   onSessionExpired = handler;
 }
 
-function isApiErrorResponse(value: unknown): value is ApiErrorResponse {
+function isApiErrorResponse(value: unknown): value is ApiErrorBody {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -52,7 +60,7 @@ function isApiErrorResponse(value: unknown): value is ApiErrorResponse {
 async function readError(response: Response): Promise<ApiError> {
   const body: unknown = await response.json().catch(() => null);
   if (isApiErrorResponse(body)) {
-    return new ApiError(body.error.message, response.status, body.error.code);
+    return new ApiError(body.error.message, response.status, body.error.code, body.error.requestId);
   }
   return new ApiError("The request could not be completed.", response.status, "REQUEST_FAILED");
 }
@@ -87,12 +95,18 @@ async function refreshAccessToken(): Promise<boolean> {
   return refreshInFlight;
 }
 
+type RequestOptions = RequestInit & { idempotencyKey?: string };
+
 async function request<T>(
   path: string,
-  init: RequestInit = {},
+  options: RequestOptions = {},
   retryAfterRefresh = true,
 ): Promise<T> {
+  const { idempotencyKey, ...init } = options;
   const headers = new Headers(init.headers);
+  if (idempotencyKey) {
+    headers.set(IDEMPOTENCY_HEADER, idempotencyKey);
+  }
   if (init.body && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
@@ -109,7 +123,7 @@ async function request<T>(
   if (response.status === 401 && retryAfterRefresh && path !== "/auth/login") {
     const refreshed = await refreshAccessToken();
     if (refreshed) {
-      return request<T>(path, init, false);
+      return request<T>(path, options, false);
     }
     onSessionExpired();
   }
@@ -164,10 +178,29 @@ export const authApi = {
   },
 };
 
+function toQueryString(params: Record<string, string | undefined>): string {
+  const search = new URLSearchParams(
+    Object.entries(params).filter((entry): entry is [string, string] => Boolean(entry[1])),
+  ).toString();
+  return search ? `?${search}` : "";
+}
+
 export const dashboardApi = {
-  async getSummary(): Promise<DashboardSummary> {
-    const response = await request<{ data: DashboardSummary }>("/dashboard/summary");
+  async getSummary(filters: DashboardFilters = {}): Promise<DashboardSummary> {
+    const response = await request<{ data: DashboardSummary }>(`/dashboard/summary${toQueryString({ ...filters })}`);
     return response.data;
+  },
+};
+
+export const catalogApi = {
+  async products(): Promise<CatalogOption[]> {
+    const response = await request<{ data: { products: CatalogOption[] } }>("/catalog/products");
+    return response.data.products;
+  },
+
+  async skills(): Promise<(CatalogOption & { normalizedName: string })[]> {
+    const response = await request<{ data: { skills: (CatalogOption & { normalizedName: string })[] } }>("/catalog/skills");
+    return response.data.skills;
   },
 };
 
@@ -182,10 +215,11 @@ export const teamsApi = {
     return response.data.users;
   },
 
-  async create(name: string): Promise<TeamRecord> {
+  async create(name: string, idempotencyKey = newIdempotencyKey()): Promise<TeamRecord> {
     const response = await request<{ data: { team: TeamRecord } }>("/teams", {
       method: "POST",
       body: JSON.stringify({ name }),
+      idempotencyKey,
     });
     return response.data.team;
   },
@@ -196,8 +230,8 @@ export const teamsApi = {
     password: string;
     role: "MANAGER" | "PSM";
     teamId?: string;
-  }): Promise<void> {
-    await request("/teams/users", { method: "POST", body: JSON.stringify(input) });
+  }, idempotencyKey = newIdempotencyKey()): Promise<void> {
+    await request("/teams/users", { method: "POST", body: JSON.stringify(input), idempotencyKey });
   },
 
   async updateMembers(teamId: string, input: { teamLeadId: string | null; psmIds: string[] }): Promise<TeamRecord> {
@@ -215,13 +249,14 @@ export const sheetsApi = {
     return response.data;
   },
 
-  async connect(input: { url: string; sourceType: string; teamId?: string }): Promise<{
+  async connect(input: { url: string; sourceType: string; teamId?: string }, idempotencyKey = newIdempotencyKey()): Promise<{
     connection: SheetConnection;
     tabs: SheetTab[];
   }> {
     const response = await request<{ data: { connection: SheetConnection; tabs: SheetTab[] } }>("/sheets", {
       method: "POST",
       body: JSON.stringify(input),
+      idempotencyKey,
     });
     return response.data;
   },

@@ -284,6 +284,7 @@ model User {
   rsaAssessments        RSAAssessment[]                  @relation("RSAAssessor")
   homeworkAssigned      HomeworkAssignment[]             @relation("HomeworkAssigner")
   mentorFeedback        MentorFeedback[]                 @relation("MentorFeedbackAuthor")
+  idempotencyKeys       IdempotencyKey[]
 }
 
 model Role {
@@ -1047,4 +1048,22 @@ model AuditLog {
 
   @@index([entityType, entityId, createdAt])
   @@index([actorId, createdAt])
+}
+
+// Duplicate-request protection for mutating calls that send an Idempotency-Key header.
+model IdempotencyKey {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @db.Uuid
+  key            String
+  method         String
+  path           String
+  requestHash    String
+  responseStatus Int?
+  responseBody   Json?
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, key])
+  @@index([expiresAt])
 }

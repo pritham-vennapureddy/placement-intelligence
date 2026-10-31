@@ -1,20 +1,17 @@
 import { prisma } from "../../db.js";
-
-type JobRequestFilter = { psmOwnerId?: { in: string[] } };
+import type { Prisma } from "../../generated/prisma/client.js";
 
 export const dashboardRepository = {
-  /** Companies with at least one job request matching the filter (all companies when unfiltered). */
-  countCompanies(filter: JobRequestFilter) {
-    return prisma.company.count({
-      where: filter.psmOwnerId ? { jobRequests: { some: filter } } : {},
-    });
+  /** Companies with at least one matching job request; every company when `filter` is null. */
+  countCompanies(filter: Prisma.JobRequestWhereInput | null) {
+    return prisma.company.count({ where: filter ? { jobRequests: { some: filter } } : {} });
   },
 
-  countOpenJobRequests(filter: JobRequestFilter) {
+  countOpenJobRequests(filter: Prisma.JobRequestWhereInput) {
     return prisma.jobRequest.count({ where: { ...filter, status: "OPEN" } });
   },
 
-  async sumOpenPositions(filter: JobRequestFilter): Promise<number> {
+  async sumOpenPositions(filter: Prisma.JobRequestWhereInput): Promise<number> {
     const result = await prisma.jobRequest.aggregate({
       where: { ...filter, status: "OPEN" },
       _sum: { openings: true },
@@ -32,7 +29,7 @@ export const dashboardRepository = {
     });
   },
 
-  listCompaniesWithJobRequests(filter: JobRequestFilter) {
+  listCompaniesWithJobRequests(filter: Prisma.JobRequestWhereInput) {
     return prisma.company.findMany({
       where: { jobRequests: { some: filter } },
       select: {

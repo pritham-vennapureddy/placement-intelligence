@@ -92,8 +92,8 @@ export function TeamsPage() {
 
   const teamsQuery = useQuery({ queryKey: ["teams"], queryFn: teamsApi.list });
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["teams"] });
-  const createTeam = useMutation({ mutationFn: teamsApi.create, onSuccess: refresh });
-  const createUser = useMutation({ mutationFn: teamsApi.createUser, onSuccess: refresh });
+  const createTeam = useMutation({ mutationFn: (name: string) => teamsApi.create(name), onSuccess: refresh });
+  const createUser = useMutation({ mutationFn: (input: Parameters<typeof teamsApi.createUser>[0]) => teamsApi.createUser(input), onSuccess: refresh });
   const saveTeam = useMutation({
     mutationFn: ({ team, teamLeadId, psmIds }: { team: TeamRecord; teamLeadId: string | null; psmIds: string[] }) =>
       teamsApi.updateMembers(team.id, { teamLeadId, psmIds }),

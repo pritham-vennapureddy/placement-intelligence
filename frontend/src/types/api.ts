@@ -87,10 +87,14 @@ export interface SheetSetup {
   googleServiceAccountEmail: string | null;
 }
 
-export interface ApiErrorResponse {
-  error: {
-    code: string;
-    message: string;
-    details?: { path: string; message: string }[];
-  };
+export interface DashboardFilters {
+  from?: string;
+  to?: string;
+  productId?: string;
+  skill?: string;
+}
+
+export interface CatalogOption {
+  id: string;
+  name: string;
 }

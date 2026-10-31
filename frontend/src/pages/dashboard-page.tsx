@@ -23,6 +23,8 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { useAuth } from "../contexts/auth-context";
+import { FilterBar } from "../components/filter-bar";
+import { useDashboardFilters } from "../hooks/use-dashboard-filters";
 import { dashboardApi } from "../services/api";
 
 const numberFormat = new Intl.NumberFormat("en-IN");
@@ -53,7 +55,6 @@ const pipeline = [
 
 const pageDetails: Record<string, { title: string; subtitle: string }> = {
   "/": { title: "Placement overview", subtitle: "A clear view of placement outcomes, company pipelines and team activity." },
-  "/companies": { title: "Company pipeline", subtitle: "Track applications, interview stages and outcomes across every employer." },
   "/assessed-pool": { title: "Assessed candidate pool", subtitle: "Keep assessed candidates moving with focused, timely PSM follow-up." },
   "/sheets": { title: "Spreadsheet connections", subtitle: "Set up the source sheets that will keep your placement data in sync." },
   "/psm-workspace": { title: "My PSM workspace", subtitle: "Your owned companies, candidate actions and upcoming placement priorities." },
@@ -102,7 +103,8 @@ function PreviewLabel() {
 }
 
 function WorkspaceMetrics() {
-  const summary = useQuery({ queryKey: ["dashboard", "summary"], queryFn: dashboardApi.getSummary });
+  const { filters } = useDashboardFilters();
+  const summary = useQuery({ queryKey: ["dashboard", "summary", filters], queryFn: () => dashboardApi.getSummary(filters) });
   const metrics = [
     { label: "Companies", value: summary.data?.totalCompanies, icon: Building2, color: "bg-indigo-50 text-indigo-600" },
     { label: "Open job requests", value: summary.data?.activeJobRequests, icon: BriefcaseBusiness, color: "bg-sky-50 text-sky-600" },
@@ -268,61 +270,6 @@ function Overview({ isAdmin, onSelectCompany }: { isAdmin: boolean; onSelectComp
   );
 }
 
-function CompaniesPage({ selectedCompany, onSelect }: { selectedCompany: string | null; onSelect: (name: string | null) => void }) {
-  const [query, setQuery] = useState("");
-  const filteredCompanies = companies.filter((company) => `${company.name} ${company.product} ${company.owner}`.toLowerCase().includes(query.toLowerCase()));
-  const company = companies.find((item) => item.name === selectedCompany);
-
-  if (company) {
-    const stages = [
-      ["Applied", company.applied, "bg-indigo-500"],
-      ["Resume shortlisted", company.shortlisted, "bg-violet-500"],
-      ["Screened", company.interviews + 5, "bg-sky-500"],
-      ["Interviewing", company.interviews, "bg-teal-500"],
-      ["Selected", company.placed, "bg-emerald-500"],
-      ["Rejected", company.rejected, "bg-rose-400"],
-    ] as const;
-    return (
-      <div className="space-y-5">
-        <button onClick={() => onSelect(null)} className="text-sm font-semibold text-indigo-600 hover:text-indigo-700">← All companies</button>
-        <Card><CardContent className="p-5 md:p-6">
-          <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-            <div className="flex items-center gap-4"><span className={`flex h-14 w-14 items-center justify-center rounded-2xl text-xl font-bold ${company.tone}`}>{company.initials}</span><div><h2 className="text-xl font-semibold text-slate-900">{company.name}</h2><p className="mt-1 text-sm text-slate-500">{company.product} · PSM owner: {company.owner}</p></div></div>
-            <PreviewLabel />
-          </div>
-          <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[["Applied", company.applied], ["Interviewing", company.interviews], ["Rejected", company.rejected], ["Placed", company.placed]].map(([label, count]) => <div key={label} className="rounded-xl bg-slate-50 p-3"><p className="text-xl font-semibold text-slate-900">{count}</p><p className="mt-1 text-xs text-slate-500">{label}</p></div>)}
-          </div>
-        </CardContent></Card>
-        <Card><CardContent className="p-5 md:p-6">
-          <CardHeader className="mb-5"><div><CardTitle>Hiring stages</CardTitle><p className="mt-1 text-xs text-slate-400">Candidate outcomes across this company&apos;s process</p></div></CardHeader>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {stages.map(([label, count, color]) => <div key={label} className="flex items-center justify-between rounded-xl border border-slate-100 p-4"><div className="flex items-center gap-3"><span className={`h-2.5 w-2.5 rounded-full ${color}`} /><span className="text-sm text-slate-600">{label}</span></div><span className="text-lg font-semibold text-slate-900">{count}</span></div>)}
-          </div>
-          <div className="mt-5 rounded-xl bg-indigo-50 p-4"><p className="text-xs font-semibold text-indigo-800">Spreadsheet breakdown</p><p className="mt-1 text-xs leading-5 text-indigo-700">When connected, this view will combine the company hiring sheet and student application sheet, retaining each interview round and rejection reason.</p></div>
-        </CardContent></Card>
-      </div>
-    );
-  }
-
-  return (
-    <Card><CardContent className="p-0">
-      <div className="flex flex-col justify-between gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center">
-        <div><CardTitle>All companies</CardTitle><p className="mt-1 text-xs text-slate-400">Company-level funnel and PSM ownership</p></div>
-        <label className="relative block"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search companies..." className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none focus:border-indigo-400 sm:w-56" /></label>
-      </div>
-      <div className="divide-y divide-slate-100">
-        {filteredCompanies.map((item) => <button key={item.name} onClick={() => onSelect(item.name)} className="flex w-full flex-col gap-3 px-5 py-4 text-left hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3"><span className={`flex h-10 w-10 items-center justify-center rounded-xl font-bold ${item.tone}`}>{item.initials}</span><div><p className="text-sm font-semibold text-slate-800">{item.name}</p><p className="mt-0.5 text-xs text-slate-400">{item.product} · {item.roles} open roles</p></div></div>
-          <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-500"><span><strong className="text-slate-700">{item.applied}</strong> applied</span><span><strong className="text-slate-700">{item.shortlisted}</strong> shortlisted</span><span><strong className="text-slate-700">{item.placed}</strong> selected</span><span>Owner: {item.owner}</span></div>
-        </button>)}
-        {filteredCompanies.length === 0 && <p className="p-8 text-center text-sm text-slate-500">No companies match that search.</p>}
-      </div>
-      <div className="border-t border-slate-100 p-4"><PreviewLabel /></div>
-    </CardContent></Card>
-  );
-}
-
 function AssessedPoolPage() {
   const [query, setQuery] = useState("");
   const candidates = useMemo(() => assessedCandidates.filter((candidate) => `${candidate.name} ${candidate.role} ${candidate.company} ${candidate.skills}`.toLowerCase().includes(query.toLowerCase())), [query]);
@@ -353,7 +300,8 @@ function AssessedPoolPage() {
 }
 
 function PsmWorkspace({ teamLead }: { teamLead: boolean }) {
-  const summary = useQuery({ queryKey: ["dashboard", "summary"], queryFn: dashboardApi.getSummary });
+  const { filters } = useDashboardFilters();
+  const summary = useQuery({ queryKey: ["dashboard", "summary", filters], queryFn: () => dashboardApi.getSummary(filters) });
   const owned = summary.data?.companies ?? [];
   const toneClasses = [
     "bg-indigo-100 text-indigo-700",
@@ -397,7 +345,6 @@ export function DashboardPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const isAdmin = user?.roles.includes("ADMIN") ?? false;
   const isManager = user?.roles.includes("MANAGER") ?? false;
   const isPsmView = location.pathname === "/psm-workspace" || (!isAdmin && (user?.roles.includes("PSM") || isManager));
@@ -408,10 +355,7 @@ export function DashboardPage() {
       subtitle: "A clear view of placement outcomes, company pipelines and team activity.",
     };
 
-  const openCompany = (name: string) => {
-    setSelectedCompany(name);
-    if (location.pathname !== "/companies") navigate("/companies");
-  };
+  const openCompany = () => navigate("/companies");
 
   return (
     <div className="space-y-6">
@@ -424,8 +368,8 @@ export function DashboardPage() {
         {location.pathname === "/" && <span className="flex items-center gap-2 self-start rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 sm:self-auto"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Workspace connected</span>}
       </div>
 
+      {(location.pathname === "/" || location.pathname === "/psm-workspace") && <FilterBar />}
       {location.pathname === "/" && (isAdmin ? <Overview isAdmin onSelectCompany={openCompany} /> : <PsmWorkspace teamLead={isManager} />)}
-      {location.pathname === "/companies" && <CompaniesPage selectedCompany={selectedCompany} onSelect={setSelectedCompany} />}
       {location.pathname === "/assessed-pool" && <AssessedPoolPage />}
       {location.pathname === "/psm-workspace" && <PsmWorkspace teamLead={isManager} />}
       <p className="border-t border-slate-200 pt-4 text-[11px] text-slate-400">

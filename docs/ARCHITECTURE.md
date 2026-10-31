@@ -1,6 +1,6 @@
 # Architecture & Phase 1 Plan
 
-Status: **proposal, awaiting approval.** Nothing here has been applied to the database.
+Status: **Phase 1 complete (2026-10-31).** The foundation tables are applied to the Neon `dev` branch only; the rest of the proposed schema arrives phase by phase.
 Proposed schema: [proposed-schema.prisma](proposed-schema.prisma) (validated with Prisma 7.10).
 
 ## 1. Current repository state (inspected 2026-10-31)
@@ -202,3 +202,32 @@ Phase 1 already delivered setup, auth, base schema and the shell. Remaining work
 | 11 | Clean-up | remove `dist/` folders; decide on `hello.ts` demo Function; update README |
 
 Exit criteria: both apps build, tests pass, migrations apply cleanly to the dev branch, every existing feature still works, and no module contains Prisma calls in its routes or controllers.
+
+## 8. Phase 1 outcome (2026-10-31)
+
+Done:
+
+- Git repository with `main` (baseline) and `phase-1/foundation` branches.
+- Neon `dev` branch created from `production`; local `.env` points at it. Production was not migrated.
+- Backend modules (auth, teams, sheets, dashboard, neon, new read-only catalog) split into routes → controller → service → repository → validators.
+- `@placement/shared` package: API envelope types and the role → permission map, used by both apps.
+- Permission-based authorization, a shared data-scope helper, an audit service with PII redaction, request IDs, idempotency keys, query/params validation, pagination helpers.
+- Migration `20261031120000_foundation_job_ownership_skills_idempotency` (dev only): job-level `PSMAssignment` with one open owner per job, `Skill` / `JobRequestSkill`, company HubSpot ID and profile fields, archive timestamps, audit request context, `IdempotencyKey`.
+- Dashboard summary accepts date, product and tech-stack filters; the UI filter bar keeps them in the URL.
+- shadcn/ui set up with the existing palette; reusable `DataTable`, `KpiCard`, `EmptyState`, `ErrorState`, `ConfirmDialog`, `PageHeader`, `FilterBar`.
+- Sidebar navigation for every module, filtered by permission, with route guards. Companies and Job requests use labelled preview data; later modules show placeholders.
+- 26 backend tests: token rotation and reuse, login enumeration resistance, permissions, data scope, dashboard filters, idempotency hashing, pagination, audit redaction.
+
+Behaviour changes from the previous code:
+
+- A PSM's dashboard companies come only from job requests they own (decision D4), not from company-level assignments.
+- Users without a team now get an empty sheet-connection list; previously the query used an invalid empty team ID.
+- Login compares against a dummy hash for unknown emails, so response time no longer reveals whether an account exists.
+- Invalid route parameters return `400 VALIDATION_ERROR` consistently.
+
+Deferred:
+
+- Redis/BullMQ, ExcelJS and CSV parsing (Phase 5).
+- Route-level code splitting; the production bundle is about 500 kB and Vite warns (Phase 7).
+- Removing the demo `hello` Neon Function, still used by the integration status check.
+- Testing repositories against a disposable Neon branch in CI.

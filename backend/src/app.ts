@@ -11,6 +11,7 @@ import { logger } from "./config/logger.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { sendData } from "./utils/http.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
+import { catalogRouter } from "./modules/catalog/catalog.routes.js";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes.js";
 import { neonRouter } from "./modules/neon/neon.routes.js";
 import { teamsRouter } from "./modules/teams/teams.routes.js";
@@ -49,6 +50,7 @@ app.get("/api/health", (_request, response) => {
   sendData(response, { status: "ok" });
 });
 app.use("/api/auth", authRouter);
+app.use("/api/catalog", catalogRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/integrations/neon", neonRouter);
 app.use("/api/teams", teamsRouter);

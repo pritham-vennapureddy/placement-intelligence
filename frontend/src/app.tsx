@@ -1,12 +1,20 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router-dom";
+import type { ReactNode } from "react";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/app-shell";
 import { Button } from "./components/ui/button";
+import { Toaster } from "./components/ui/sonner";
+import { TooltipProvider } from "./components/ui/tooltip";
 import { AuthProvider, useAuth } from "./contexts/auth-context";
+import { CompaniesPage } from "./features/companies/companies-page";
+import { JobRequestsPage } from "./features/job-requests/job-requests-page";
 import { DashboardPage } from "./pages/dashboard-page";
 import { LoginPage } from "./pages/login-page";
-import { TeamsPage } from "./pages/teams-page";
+import { MODULE_OUTLINES, ModulePlaceholderPage } from "./pages/module-placeholder-page";
 import { SheetsPage } from "./pages/sheets-page";
+import { TeamsPage } from "./pages/teams-page";
+import { NAV_ITEMS } from "./routes/navigation";
+import { RequirePermission } from "./routes/require-permission";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -17,8 +25,25 @@ const queryClient = new QueryClient({
   },
 });
 
+const pages: Record<string, ReactNode> = {
+  "/": <DashboardPage />,
+  "/psm-workspace": <DashboardPage />,
+  "/companies": <CompaniesPage />,
+  "/job-requests": <JobRequestsPage />,
+  "/candidates": <ModulePlaceholderPage module={MODULE_OUTLINES.candidates} />,
+  "/assessed-pool": <DashboardPage />,
+  "/screening": <ModulePlaceholderPage module={MODULE_OUTLINES.screening} />,
+  "/pipeline": <ModulePlaceholderPage module={MODULE_OUTLINES.pipeline} />,
+  "/psm-operations": <ModulePlaceholderPage module={MODULE_OUTLINES.psmOperations} />,
+  "/rsa": <ModulePlaceholderPage module={MODULE_OUTLINES.rsa} />,
+  "/imports": <ModulePlaceholderPage module={MODULE_OUTLINES.imports} />,
+  "/sheets": <SheetsPage />,
+  "/reports": <ModulePlaceholderPage module={MODULE_OUTLINES.reports} />,
+  "/teams": <TeamsPage />,
+};
+
 function SessionGate() {
-  const { status, error, retrySession, user } = useAuth();
+  const { status, error, retrySession } = useAuth();
 
   if (status === "loading") {
     return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Restoring your session…</div>;
@@ -42,15 +67,13 @@ function SessionGate() {
       <Route
         element={status === "authenticated" ? <AppShell /> : <Navigate to="/login" replace />}
       >
-        <Route path="/" element={<DashboardPage />} />
-        <Route path="/companies" element={<DashboardPage />} />
-        <Route path="/assessed-pool" element={<DashboardPage />} />
-        <Route path="/sheets" element={<SheetsPage />} />
-        <Route path="/psm-workspace" element={<DashboardPage />} />
-        <Route
-          path="/teams"
-          element={user?.roles.some((role) => role === "ADMIN" || role === "MANAGER") ? <TeamsPage /> : <Navigate to="/" replace />}
-        />
+        {NAV_ITEMS.map((item) => (
+          <Route
+            key={item.path}
+            path={item.path}
+            element={<RequirePermission item={item}>{pages[item.path]}</RequirePermission>}
+          />
+        ))}
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
@@ -60,11 +83,14 @@ function SessionGate() {
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <BrowserRouter>
-          <SessionGate />
-        </BrowserRouter>
-      </AuthProvider>
+      <TooltipProvider>
+        <AuthProvider>
+          <BrowserRouter>
+            <SessionGate />
+          </BrowserRouter>
+        </AuthProvider>
+        <Toaster position="top-right" />
+      </TooltipProvider>
     </QueryClientProvider>
   );
 }

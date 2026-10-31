@@ -170,7 +170,7 @@ export function SheetsPage() {
   const sheetsQuery = useQuery({ queryKey: ["sheets"], queryFn: sheetsApi.list });
   const teamsQuery = useQuery({ queryKey: ["teams"], queryFn: teamsApi.list, enabled: user?.roles.includes("ADMIN") ?? false });
   const connectMutation = useMutation({
-    mutationFn: sheetsApi.connect,
+    mutationFn: (input: Parameters<typeof sheetsApi.connect>[0]) => sheetsApi.connect(input),
     onSuccess: async () => {
       setUrl("");
       setError(null);
