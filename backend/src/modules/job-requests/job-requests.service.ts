@@ -22,7 +22,7 @@ import { buildPaginationMeta, toPrismaPage } from "../../utils/pagination.js";
 import { splitSkills } from "../../utils/skills.js";
 import { diffFields, listAuditHistory, recordAudit, type AuditContext } from "../audit/audit.service.js";
 import { companyHubspotUrl } from "../companies/companies.service.js";
-import { jobRequestsRepository, type JobRequestDetail } from "./job-requests.repository.js";
+import { jobProgress, jobRequestsRepository, type JobRequestDetail } from "./job-requests.repository.js";
 import type {
   ChangeStatusInput,
   CreateJobRequestInput,
@@ -303,5 +303,32 @@ export const jobRequestsService = {
       });
     });
     return jobRequestsService.get(user, job.id);
+  },
+
+  /** Active job requests in scope with internal-stage and company-pipeline progress. */
+  async progress(user: AuthenticatedUser) {
+    const scope = await resolveDataScope(user);
+    const { rows } = await jobRequestsRepository.list(
+      { ...jobRequestScopeFilter(scope), archivedAt: null, status: { in: ["DRAFT", "OPEN", "ON_HOLD"] } },
+      { skip: 0, take: 200 },
+    );
+    const ids = rows.map(({ id }) => id);
+    const data = await jobProgress(ids);
+    const stageName = new Map(data.stages.map(({ id, stage }) => [id, stage]));
+    return rows.map((job) => ({
+      id: job.id,
+      jobId: job.jobId,
+      roleTitle: job.roleTitle,
+      status: job.status,
+      deadline: job.deadline,
+      company: job.company,
+      psmOwner: job.psmOwner,
+      applications: data.applications.find((row) => row.jobRequestId === job.id)?._count._all ?? 0,
+      stages: Object.fromEntries(data.stages.filter((row) => row.jobRequestId === job.id).map((row) => [row.stage, row.status])),
+      selected: Object.fromEntries(
+        data.selections.filter((row) => row.jobRequestId === job.id).map((row) => [stageName.get(row.stageId), row._count._all]),
+      ),
+      pipeline: Object.fromEntries(data.pipeline.filter((row) => row.jobRequestId === job.id).map((row) => [row.pipelineStatus, row._count._all])),
+    }));
   },
 };

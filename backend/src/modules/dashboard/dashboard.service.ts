@@ -29,12 +29,13 @@ export const dashboardService = {
     const isUnfiltered = Object.keys(filter).length === 0;
     const ownerIds = scope.kind === "organization" ? undefined : scope.ownerIds;
 
-    const [totalCompanies, activeJobRequests, openPositions, psmCount, companies] = await Promise.all([
+    const [totalCompanies, activeJobRequests, openPositions, psmCount, companies, funnel] = await Promise.all([
       dashboardRepository.countCompanies(isUnfiltered ? null : filter),
       dashboardRepository.countOpenJobRequests(filter),
       dashboardRepository.sumOpenPositions(filter),
       dashboardRepository.countActivePsms(ownerIds),
       scope.kind === "organization" ? Promise.resolve([]) : dashboardRepository.listCompaniesWithJobRequests(filter),
+      dashboardRepository.funnel(filter),
     ]);
 
     return {
@@ -45,6 +46,7 @@ export const dashboardService = {
       scope: scopeLabel[scope.kind],
       teamName: scope.teamName,
       companies,
+      funnel,
     };
   },
 };

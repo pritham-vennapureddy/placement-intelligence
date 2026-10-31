@@ -152,3 +152,14 @@ export const jobRequestsRepository = {
     await db.jobRequest.update({ where: { id }, data: { psmOwnerId: toUserId } });
   },
 };
+
+/** Stage statuses, selections per stage and company outcomes for the given job requests. */
+export async function jobProgress(jobRequestIds: string[]) {
+  const [stages, selections, applications, pipeline] = await Promise.all([
+    prisma.internalProcessStage.findMany({ where: { jobRequestId: { in: jobRequestIds } }, select: { id: true, jobRequestId: true, stage: true, status: true } }),
+    prisma.internalStageCandidate.groupBy({ by: ["jobRequestId", "stageId"], where: { jobRequestId: { in: jobRequestIds }, outcome: "SELECTED" }, _count: { _all: true } }),
+    prisma.application.groupBy({ by: ["jobRequestId"], where: { jobRequestId: { in: jobRequestIds } }, _count: { _all: true } }),
+    prisma.companyNomination.groupBy({ by: ["jobRequestId", "pipelineStatus"], where: { jobRequestId: { in: jobRequestIds }, status: "NOMINATED" }, _count: { _all: true } }),
+  ]);
+  return { stages, selections, applications, pipeline };
+}

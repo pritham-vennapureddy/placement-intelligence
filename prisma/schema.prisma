@@ -18,6 +18,138 @@ enum CandidateCategory {
   EXTERNAL
 }
 
+enum AssessedPoolStatus {
+  YES
+  NO
+  UNKNOWN
+}
+
+enum ChangeSource {
+  MANUAL
+  IMPORT
+  SYSTEM
+  CARRIED_OVER
+}
+
+enum ApplicationStatus {
+  ACTIVE
+  WITHDRAWN
+  CLOSED
+}
+
+// TA, RS, SC, AS, SP
+enum InternalStage {
+  TOTAL_APPLICATIONS
+  RESUME_SHORTLIST
+  SCREENING_SHORTLIST
+  ASSIGNMENT_SHORTLIST
+  FINAL_SHORTLIST
+}
+
+enum StageStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  PARTIALLY_COMPLETED
+  NOT_CONDUCTED
+}
+
+enum StageCandidateOutcome {
+  PENDING
+  SELECTED
+  REJECTED
+  ON_HOLD
+  NO_SHOW
+  WITHDRAWN
+}
+
+enum ScreeningPriority {
+  P1
+  P2
+  P3
+}
+
+enum NominationStatus {
+  NOMINATED
+  WITHDRAWN
+}
+
+// Company-side lifecycle; keeps selected / offer released / accepted / joined distinct.
+enum CompanyPipelineStatus {
+  NOT_SUBMITTED
+  IN_PROCESS
+  ON_HOLD
+  REJECTED
+  SELECTED
+  OFFER_RELEASED
+  OFFER_ACCEPTED
+  OFFER_DECLINED
+  JOINED
+  DROPPED
+}
+
+enum InterviewRoundType {
+  RESUME_SCREENING
+  ASSIGNMENT
+  TECHNICAL
+  MANAGERIAL
+  HR
+  CLIENT
+  OTHER
+}
+
+enum InterviewOutcome {
+  SCHEDULED
+  CLEARED
+  REJECTED
+  ON_HOLD
+  NO_SHOW
+  CANCELLED
+}
+
+enum ImportSourceType {
+  EXCEL
+  CSV
+  GOOGLE_SHEETS
+}
+
+enum ImportTarget {
+  INTERNAL_SCREENING
+  COMPANY_PIPELINE
+}
+
+enum ImportBatchStatus {
+  UPLOADED
+  VALIDATED
+  COMMITTED
+  CANCELLED
+}
+
+enum ValidationStatus {
+  VALID
+  WARNING
+  INVALID
+}
+
+enum RecordApprovalStatus {
+  INCLUDED
+  EXCLUDED
+}
+
+enum StagingAction {
+  CREATE
+  UPDATE
+  NO_CHANGE
+  CONFLICT
+  SKIP
+}
+
+enum IssueSeverity {
+  ERROR
+  WARNING
+  INFO
+}
+
 enum CompanyStatus {
   ACTIVE
   INACTIVE
@@ -40,27 +172,34 @@ enum SheetSourceType {
 }
 
 model User {
-  id                  String            @id @default(uuid()) @db.Uuid
-  email               String            @unique
+  id                  String                   @id @default(uuid()) @db.Uuid
+  email               String                   @unique
   fullName            String
   passwordHash        String
-  isActive            Boolean           @default(true)
-  createdAt           DateTime          @default(now())
-  updatedAt           DateTime          @updatedAt
+  isActive            Boolean                  @default(true)
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
   roles               UserRole[]
   refreshTokens       RefreshToken[]
-  createdCompanies    Company[]         @relation("CompanyCreator")
-  ownedJobRequests    JobRequest[]      @relation("JobRequestOwner")
-  createdJobRequests  JobRequest[]      @relation("JobRequestCreator")
-  assignmentsReceived PSMAssignment[]   @relation("AssignmentOwner")
-  assignmentsCreated  PSMAssignment[]   @relation("AssignmentCreator")
+  createdCompanies    Company[]                @relation("CompanyCreator")
+  ownedJobRequests    JobRequest[]             @relation("JobRequestOwner")
+  createdJobRequests  JobRequest[]             @relation("JobRequestCreator")
+  assignmentsReceived PSMAssignment[]          @relation("AssignmentOwner")
+  assignmentsCreated  PSMAssignment[]          @relation("AssignmentCreator")
   auditLogs           AuditLog[]
-  teamId              String?           @db.Uuid
-  team                Team?             @relation("TeamMembers", fields: [teamId], references: [id], onDelete: SetNull)
-  ledTeam             Team?             @relation("TeamLead")
-  teamsCreated        Team[]            @relation("TeamCreator")
-  sheetConnections    SheetConnection[] @relation("SheetConnectionCreator")
+  teamId              String?                  @db.Uuid
+  team                Team?                    @relation("TeamMembers", fields: [teamId], references: [id], onDelete: SetNull)
+  ledTeam             Team?                    @relation("TeamLead")
+  teamsCreated        Team[]                   @relation("TeamCreator")
+  sheetConnections    SheetConnection[]        @relation("SheetConnectionCreator")
   idempotencyKeys     IdempotencyKey[]
+  stageOwnership      InternalProcessStage[]   @relation("StageOwner")
+  stageDecisions      InternalStageCandidate[] @relation("StageDecisionMaker")
+  stageCompletions    StageCompletionRecord[]  @relation("StageCompletionRecorder")
+  nominationsCreated  CompanyNomination[]      @relation("NominationCreator")
+  companyStageChanges CompanyStageHistory[]    @relation("CompanyStageChanger")
+  importBatches       ImportBatch[]            @relation("ImportBatchCreator")
+  importApprovals     ImportApproval[]         @relation("ImportApprover")
 }
 
 model Role {
@@ -171,54 +310,61 @@ model Skill {
   normalizedName String            @unique
   createdAt      DateTime          @default(now())
   jobRequests    JobRequestSkill[]
+  candidates     CandidateSkill[]
 }
 
 // Candidate programmes (e.g. CCBP_ACADEMY_SMART). Applicants to one job come
 // from many products, so products attach to candidates and applications; a job
 // may list the products eligible to apply.
 model Product {
-  id          String              @id @default(uuid()) @db.Uuid
-  code        String              @unique
-  name        String              @unique
-  category    CandidateCategory
-  description String?
-  isActive    Boolean             @default(true)
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
-  eligibleFor JobRequestProduct[]
+  id           String              @id @default(uuid()) @db.Uuid
+  code         String              @unique
+  name         String              @unique
+  category     CandidateCategory
+  description  String?
+  isActive     Boolean             @default(true)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  eligibleFor  JobRequestProduct[]
+  candidates   CandidateProduct[]
+  applications Application[]
 }
 
 model JobRequest {
-  id                     String              @id @default(uuid()) @db.Uuid
+  id                     String                  @id @default(uuid()) @db.Uuid
   // Job ID generated in HubSpot (a UUID); the PSM copies it in. Internal-sheet
   // application exports carry the same value, so imports match on it.
-  jobId                  String              @unique
+  jobId                  String                  @unique
   // HubSpot deal record (object 0-3) the job belongs to.
-  hubspotDealId          String?             @unique
-  companyId              String              @db.Uuid
+  hubspotDealId          String?                 @unique
+  companyId              String                  @db.Uuid
   roleTitle              String
   openings               Int
-  requiredCandidateCount Int                 @default(1)
+  requiredCandidateCount Int                     @default(1)
   description            String
-  psmOwnerId             String?             @db.Uuid
-  requestDate            DateTime            @db.Date
-  deadline               DateTime?           @db.Date
-  status                 JobRequestStatus    @default(DRAFT)
+  psmOwnerId             String?                 @db.Uuid
+  requestDate            DateTime                @db.Date
+  deadline               DateTime?               @db.Date
+  status                 JobRequestStatus        @default(DRAFT)
   timeline               String?
   shortlistingMechanism  String?
   companyRemarks         String?
   companySheetUrl        String?
   internalSheetUrl       String?
   archivedAt             DateTime?
-  createdById            String              @db.Uuid
-  createdAt              DateTime            @default(now())
-  updatedAt              DateTime            @updatedAt
-  company                Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  psmOwner               User?               @relation("JobRequestOwner", fields: [psmOwnerId], references: [id], onDelete: SetNull)
-  createdBy              User                @relation("JobRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdById            String                  @db.Uuid
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  company                Company                 @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  psmOwner               User?                   @relation("JobRequestOwner", fields: [psmOwnerId], references: [id], onDelete: SetNull)
+  createdBy              User                    @relation("JobRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
   assignments            PSMAssignment[]
   skills                 JobRequestSkill[]
   eligibleProducts       JobRequestProduct[]
+  applications           Application[]
+  internalProcess        InternalProcess?
+  interviewRounds        CompanyInterviewRound[]
+  importBatches          ImportBatch[]
 
   @@index([companyId, status])
   @@index([psmOwnerId, status])
@@ -296,4 +442,361 @@ model IdempotencyKey {
 
   @@unique([userId, key])
   @@index([expiresAt])
+}
+
+// ───────────────────────── Candidates & applications ─────────────────────────
+
+model Candidate {
+  id             String             @id @default(uuid()) @db.Uuid
+  // Platform user ID where known; otherwise generated ("GEN-…") when a sheet has none.
+  candidateCode  String             @unique
+  fullName       String
+  // PII. Not unique: source data shares emails/mobiles across user IDs, so
+  // likely duplicates are flagged for review instead of blocked.
+  email          String?
+  mobile         String? // digits only, 10-digit Indian numbers without +91
+  gender         String?
+  currentCity    String?
+  state          String?
+  college        String?
+  degree         String?
+  department     String?
+  graduationYear Int?
+  academicScore  Decimal?           @db.Decimal(5, 2)
+  resumeUrl      String?
+  category       CandidateCategory?
+  assessedPool   AssessedPoolStatus @default(UNKNOWN)
+  archivedAt     DateTime?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  products       CandidateProduct[]
+  skills         CandidateSkill[]
+  applications   Application[]
+
+  @@index([email])
+  @@index([mobile])
+  @@index([fullName])
+  @@index([category])
+}
+
+model CandidateProduct {
+  candidateId String    @db.Uuid
+  productId   String    @db.Uuid
+  firstSeenAt DateTime  @default(now())
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@id([candidateId, productId])
+  @@index([productId])
+}
+
+model CandidateSkill {
+  candidateId String    @db.Uuid
+  skillId     String    @db.Uuid
+  createdAt   DateTime  @default(now())
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  skill       Skill     @relation(fields: [skillId], references: [id], onDelete: Restrict)
+
+  @@id([candidateId, skillId])
+  @@index([skillId])
+}
+
+// One candidate in one job request; every job keeps its own history.
+model Application {
+  id                  String                   @id @default(uuid()) @db.Uuid
+  candidateId         String                   @db.Uuid
+  jobRequestId        String                   @db.Uuid
+  productId           String?                  @db.Uuid // candidate's product when they applied
+  status              ApplicationStatus        @default(ACTIVE)
+  appliedAt           DateTime                 @default(now())
+  source              ChangeSource             @default(MANUAL)
+  importBatchId       String?                  @db.Uuid
+  // Set when the PSM re-uses the candidate from an earlier drive.
+  sourceApplicationId String?                  @db.Uuid
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  candidate           Candidate                @relation(fields: [candidateId], references: [id], onDelete: Restrict)
+  jobRequest          JobRequest               @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  product             Product?                 @relation(fields: [productId], references: [id], onDelete: Restrict)
+  importBatch         ImportBatch?             @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
+  sourceApplication   Application?             @relation("CarriedOver", fields: [sourceApplicationId], references: [id], onDelete: SetNull)
+  carriedInto         Application[]            @relation("CarriedOver")
+  stageOutcomes       InternalStageCandidate[]
+  nomination          CompanyNomination?
+
+  @@unique([candidateId, jobRequestId])
+  @@unique([id, jobRequestId])
+  @@index([jobRequestId, status])
+  @@index([productId])
+}
+
+// ─────────────────────────── Internal PSM screening ───────────────────────────
+
+model InternalProcess {
+  id                String                 @id @default(uuid()) @db.Uuid
+  jobRequestId      String                 @unique @db.Uuid
+  // How the PSM shortlisted for this job (criteria, tests used, …).
+  shortlistingNotes String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  jobRequest        JobRequest             @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  stages            InternalProcessStage[]
+
+  @@unique([id, jobRequestId])
+}
+
+// Status is only ever set explicitly by a person; never inferred from data.
+model InternalProcessStage {
+  id              String                   @id @default(uuid()) @db.Uuid
+  processId       String                   @db.Uuid
+  jobRequestId    String                   @db.Uuid
+  stage           InternalStage
+  status          StageStatus              @default(NOT_STARTED)
+  ownerId         String?                  @db.Uuid
+  completedAt     DateTime?
+  nextPlannedDate DateTime?                @db.Date
+  remarks         String?
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  process         InternalProcess          @relation(fields: [processId, jobRequestId], references: [id, jobRequestId], onDelete: Restrict)
+  owner           User?                    @relation("StageOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  candidates      InternalStageCandidate[]
+  completionLog   StageCompletionRecord[]
+
+  @@unique([processId, stage])
+  @@unique([id, jobRequestId])
+}
+
+// A candidate's outcome at one stage. The composite foreign keys guarantee the
+// application and the stage belong to the same job request.
+model InternalStageCandidate {
+  id              String                @id @default(uuid()) @db.Uuid
+  stageId         String                @db.Uuid
+  applicationId   String                @db.Uuid
+  jobRequestId    String                @db.Uuid
+  outcome         StageCandidateOutcome @default(PENDING)
+  priority        ScreeningPriority?
+  techScore       Decimal?              @db.Decimal(4, 1)
+  commScore       Decimal?              @db.Decimal(4, 1)
+  rejectionReason String?
+  remarks         String?
+  source          ChangeSource          @default(MANUAL)
+  importBatchId   String?               @db.Uuid
+  decidedById     String?               @db.Uuid
+  decidedAt       DateTime?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  stage           InternalProcessStage  @relation(fields: [stageId, jobRequestId], references: [id, jobRequestId], onDelete: Restrict)
+  application     Application           @relation(fields: [applicationId, jobRequestId], references: [id, jobRequestId], onDelete: Restrict)
+  importBatch     ImportBatch?          @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
+  decidedBy       User?                 @relation("StageDecisionMaker", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@unique([stageId, applicationId])
+  @@index([applicationId])
+  @@index([stageId, outcome])
+}
+
+// Append-only log of explicit stage status changes.
+model StageCompletionRecord {
+  id           String               @id @default(uuid()) @db.Uuid
+  stageId      String               @db.Uuid
+  fromStatus   StageStatus
+  toStatus     StageStatus
+  remarks      String?
+  recordedById String?              @db.Uuid
+  recordedAt   DateTime             @default(now())
+  stage        InternalProcessStage @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  recordedBy   User?                @relation("StageCompletionRecorder", fields: [recordedById], references: [id], onDelete: SetNull)
+
+  @@index([stageId, recordedAt])
+}
+
+// ─────────────────────────── Company hiring pipeline ───────────────────────────
+
+// The only link between internal screening and the company pipeline. Created by
+// the PSM; internally rejected candidates cannot be nominated.
+model CompanyNomination {
+  id              String                @id @default(uuid()) @db.Uuid
+  applicationId   String                @unique @db.Uuid
+  jobRequestId    String                @db.Uuid
+  status          NominationStatus      @default(NOMINATED)
+  pipelineStatus  CompanyPipelineStatus @default(NOT_SUBMITTED)
+  source          ChangeSource          @default(MANUAL)
+  nominatedById   String                @db.Uuid
+  submittedAt     DateTime?
+  offerReleasedAt DateTime?
+  offerAcceptedAt DateTime?
+  joinedAt        DateTime?
+  remarks         String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  application     Application           @relation(fields: [applicationId, jobRequestId], references: [id, jobRequestId], onDelete: Restrict)
+  nominatedBy     User                  @relation("NominationCreator", fields: [nominatedById], references: [id], onDelete: Restrict)
+  interviews      CompanyInterview[]
+  stageHistory    CompanyStageHistory[]
+
+  @@unique([id, jobRequestId])
+  @@unique([applicationId, jobRequestId])
+  @@index([jobRequestId, pipelineStatus])
+}
+
+// Rounds are configured per job request; no fixed number.
+model CompanyInterviewRound {
+  id           String             @id @default(uuid()) @db.Uuid
+  jobRequestId String             @db.Uuid
+  name         String
+  roundType    InterviewRoundType @default(OTHER)
+  sequence     Int
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  jobRequest   JobRequest         @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  interviews   CompanyInterview[]
+
+  @@unique([jobRequestId, name])
+  @@unique([id, jobRequestId])
+  @@index([jobRequestId, sequence])
+}
+
+model CompanyInterview {
+  id              String                @id @default(uuid()) @db.Uuid
+  nominationId    String                @db.Uuid
+  roundId         String                @db.Uuid
+  jobRequestId    String                @db.Uuid
+  outcome         InterviewOutcome      @default(SCHEDULED)
+  scheduledAt     DateTime?
+  interviewerName String?
+  feedback        String?
+  rejectionReason String?
+  source          ChangeSource          @default(MANUAL)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+  nomination      CompanyNomination     @relation(fields: [nominationId, jobRequestId], references: [id, jobRequestId], onDelete: Restrict)
+  round           CompanyInterviewRound @relation(fields: [roundId, jobRequestId], references: [id, jobRequestId], onDelete: Restrict)
+
+  @@unique([nominationId, roundId])
+  @@index([roundId, outcome])
+}
+
+// Append-only history of pipeline status changes.
+model CompanyStageHistory {
+  id           String                 @id @default(uuid()) @db.Uuid
+  nominationId String                 @db.Uuid
+  fromStatus   CompanyPipelineStatus?
+  toStatus     CompanyPipelineStatus
+  notes        String?
+  source       ChangeSource           @default(MANUAL)
+  changedById  String?                @db.Uuid
+  changedAt    DateTime               @default(now())
+  nomination   CompanyNomination      @relation(fields: [nominationId], references: [id], onDelete: Restrict)
+  changedBy    User?                  @relation("CompanyStageChanger", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([nominationId, changedAt])
+  @@index([toStatus, changedAt])
+}
+
+// ──────────────────────────────── Imports ────────────────────────────────
+
+// One upload. Never deleted: committed rows point back to it.
+model ImportBatch {
+  id             String                   @id @default(uuid()) @db.Uuid
+  batchCode      String                   @unique
+  target         ImportTarget
+  sourceType     ImportSourceType
+  status         ImportBatchStatus        @default(UPLOADED)
+  jobRequestId   String                   @db.Uuid
+  sourceFileName String
+  sourceChecksum String
+  fileSize       Int
+  sheets         Json // [{ name, rowCount, columnCount }]
+  mapping        Json? // the PSM's choices, reused for the next upload
+  summary        Json? // validation counts shown during review
+  importedById   String                   @db.Uuid
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+  committedAt    DateTime?
+  jobRequest     JobRequest               @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  importedBy     User                     @relation("ImportBatchCreator", fields: [importedById], references: [id], onDelete: Restrict)
+  file           ImportFile?
+  sheetMappings  ImportSheetMapping[]
+  stagingRecords ImportStagingRecord[]
+  issues         DataQualityIssue[]
+  approvals      ImportApproval[]
+  applications   Application[]
+  stageOutcomes  InternalStageCandidate[]
+
+  @@index([jobRequestId, createdAt])
+  @@index([sourceChecksum])
+}
+
+// The uploaded original, kept for audit.
+model ImportFile {
+  batchId     String      @id @db.Uuid
+  contentType String
+  bytes       Bytes
+  batch       ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+}
+
+model ImportSheetMapping {
+  id            String                @id @default(uuid()) @db.Uuid
+  batchId       String                @db.Uuid
+  role          String // APPLICATIONS, PRODUCTS, a stage code, or COMPANY_TAB
+  worksheetName String
+  headerRow     Int
+  columnMapping Json
+  createdAt     DateTime              @default(now())
+  batch         ImportBatch           @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  records       ImportStagingRecord[]
+
+  @@unique([batchId, role, worksheetName])
+}
+
+model ImportStagingRecord {
+  id                String               @id @default(uuid()) @db.Uuid
+  batchId           String               @db.Uuid
+  sheetMappingId    String               @db.Uuid
+  sourceRowNumber   Int
+  sourceRowRef      String?
+  rawData           Json
+  normalizedData    Json
+  validationStatus  ValidationStatus
+  approvalStatus    RecordApprovalStatus @default(INCLUDED)
+  action            StagingAction
+  matchedEntityType String?
+  matchedEntityId   String?              @db.Uuid
+  committedAt       DateTime?
+  batch             ImportBatch          @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  sheetMapping      ImportSheetMapping   @relation(fields: [sheetMappingId], references: [id], onDelete: Cascade)
+  issues            DataQualityIssue[]
+
+  @@unique([sheetMappingId, sourceRowNumber])
+  @@index([batchId, validationStatus])
+}
+
+model DataQualityIssue {
+  id              String               @id @default(uuid()) @db.Uuid
+  batchId         String               @db.Uuid
+  stagingRecordId String?              @db.Uuid
+  severity        IssueSeverity
+  code            String
+  message         String
+  createdAt       DateTime             @default(now())
+  batch           ImportBatch          @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  stagingRecord   ImportStagingRecord? @relation(fields: [stagingRecordId], references: [id], onDelete: Cascade)
+
+  @@index([batchId, severity])
+  @@index([stagingRecordId])
+}
+
+model ImportApproval {
+  id          String      @id @default(uuid()) @db.Uuid
+  batchId     String      @db.Uuid
+  decision    String // APPROVED or CANCELLED
+  notes       String?
+  counts      Json?
+  decidedById String      @db.Uuid
+  decidedAt   DateTime    @default(now())
+  batch       ImportBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  decidedBy   User        @relation("ImportApprover", fields: [decidedById], references: [id], onDelete: Restrict)
+
+  @@index([batchId])
 }

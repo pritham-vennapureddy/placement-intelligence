@@ -20,6 +20,7 @@ jobRequestsRouter.use(authenticate, idempotency, requirePermission("job:read"));
 const withId = validateParams(jobRequestIdParamsSchema);
 
 jobRequestsRouter.get("/", validateQuery(listJobRequestsQuerySchema), jobRequestsController.list);
+jobRequestsRouter.get("/progress", jobRequestsController.progress);
 jobRequestsRouter.post("/", requirePermission("job:write"), validateBody(createJobRequestSchema), jobRequestsController.create);
 jobRequestsRouter.get("/:jobRequestId", withId, jobRequestsController.get);
 jobRequestsRouter.patch(

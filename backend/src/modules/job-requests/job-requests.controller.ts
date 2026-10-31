@@ -13,6 +13,10 @@ import type {
 const idOf = (request: Request) => request.params.jobRequestId as string;
 
 export const jobRequestsController = {
+  async progress(request: Request, response: Response): Promise<void> {
+    sendData(response, { jobs: await jobRequestsService.progress(request.user!) });
+  },
+
   async list(request: Request, response: Response): Promise<void> {
     const { jobRequests, meta } = await jobRequestsService.list(request.user!, request.query as unknown as ListJobRequestsQuery);
     sendData(response, { jobRequests }, 200, meta);
