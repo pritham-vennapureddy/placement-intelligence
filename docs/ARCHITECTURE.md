@@ -231,3 +231,30 @@ Deferred:
 - Route-level code splitting; the production bundle is about 500 kB and Vite warns (Phase 7).
 - Removing the demo `hello` Neon Function, still used by the integration status check.
 - Testing repositories against a disposable Neon branch in CI.
+
+## 9. Drive setup workflow (agreed direction, 2026-10-31)
+
+The dashboard cannot know what a sheet's tabs mean, so the PSM tells it, step by step. Sheet uploads are the main way data enters the platform, so the import pipeline moves earlier in the plan.
+
+1. **Company.** Pick an existing company or create one: name plus HubSpot company ID or link, industry, location. The PSM owner enters it; HubSpot auto-fill comes later.
+2. **Job request (drive).** Role, tech stack, openings, profiles required, timeline, proposed shortlisting mechanism, deadline, PSM owner (defaults to the creator).
+3. **Internal sheet.** Upload an .xlsx / .csv (a Google Sheets link comes later). The dashboard lists every tab with its row count and a preview, then asks:
+   - **Total applications (TA):** which tab, and which column identifies the candidate (user ID, email or mobile).
+   - **Products:** which tab and column give each candidate's product. It can be the TA tab or another tab such as an eligible-students list joined by user ID.
+   - **Resume shortlist (RS), screening (SC), assignment (AS), final profiles (SP):** for each stage, either a tab, a decision column inside another tab, "not conducted", or "I'll select candidates manually". Where a tab has a decision column, the PSM maps its values (e.g. `c` → Selected, `reject` → Rejected, `hold` → On hold), and optionally priority and score columns.
+4. **Review.** Preview funnel counts per stage, rows that match no applicant, duplicates and conflicts. The PSM approves, then everything is saved in one transaction.
+5. **Company sheet.** Upload the sheet shared with the company. The PSM picks which tabs belong to this job; the dashboard detects the round columns (e.g. Screening Round, TR Round 1, MR Round, Final Status) and the PSM confirms them as the job's rounds. Rows are matched to internal candidates automatically (email, then mobile); anything unmatched or ambiguous is shown for the PSM to resolve. The job's tech stack is attached to the matched profiles.
+6. **Later uploads** of the same sheets update outcomes. Nothing is deleted when a row disappears; it is flagged.
+
+Saved mappings are reused for the next upload of the same job.
+
+### Revised phase order
+
+| Phase | Scope |
+|---|---|
+| 2 | Companies and job requests (manual entry, HubSpot fields), PSM ownership, a job workspace page |
+| 3 | Internal sheet upload and mapping wizard → candidates, products, applications, TA–SP outcomes, with review and approval; manual stage edits |
+| 4 | Company sheet upload and mapping → rounds, profile matching, company outcomes, offers and joining |
+| 5 | Google Sheets links and scheduled re-sync (Redis / BullMQ), re-import differences |
+| 6 | PSM tasks, contributions and incentives, RSA and homework, reports |
+| 7 | Testing, security review, performance, deployment, backup and restore |
