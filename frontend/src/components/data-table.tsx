@@ -33,9 +33,20 @@ export function SortableHeader<T>({ column, title }: { column: Column<T>; title:
   );
 }
 
+/** Paging and search done by the API; the table shows one page at a time. */
+export interface ServerPaging {
+  page: number;
+  pageCount: number;
+  total: number;
+  onPageChange: (page: number) => void;
+  search: string;
+  onSearchChange: (search: string) => void;
+}
+
 /**
- * Searchable, sortable, paginated table. Works on the rows it is given
- * (client side); server-side paging can be added when lists grow.
+ * Searchable, sortable, paginated table. By default it works on the rows it is
+ * given; pass `server` when the API pages and searches (sorting then applies
+ * to the current page only).
  */
 export function DataTable<T>({
   columns,
@@ -49,6 +60,7 @@ export function DataTable<T>({
   emptyDescription,
   pageSize = 10,
   onRowClick,
+  server,
 }: {
   columns: ColumnDef<T, any>[];
   data: T[] | undefined;
@@ -61,26 +73,40 @@ export function DataTable<T>({
   emptyDescription?: ReactNode;
   pageSize?: number;
   onRowClick?: (row: T) => void;
+  server?: ServerPaging;
 }) {
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [globalFilter, setGlobalFilter] = useState("");
+  const [localFilter, setLocalFilter] = useState("");
+  const globalFilter = server ? server.search : localFilter;
+  const setGlobalFilter = server ? server.onSearchChange : setLocalFilter;
 
   const table = useReactTable({
     data: data ?? [],
     columns,
-    state: { sorting, globalFilter },
-    onSortingChange: setSorting,
-    onGlobalFilterChange: setGlobalFilter,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    initialState: { pagination: { pageSize } },
+    onSortingChange: setSorting,
+    ...(server
+      ? {
+        state: { sorting, pagination: { pageIndex: server.page - 1, pageSize: Math.max(1, data?.length ?? 1) } },
+        manualPagination: true,
+        manualFiltering: true,
+        pageCount: server.pageCount,
+      }
+      : {
+        state: { sorting, globalFilter: localFilter },
+        onGlobalFilterChange: setLocalFilter,
+        getFilteredRowModel: getFilteredRowModel(),
+        getPaginationRowModel: getPaginationRowModel(),
+        initialState: { pagination: { pageSize } },
+      }),
   });
 
   const rows = table.getRowModel().rows;
-  const filteredCount = table.getFilteredRowModel().rows.length;
-  const { pageIndex } = table.getState().pagination;
+  const filteredCount = server ? server.total : table.getFilteredRowModel().rows.length;
+  const pageIndex = server ? server.page - 1 : table.getState().pagination.pageIndex;
+  const pageCount = server ? server.pageCount : table.getPageCount();
+  const goTo = (index: number) => (server ? server.onPageChange(index + 1) : table.setPageIndex(index));
 
   let body: ReactNode;
   if (isLoading) {
@@ -144,16 +170,16 @@ export function DataTable<T>({
         <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
           <span>
             {filteredCount} {filteredCount === 1 ? "record" : "records"}
-            {table.getPageCount() > 1 && ` · page ${pageIndex + 1} of ${table.getPageCount()}`}
+            {pageCount > 1 && ` · page ${pageIndex + 1} of ${pageCount}`}
           </span>
-          {table.getPageCount() > 1 && (
+          {pageCount > 1 && (
             <div className="flex gap-1">
               <Button
                 aria-label="Previous page"
                 size="icon-sm"
                 variant="outline"
-                disabled={!table.getCanPreviousPage()}
-                onClick={() => table.previousPage()}
+                disabled={pageIndex <= 0}
+                onClick={() => goTo(pageIndex - 1)}
               >
                 <ChevronLeft size={15} />
               </Button>
@@ -161,8 +187,8 @@ export function DataTable<T>({
                 aria-label="Next page"
                 size="icon-sm"
                 variant="outline"
-                disabled={!table.getCanNextPage()}
-                onClick={() => table.nextPage()}
+                disabled={pageIndex >= pageCount - 1}
+                onClick={() => goTo(pageIndex + 1)}
               >
                 <ChevronRight size={15} />
               </Button>

@@ -1,7 +1,16 @@
-import { IDEMPOTENCY_HEADER, type ApiErrorBody } from "@placement/shared";
+import { IDEMPOTENCY_HEADER, type ApiErrorBody, type PaginationMeta } from "@placement/shared";
 import type {
   AuthUser,
   CatalogOption,
+  CompanyDetail,
+  CompanyInput,
+  CompanyListItem,
+  JobRequestDetail,
+  JobRequestInput,
+  JobRequestListItem,
+  JobRequestStatus,
+  OwnerOption,
+  ProductOption,
   DashboardFilters,
   DashboardSummary,
   SheetConnection,
@@ -193,9 +202,14 @@ export const dashboardApi = {
 };
 
 export const catalogApi = {
-  async products(): Promise<CatalogOption[]> {
-    const response = await request<{ data: { products: CatalogOption[] } }>("/catalog/products");
+  async products(): Promise<ProductOption[]> {
+    const response = await request<{ data: { products: ProductOption[] } }>("/catalog/products");
     return response.data.products;
+  },
+
+  async owners(): Promise<OwnerOption[]> {
+    const response = await request<{ data: { owners: OwnerOption[] } }>("/catalog/owners");
+    return response.data.owners;
   },
 
   async skills(): Promise<(CatalogOption & { normalizedName: string })[]> {
@@ -289,3 +303,99 @@ export const sheetsApi = {
     return response.data.mapping;
   },
 };
+
+export interface Page<T> {
+  items: T[];
+  meta: PaginationMeta;
+}
+
+export interface CompanyListParams {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  status?: "ACTIVE" | "INACTIVE";
+}
+
+export const companiesApi = {
+  async list(params: CompanyListParams = {}): Promise<Page<CompanyListItem>> {
+    const response = await request<{ data: { companies: CompanyListItem[] }; meta: PaginationMeta }>(
+      `/companies${toQueryString({ ...params, page: params.page?.toString(), pageSize: params.pageSize?.toString() })}`,
+    );
+    return { items: response.data.companies, meta: response.meta };
+  },
+
+  async get(companyId: string): Promise<CompanyDetail> {
+    const response = await request<{ data: { company: CompanyDetail } }>(`/companies/${companyId}`);
+    return response.data.company;
+  },
+
+  async create(input: CompanyInput, idempotencyKey = newIdempotencyKey()): Promise<{ id: string; name: string }> {
+    const response = await request<{ data: { company: { id: string; name: string } } }>("/companies", {
+      method: "POST",
+      body: JSON.stringify(input),
+      idempotencyKey,
+    });
+    return response.data.company;
+  },
+
+  async update(companyId: string, input: Partial<CompanyInput>): Promise<void> {
+    await request(`/companies/${companyId}`, { method: "PATCH", body: JSON.stringify(input) });
+  },
+};
+
+export interface JobRequestListParams {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  view?: "active" | "closed" | "all";
+  companyId?: string;
+  ownerId?: string;
+}
+
+export const jobRequestsApi = {
+  async list(params: JobRequestListParams = {}): Promise<Page<JobRequestListItem>> {
+    const response = await request<{ data: { jobRequests: JobRequestListItem[] }; meta: PaginationMeta }>(
+      `/job-requests${toQueryString({ ...params, page: params.page?.toString(), pageSize: params.pageSize?.toString() })}`,
+    );
+    return { items: response.data.jobRequests, meta: response.meta };
+  },
+
+  async get(jobRequestId: string): Promise<JobRequestDetail> {
+    const response = await request<{ data: { jobRequest: JobRequestDetail } }>(`/job-requests/${jobRequestId}`);
+    return response.data.jobRequest;
+  },
+
+  async create(input: JobRequestInput, idempotencyKey = newIdempotencyKey()): Promise<{ id: string }> {
+    const response = await request<{ data: { jobRequest: { id: string } } }>("/job-requests", {
+      method: "POST",
+      body: JSON.stringify(input),
+      idempotencyKey,
+    });
+    return response.data.jobRequest;
+  },
+
+  async update(jobRequestId: string, input: Partial<JobRequestInput>): Promise<JobRequestDetail> {
+    const response = await request<{ data: { jobRequest: JobRequestDetail } }>(`/job-requests/${jobRequestId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+    return response.data.jobRequest;
+  },
+
+  async changeStatus(jobRequestId: string, status: JobRequestStatus, reason?: string): Promise<JobRequestDetail> {
+    const response = await request<{ data: { jobRequest: JobRequestDetail } }>(`/job-requests/${jobRequestId}/status`, {
+      method: "POST",
+      body: JSON.stringify({ status, ...(reason ? { reason } : {}) }),
+    });
+    return response.data.jobRequest;
+  },
+
+  async reassign(jobRequestId: string, psmOwnerId: string, notes?: string): Promise<JobRequestDetail> {
+    const response = await request<{ data: { jobRequest: JobRequestDetail } }>(`/job-requests/${jobRequestId}/owner`, {
+      method: "POST",
+      body: JSON.stringify({ psmOwnerId, ...(notes ? { notes } : {}) }),
+    });
+    return response.data.jobRequest;
+  },
+};
+

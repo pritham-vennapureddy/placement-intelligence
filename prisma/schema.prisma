@@ -1,6 +1,9 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../backend/src/generated/prisma"
+  provider        = "prisma-client"
+  output          = "../backend/src/generated/prisma"
+  // Load relations with one joined SQL query instead of one query per relation;
+  // each database round trip is costly from far-away regions.
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {

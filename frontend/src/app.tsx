@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { Permission } from "@placement/shared";
 import type { ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/app-shell";
@@ -7,6 +8,9 @@ import { Toaster } from "./components/ui/sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { AuthProvider, useAuth } from "./contexts/auth-context";
 import { CompaniesPage } from "./features/companies/companies-page";
+import { CompanyDetailPage } from "./features/companies/company-detail-page";
+import { JobRequestDetailPage } from "./features/job-requests/job-request-detail-page";
+import { JobRequestFormPage } from "./features/job-requests/job-request-form-page";
 import { JobRequestsPage } from "./features/job-requests/job-requests-page";
 import { DashboardPage } from "./pages/dashboard-page";
 import { LoginPage } from "./pages/login-page";
@@ -42,6 +46,13 @@ const pages: Record<string, ReactNode> = {
   "/teams": <TeamsPage />,
 };
 
+const DETAIL_ROUTES: { path: string; permission: Permission; element: ReactNode }[] = [
+  { path: "/companies/:companyId", permission: "company:read", element: <CompanyDetailPage /> },
+  { path: "/job-requests/new", permission: "job:write", element: <JobRequestFormPage /> },
+  { path: "/job-requests/:jobRequestId", permission: "job:read", element: <JobRequestDetailPage /> },
+  { path: "/job-requests/:jobRequestId/edit", permission: "job:write", element: <JobRequestFormPage /> },
+];
+
 function SessionGate() {
   const { status, error, retrySession } = useAuth();
 
@@ -73,6 +84,9 @@ function SessionGate() {
             path={item.path}
             element={<RequirePermission item={item}>{pages[item.path]}</RequirePermission>}
           />
+        ))}
+        {DETAIL_ROUTES.map(({ path, permission, element }) => (
+          <Route key={path} path={path} element={<RequirePermission item={{ permission }}>{element}</RequirePermission>} />
         ))}
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

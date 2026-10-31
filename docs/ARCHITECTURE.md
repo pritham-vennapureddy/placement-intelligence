@@ -258,3 +258,24 @@ Saved mappings are reused for the next upload of the same job.
 | 5 | Google Sheets links and scheduled re-sync (Redis / BullMQ), re-import differences |
 | 6 | PSM tasks, contributions and incentives, RSA and homework, reports |
 | 7 | Testing, security review, performance, deployment, backup and restore |
+
+## 10. Phase 2 outcome (2026-10-31)
+
+Done:
+
+- **Job ID** is the UUID generated in HubSpot (stored lower-case, unique). A job request also stores its **HubSpot deal** (object `0-3`) and companies their **HubSpot company** (object `0-2`); PSMs paste a record link or ID and the dashboard links back using `HUBSPOT_PORTAL_ID`.
+- **Products** are candidate programmes with a category (9 codes seeded). A job request lists the products eligible to apply instead of having one product.
+- **Companies**: directory visible to everyone (open-job counts follow data scope), create / edit with HubSpot de-duplication, mark inactive (blocks new job requests), detail page with job requests and history.
+- **Job requests**: create / edit / list with search, server paging and Active / Closed / All views; tech stack as normalised skills; eligible products; timeline, shortlisting mechanism, remarks, sheet links.
+- **Status rules** (shared by API and UI): Draft → Open / Cancelled; Open → On hold / Filled / Closed / Cancelled; On hold → Open / Closed / Cancelled; Filled → Open / Closed; Closed → Open; Cancelled is final. A reason is required to put on hold, cancel or reopen. *Assumed — confirm with the PSM team.*
+- **Ownership**: a PSM creates job requests for themselves; managers assign or reassign within their team, administrators anyone. Every change keeps the previous owner in the ownership history; the previous owner loses access.
+- **Editing companies**: administrators and managers any; PSMs only companies they created or have job requests at.
+- History tabs for companies and job requests from the audit log, with field-level changes.
+- Prisma `relationJoins` enabled: related data loads in one query, which cut API response times by 2–3× (job detail ~1.4 s → ~0.56 s from India against the us-east-2 database).
+
+Verified: 38 unit tests; 27 end-to-end API checks with admin, manager and PSM accounts on the dev branch; a browser walkthrough creating a job request through the form and changing its status.
+
+Open:
+
+- The database round trip from India to Neon's us-east-2 region is about 250 ms. In production the API should run in the same region as the database, and an Asia-Pacific region would suit users in India. A Neon project's region cannot be changed, so this needs deciding before go-live.
+- Company activities and follow-ups move to Phase 6 (PSM operations).

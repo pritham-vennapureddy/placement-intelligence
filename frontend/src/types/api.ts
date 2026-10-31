@@ -1,3 +1,5 @@
+import type { JobRequestStatus } from "@placement/shared";
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -97,4 +99,154 @@ export interface DashboardFilters {
 export interface CatalogOption {
   id: string;
   name: string;
+}
+
+export interface PersonRef {
+  id: string;
+  fullName: string;
+}
+
+export interface ProductOption extends CatalogOption {
+  code: string;
+  category: "ACADEMY" | "ACADEMY_INTENSIVE" | "EXTERNAL";
+}
+
+export interface OwnerOption extends PersonRef {
+  team: { name: string } | null;
+}
+
+export interface AuditEntry {
+  id: string;
+  action: string;
+  entityId: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  actor: PersonRef | null;
+}
+
+export type CompanyStatus = "ACTIVE" | "INACTIVE";
+
+export interface CompanyListItem {
+  id: string;
+  name: string;
+  hubspotCompanyId: string | null;
+  hubspotUrl: string | null;
+  industry: string | null;
+  location: string | null;
+  status: CompanyStatus;
+  updatedAt: string;
+  openJobRequests: number;
+  openPositions: number;
+  psmOwners: PersonRef[];
+}
+
+export interface CompanyDetail {
+  id: string;
+  name: string;
+  hubspotCompanyId: string | null;
+  hubspotUrl: string | null;
+  website: string | null;
+  industry: string | null;
+  location: string | null;
+  notes: string | null;
+  status: CompanyStatus;
+  createdAt: string;
+  createdBy: PersonRef;
+  canEdit: boolean;
+  jobRequests: {
+    id: string;
+    jobId: string;
+    roleTitle: string;
+    openings: number;
+    status: JobRequestStatus;
+    requestDate: string;
+    deadline: string | null;
+    psmOwner: PersonRef | null;
+  }[];
+  history: AuditEntry[];
+}
+
+export type { JobRequestStatus };
+
+export interface JobRequestListItem {
+  id: string;
+  jobId: string;
+  roleTitle: string;
+  openings: number;
+  requiredCandidateCount: number;
+  requestDate: string;
+  deadline: string | null;
+  status: JobRequestStatus;
+  company: { id: string; name: string };
+  psmOwner: PersonRef | null;
+  techStack: string[];
+  eligibleProducts: { id: string; code: string; name: string }[];
+}
+
+export interface JobRequestDetail {
+  id: string;
+  jobId: string;
+  hubspotDealId: string | null;
+  hubspotDealUrl: string | null;
+  roleTitle: string;
+  openings: number;
+  requiredCandidateCount: number;
+  description: string;
+  requestDate: string;
+  deadline: string | null;
+  status: JobRequestStatus;
+  timeline: string | null;
+  shortlistingMechanism: string | null;
+  companyRemarks: string | null;
+  companySheetUrl: string | null;
+  internalSheetUrl: string | null;
+  createdAt: string;
+  company: { id: string; name: string; hubspotCompanyId: string | null; hubspotUrl: string | null };
+  psmOwner: (PersonRef & { email: string }) | null;
+  createdBy: PersonRef;
+  skills: { isMandatory: boolean; skill: { id: string; name: string } }[];
+  eligibleProducts: { product: ProductOption }[];
+  assignments: {
+    id: string;
+    assignedAt: string;
+    endedAt: string | null;
+    notes: string | null;
+    assignedTo: PersonRef;
+    assignedBy: PersonRef | null;
+  }[];
+  allowedTransitions: JobRequestStatus[];
+  canEdit: boolean;
+  canReassign: boolean;
+  history: AuditEntry[];
+}
+
+export interface JobRequestInput {
+  jobId: string;
+  hubspotDeal: string | null;
+  companyId: string;
+  roleTitle: string;
+  techStack: string[];
+  openings: number;
+  requiredCandidateCount: number;
+  description: string;
+  requestDate: string;
+  deadline: string | null;
+  timeline: string | null;
+  shortlistingMechanism: string | null;
+  companyRemarks: string | null;
+  companySheetUrl: string | null;
+  internalSheetUrl: string | null;
+  eligibleProductIds: string[];
+  psmOwnerId?: string;
+  status?: "DRAFT" | "OPEN";
+}
+
+export interface CompanyInput {
+  name: string;
+  hubspotCompany: string | null;
+  website: string | null;
+  industry: string | null;
+  location: string | null;
+  notes: string | null;
+  status?: CompanyStatus;
 }

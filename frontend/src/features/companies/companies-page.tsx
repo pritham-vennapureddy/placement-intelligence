@@ -1,51 +1,65 @@
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
-import { Building2, BriefcaseBusiness, Target, Users } from "lucide-react";
+import { ExternalLink, Plus } from "lucide-react";
+import { useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { DataTable, SortableHeader } from "../../components/data-table";
-import { KpiCard } from "../../components/kpi-card";
 import { PageHeader } from "../../components/page-header";
-import { PreviewBadge } from "../../components/preview-badge";
 import { Badge } from "../../components/ui/badge";
-import { companyPreviewRows, type CompanyPreviewRow } from "./mock";
+import { Button } from "../../components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { useDebouncedValue } from "../../hooks/use-debounced-value";
+import { usePermissions } from "../../hooks/use-permissions";
+import { companiesApi } from "../../services/api";
+import type { CompanyListItem } from "../../types/api";
+import { CompanyFormDialog } from "./company-form-dialog";
 
-const columns: ColumnDef<CompanyPreviewRow>[] = [
+const PAGE_SIZE = 20;
+
+const columns: ColumnDef<CompanyListItem>[] = [
   {
     accessorKey: "name",
     header: ({ column }) => <SortableHeader column={column} title="Company" />,
     cell: ({ row }) => (
       <div>
-        <p className="font-semibold text-slate-800">{row.original.name}</p>
+        <Link to={`/companies/${row.original.id}`} className="font-semibold text-slate-800 hover:text-indigo-700">
+          {row.original.name}
+        </Link>
         <p className="text-xs text-slate-400">
-          {row.original.hubspotCompanyId ? `HubSpot ${row.original.hubspotCompanyId}` : "No HubSpot ID yet"}
+          {row.original.hubspotUrl ? (
+            <a
+              href={row.original.hubspotUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 hover:text-indigo-600"
+              onClick={(event) => event.stopPropagation()}
+            >
+              HubSpot {row.original.hubspotCompanyId} <ExternalLink size={11} />
+            </a>
+          ) : row.original.hubspotCompanyId ? `HubSpot ${row.original.hubspotCompanyId}` : "No HubSpot ID"}
         </p>
       </div>
     ),
   },
   {
     id: "industry",
-    accessorFn: (row) => `${row.industry} ${row.location}`,
+    accessorFn: (row) => `${row.industry ?? ""} ${row.location ?? ""}`,
     header: "Industry · location",
     cell: ({ row }) => (
       <div>
-        <p>{row.original.industry}</p>
-        <p className="text-xs text-slate-400">{row.original.location}</p>
+        <p>{row.original.industry ?? "—"}</p>
+        <p className="text-xs text-slate-400">{row.original.location ?? ""}</p>
       </div>
     ),
   },
-  {
-    accessorKey: "openJobRequests",
-    header: ({ column }) => <SortableHeader column={column} title="Open requests" />,
-  },
-  {
-    accessorKey: "openPositions",
-    header: ({ column }) => <SortableHeader column={column} title="Open positions" />,
-  },
+  { accessorKey: "openJobRequests", header: ({ column }) => <SortableHeader column={column} title="Open requests" /> },
+  { accessorKey: "openPositions", header: ({ column }) => <SortableHeader column={column} title="Open positions" /> },
   {
     id: "psmOwners",
-    accessorFn: (row) => row.psmOwners.join(", "),
     header: "PSM owners",
     cell: ({ row }) => row.original.psmOwners.length
-      ? row.original.psmOwners.join(", ")
+      ? row.original.psmOwners.map(({ fullName }) => fullName).join(", ")
       : <span className="text-slate-400">—</span>,
   },
   {
@@ -54,25 +68,42 @@ const columns: ColumnDef<CompanyPreviewRow>[] = [
     cell: ({ row }) => (
       <Badge
         variant="outline"
-        className={row.original.status === "ACTIVE"
-          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-          : "border-slate-200 bg-slate-50 text-slate-500"}
+        className={row.original.status === "ACTIVE" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500"}
       >
         {row.original.status === "ACTIVE" ? "Active" : "Inactive"}
       </Badge>
     ),
   },
   {
-    accessorKey: "lastActivity",
-    header: ({ column }) => <SortableHeader column={column} title="Last activity" />,
-    cell: ({ row }) => format(new Date(row.original.lastActivity), "d MMM yyyy"),
+    accessorKey: "updatedAt",
+    header: ({ column }) => <SortableHeader column={column} title="Updated" />,
+    cell: ({ row }) => format(new Date(row.original.updatedAt), "d MMM yyyy"),
   },
 ];
 
 export function CompaniesPage() {
-  const rows = companyPreviewRows;
-  const active = rows.filter((row) => row.status === "ACTIVE");
-  const owners = new Set(rows.flatMap((row) => row.psmOwners));
+  const navigate = useNavigate();
+  const { can } = usePermissions();
+  const [params, setParams] = useSearchParams();
+  const [creating, setCreating] = useState(false);
+  const page = Math.max(1, Number(params.get("page")) || 1);
+  const status = params.get("status") === "INACTIVE" ? "INACTIVE" : params.get("status") === "all" ? undefined : "ACTIVE";
+  const [search, setSearch] = useState(params.get("q") ?? "");
+  const debouncedSearch = useDebouncedValue(search);
+
+  const setParam = (key: string, value: string | null) =>
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      if (value) next.set(key, value); else next.delete(key);
+      if (key !== "page") next.delete("page");
+      return next;
+    }, { replace: true });
+
+  const companies = useQuery({
+    queryKey: ["companies", { page, status, search: debouncedSearch }],
+    queryFn: () => companiesApi.list({ page, pageSize: PAGE_SIZE, ...(status ? { status } : {}), ...(debouncedSearch ? { search: debouncedSearch } : {}) }),
+    placeholderData: keepPreviousData,
+  });
 
   return (
     <div className="space-y-6">
@@ -80,24 +111,42 @@ export function CompaniesPage() {
         eyebrow="Placements"
         title="Companies"
         description="Hiring partners, their open job requests and the PSMs who own them."
-        actions={<PreviewBadge />}
+        actions={can("company:write") && (
+          <Button onClick={() => setCreating(true)}><Plus size={16} /> Add company</Button>
+        )}
       />
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Active companies" value={active.length} icon={Building2} />
-        <KpiCard label="Open job requests" value={active.reduce((sum, row) => sum + row.openJobRequests, 0)} icon={BriefcaseBusiness} tone="sky" />
-        <KpiCard label="Open positions" value={active.reduce((sum, row) => sum + row.openPositions, 0)} icon={Target} tone="emerald" />
-        <KpiCard label="PSMs with ownership" value={owners.size} icon={Users} tone="amber" />
-      </div>
       <DataTable
         columns={columns}
-        data={rows}
-        searchPlaceholder="Search companies, industries, PSMs…"
+        data={companies.data?.items}
+        isLoading={companies.isPending}
+        error={companies.error}
+        onRetry={() => void companies.refetch()}
+        onRowClick={(row) => navigate(`/companies/${row.id}`)}
+        searchPlaceholder="Search name, HubSpot ID, industry, location…"
         emptyTitle="No companies yet"
-        emptyDescription="Companies you add will appear here."
+        emptyDescription="Add a company from its HubSpot record to start a drive."
+        server={{
+          page,
+          pageCount: companies.data?.meta.totalPages ?? 1,
+          total: companies.data?.meta.total ?? 0,
+          onPageChange: (next) => setParam("page", String(next)),
+          search,
+          onSearchChange: (value) => {
+            setSearch(value);
+            setParam("q", value || null);
+          },
+        }}
+        toolbar={(
+          <Tabs value={status ?? "all"} onValueChange={(value) => setParam("status", value === "ACTIVE" ? null : value)}>
+            <TabsList>
+              <TabsTrigger value="ACTIVE">Active</TabsTrigger>
+              <TabsTrigger value="INACTIVE">Inactive</TabsTrigger>
+              <TabsTrigger value="all">All</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        )}
       />
-      <p className="text-[11px] text-slate-400">
-        Fictional sample companies. Company records, ownership and history arrive with Phase 2.
-      </p>
+      <CompanyFormDialog open={creating} onOpenChange={setCreating} onSaved={(company) => navigate(`/companies/${company.id}`)} />
     </div>
   );
 }
