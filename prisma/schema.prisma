@@ -1,0 +1,222 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../backend/src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum CompanyStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum JobRequestStatus {
+  DRAFT
+  OPEN
+  ON_HOLD
+  FILLED
+  CANCELLED
+  CLOSED
+}
+
+enum SheetSourceType {
+  COMPANY_PROCESS
+  STUDENT_APPLICATIONS
+  CANDIDATE_PROFILES
+  ASSESSED_POOL
+}
+
+model User {
+  id                    String          @id @default(uuid()) @db.Uuid
+  email                 String          @unique
+  fullName              String
+  passwordHash          String
+  isActive              Boolean         @default(true)
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  roles                 UserRole[]
+  refreshTokens         RefreshToken[]
+  createdCompanies      Company[]       @relation("CompanyCreator")
+  ownedJobRequests      JobRequest[]    @relation("JobRequestOwner")
+  createdJobRequests    JobRequest[]    @relation("JobRequestCreator")
+  assignmentsReceived   PSMAssignment[] @relation("AssignmentOwner")
+  assignmentsCreated    PSMAssignment[] @relation("AssignmentCreator")
+  auditLogs             AuditLog[]
+  teamId                String?         @db.Uuid
+  team                  Team?           @relation("TeamMembers", fields: [teamId], references: [id], onDelete: SetNull)
+  ledTeam               Team?           @relation("TeamLead")
+  teamsCreated          Team[]           @relation("TeamCreator")
+  sheetConnections      SheetConnection[] @relation("SheetConnectionCreator")
+}
+
+model Role {
+  id          String     @id @default(uuid()) @db.Uuid
+  code        String     @unique
+  name        String
+  description String?
+  createdAt   DateTime   @default(now())
+  users       UserRole[]
+}
+
+model Team {
+  id            String            @id @default(uuid()) @db.Uuid
+  name          String            @unique
+  createdById   String            @db.Uuid
+  teamLeadId    String?           @unique @db.Uuid
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  createdBy     User              @relation("TeamCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  teamLead      User?             @relation("TeamLead", fields: [teamLeadId], references: [id], onDelete: SetNull)
+  members       User[]            @relation("TeamMembers")
+  sheetConnections SheetConnection[]
+
+  @@index([createdById, createdAt])
+}
+
+model SheetConnection {
+  id            String           @id @default(uuid()) @db.Uuid
+  spreadsheetId String
+  title         String
+  sourceType    SheetSourceType
+  teamId        String?          @db.Uuid
+  createdById   String           @db.Uuid
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  team          Team?            @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  createdBy     User             @relation("SheetConnectionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  tabMappings   SheetTabMapping[]
+
+  @@unique([spreadsheetId, sourceType])
+  @@index([teamId, sourceType])
+}
+
+model SheetTabMapping {
+  id              String         @id @default(uuid()) @db.Uuid
+  connectionId    String         @db.Uuid
+  workflowStage   String
+  sheetId         Int
+  sheetTitle      String
+  headerRow       Int
+  columnMapping   Json?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  connection      SheetConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, workflowStage])
+  @@index([connectionId, sheetId])
+}
+
+model UserRole {
+  userId String   @db.Uuid
+  roleId String   @db.Uuid
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role     @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @db.Uuid
+  tokenHash  String    @unique
+  familyId   String    @db.Uuid
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([familyId])
+}
+
+model Company {
+  id            String          @id @default(uuid()) @db.Uuid
+  name          String
+  status        CompanyStatus   @default(ACTIVE)
+  notes         String?
+  createdById   String          @db.Uuid
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  createdBy     User            @relation("CompanyCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  jobRequests   JobRequest[]
+  assignments   PSMAssignment[]
+
+  @@index([name])
+  @@index([status, createdAt])
+}
+
+model Product {
+  id          String       @id @default(uuid()) @db.Uuid
+  name        String       @unique
+  description String?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  jobRequests JobRequest[]
+}
+
+model JobRequest {
+  id                      String            @id @default(uuid()) @db.Uuid
+  jobId                   String            @unique
+  companyId               String            @db.Uuid
+  productId               String            @db.Uuid
+  roleTitle               String
+  techStack               String[]
+  openings                Int
+  requiredCandidateCount  Int               @default(1)
+  description             String
+  psmOwnerId              String?           @db.Uuid
+  requestDate             DateTime          @db.Date
+  deadline                DateTime?         @db.Date
+  status                  JobRequestStatus  @default(DRAFT)
+  createdById             String            @db.Uuid
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
+  company                 Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  product                 Product           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  psmOwner                User?             @relation("JobRequestOwner", fields: [psmOwnerId], references: [id], onDelete: SetNull)
+  createdBy               User              @relation("JobRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  assignments             PSMAssignment[]
+
+  @@index([companyId, status])
+  @@index([productId, status])
+  @@index([psmOwnerId, status])
+  @@index([deadline, status])
+  @@unique([id, companyId])
+}
+
+model PSMAssignment {
+  id           String      @id @default(uuid()) @db.Uuid
+  companyId    String      @db.Uuid
+  jobRequestId String?     @db.Uuid
+  assignedToId String      @db.Uuid
+  assignedById String?     @db.Uuid
+  assignedAt   DateTime    @default(now())
+  endedAt      DateTime?
+  notes        String?
+  company      Company     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  jobRequest   JobRequest? @relation(fields: [jobRequestId, companyId], references: [id, companyId], onDelete: Restrict)
+  assignedTo   User        @relation("AssignmentOwner", fields: [assignedToId], references: [id], onDelete: Restrict)
+  assignedBy   User?       @relation("AssignmentCreator", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@index([companyId, endedAt])
+  @@index([jobRequestId, companyId, endedAt])
+  @@index([assignedToId, assignedAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @db.Uuid
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId, createdAt])
+  @@index([actorId, createdAt])
+}
