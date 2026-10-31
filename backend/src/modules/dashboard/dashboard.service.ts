@@ -6,7 +6,7 @@ import type { SummaryQuery } from "./dashboard.validators.js";
 
 const scopeLabel = { organization: "organization", team: "team", self: "individual" } as const;
 
-/** Job-request conditions from the dashboard filter bar (request date, product, skill). */
+/** Job-request conditions from the dashboard filter bar (request date, eligible product, skill). */
 export function jobRequestFilterFrom(query: SummaryQuery): Prisma.JobRequestWhereInput {
   return {
     ...(query.from || query.to
@@ -17,7 +17,7 @@ export function jobRequestFilterFrom(query: SummaryQuery): Prisma.JobRequestWher
         },
       }
       : {}),
-    ...(query.productId ? { productId: query.productId } : {}),
+    ...(query.productId ? { eligibleProducts: { some: { productId: query.productId } } } : {}),
     ...(query.skill ? { skills: { some: { skill: { normalizedName: query.skill } } } } : {}),
   };
 }

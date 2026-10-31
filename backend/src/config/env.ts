@@ -17,6 +17,8 @@ const envSchema = z.object({
   NEON_REALTIME_SECRET: z.string().min(1).optional(),
   NEON_FUNCTION_HELLO_BASE_URL: z.string().url().optional(),
   GOOGLE_SERVICE_ACCOUNT_BASE64: z.string().min(1).optional(),
+  // Used only to build links back to HubSpot records.
+  HUBSPOT_PORTAL_ID: z.string().regex(/^\d+$/).optional(),
   AWS_ACCESS_KEY_ID: z.string().min(1).optional(),
   AWS_SECRET_ACCESS_KEY: z.string().min(1).optional(),
   AWS_ENDPOINT_URL_S3: z.string().url().optional(),

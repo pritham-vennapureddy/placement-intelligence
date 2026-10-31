@@ -7,6 +7,14 @@ datasource db {
   provider = "postgresql"
 }
 
+// Category a product belongs to. Assumed mapping: CCBP_ACADEMY_* -> ACADEMY,
+// CCBP_INTENSIVE* and INTENSIVE_COLLEGE_PLUS -> ACADEMY_INTENSIVE, External -> EXTERNAL.
+enum CandidateCategory {
+  ACADEMY
+  ACADEMY_INTENSIVE
+  EXTERNAL
+}
+
 enum CompanyStatus {
   ACTIVE
   INACTIVE
@@ -29,27 +37,27 @@ enum SheetSourceType {
 }
 
 model User {
-  id                    String          @id @default(uuid()) @db.Uuid
-  email                 String          @unique
-  fullName              String
-  passwordHash          String
-  isActive              Boolean         @default(true)
-  createdAt             DateTime        @default(now())
-  updatedAt             DateTime        @updatedAt
-  roles                 UserRole[]
-  refreshTokens         RefreshToken[]
-  createdCompanies      Company[]       @relation("CompanyCreator")
-  ownedJobRequests      JobRequest[]    @relation("JobRequestOwner")
-  createdJobRequests    JobRequest[]    @relation("JobRequestCreator")
-  assignmentsReceived   PSMAssignment[] @relation("AssignmentOwner")
-  assignmentsCreated    PSMAssignment[] @relation("AssignmentCreator")
-  auditLogs             AuditLog[]
-  teamId                String?         @db.Uuid
-  team                  Team?           @relation("TeamMembers", fields: [teamId], references: [id], onDelete: SetNull)
-  ledTeam               Team?           @relation("TeamLead")
-  teamsCreated          Team[]           @relation("TeamCreator")
-  sheetConnections      SheetConnection[] @relation("SheetConnectionCreator")
-  idempotencyKeys       IdempotencyKey[]
+  id                  String            @id @default(uuid()) @db.Uuid
+  email               String            @unique
+  fullName            String
+  passwordHash        String
+  isActive            Boolean           @default(true)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  roles               UserRole[]
+  refreshTokens       RefreshToken[]
+  createdCompanies    Company[]         @relation("CompanyCreator")
+  ownedJobRequests    JobRequest[]      @relation("JobRequestOwner")
+  createdJobRequests  JobRequest[]      @relation("JobRequestCreator")
+  assignmentsReceived PSMAssignment[]   @relation("AssignmentOwner")
+  assignmentsCreated  PSMAssignment[]   @relation("AssignmentCreator")
+  auditLogs           AuditLog[]
+  teamId              String?           @db.Uuid
+  team                Team?             @relation("TeamMembers", fields: [teamId], references: [id], onDelete: SetNull)
+  ledTeam             Team?             @relation("TeamLead")
+  teamsCreated        Team[]            @relation("TeamCreator")
+  sheetConnections    SheetConnection[] @relation("SheetConnectionCreator")
+  idempotencyKeys     IdempotencyKey[]
 }
 
 model Role {
@@ -62,31 +70,31 @@ model Role {
 }
 
 model Team {
-  id            String            @id @default(uuid()) @db.Uuid
-  name          String            @unique
-  createdById   String            @db.Uuid
-  teamLeadId    String?           @unique @db.Uuid
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  createdBy     User              @relation("TeamCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  teamLead      User?             @relation("TeamLead", fields: [teamLeadId], references: [id], onDelete: SetNull)
-  members       User[]            @relation("TeamMembers")
+  id               String            @id @default(uuid()) @db.Uuid
+  name             String            @unique
+  createdById      String            @db.Uuid
+  teamLeadId       String?           @unique @db.Uuid
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  createdBy        User              @relation("TeamCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  teamLead         User?             @relation("TeamLead", fields: [teamLeadId], references: [id], onDelete: SetNull)
+  members          User[]            @relation("TeamMembers")
   sheetConnections SheetConnection[]
 
   @@index([createdById, createdAt])
 }
 
 model SheetConnection {
-  id            String           @id @default(uuid()) @db.Uuid
+  id            String            @id @default(uuid()) @db.Uuid
   spreadsheetId String
   title         String
   sourceType    SheetSourceType
-  teamId        String?          @db.Uuid
-  createdById   String           @db.Uuid
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-  team          Team?            @relation(fields: [teamId], references: [id], onDelete: SetNull)
-  createdBy     User             @relation("SheetConnectionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  teamId        String?           @db.Uuid
+  createdById   String            @db.Uuid
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  team          Team?             @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  createdBy     User              @relation("SheetConnectionCreator", fields: [createdById], references: [id], onDelete: Restrict)
   tabMappings   SheetTabMapping[]
 
   @@unique([spreadsheetId, sourceType])
@@ -94,40 +102,40 @@ model SheetConnection {
 }
 
 model SheetTabMapping {
-  id              String         @id @default(uuid()) @db.Uuid
-  connectionId    String         @db.Uuid
-  workflowStage   String
-  sheetId         Int
-  sheetTitle      String
-  headerRow       Int
-  columnMapping   Json?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  connection      SheetConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  id            String          @id @default(uuid()) @db.Uuid
+  connectionId  String          @db.Uuid
+  workflowStage String
+  sheetId       Int
+  sheetTitle    String
+  headerRow     Int
+  columnMapping Json?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  connection    SheetConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
   @@unique([connectionId, workflowStage])
   @@index([connectionId, sheetId])
 }
 
 model UserRole {
-  userId String   @db.Uuid
-  roleId String   @db.Uuid
-  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role   Role     @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  userId String @db.Uuid
+  roleId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Restrict)
 
   @@id([userId, roleId])
   @@index([roleId])
 }
 
 model RefreshToken {
-  id         String    @id @default(uuid()) @db.Uuid
-  userId     String    @db.Uuid
-  tokenHash  String    @unique
-  familyId   String    @db.Uuid
-  expiresAt  DateTime
-  revokedAt  DateTime?
-  createdAt  DateTime  @default(now())
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  familyId  String    @db.Uuid
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, revokedAt])
   @@index([familyId])
@@ -162,43 +170,54 @@ model Skill {
   jobRequests    JobRequestSkill[]
 }
 
+// Candidate programmes (e.g. CCBP_ACADEMY_SMART). Applicants to one job come
+// from many products, so products attach to candidates and applications; a job
+// may list the products eligible to apply.
 model Product {
-  id          String       @id @default(uuid()) @db.Uuid
-  name        String       @unique
+  id          String              @id @default(uuid()) @db.Uuid
+  code        String              @unique
+  name        String              @unique
+  category    CandidateCategory
   description String?
-  isActive    Boolean      @default(true)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  jobRequests JobRequest[]
+  isActive    Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  eligibleFor JobRequestProduct[]
 }
 
 model JobRequest {
-  id                      String            @id @default(uuid()) @db.Uuid
-  jobId                   String            @unique
-  companyId               String            @db.Uuid
-  productId               String            @db.Uuid
-  roleTitle               String
-  techStack               String[]
-  openings                Int
-  requiredCandidateCount  Int               @default(1)
-  description             String
-  psmOwnerId              String?           @db.Uuid
-  requestDate             DateTime          @db.Date
-  deadline                DateTime?         @db.Date
-  status                  JobRequestStatus  @default(DRAFT)
-  archivedAt              DateTime?
-  createdById             String            @db.Uuid
-  createdAt               DateTime          @default(now())
-  updatedAt               DateTime          @updatedAt
-  company                 Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  product                 Product           @relation(fields: [productId], references: [id], onDelete: Restrict)
-  psmOwner                User?             @relation("JobRequestOwner", fields: [psmOwnerId], references: [id], onDelete: SetNull)
-  createdBy               User              @relation("JobRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  assignments             PSMAssignment[]
-  skills                  JobRequestSkill[]
+  id                     String              @id @default(uuid()) @db.Uuid
+  // Job ID generated in HubSpot (a UUID); the PSM copies it in. Internal-sheet
+  // application exports carry the same value, so imports match on it.
+  jobId                  String              @unique
+  // HubSpot deal record (object 0-3) the job belongs to.
+  hubspotDealId          String?             @unique
+  companyId              String              @db.Uuid
+  roleTitle              String
+  openings               Int
+  requiredCandidateCount Int                 @default(1)
+  description            String
+  psmOwnerId             String?             @db.Uuid
+  requestDate            DateTime            @db.Date
+  deadline               DateTime?           @db.Date
+  status                 JobRequestStatus    @default(DRAFT)
+  timeline               String?
+  shortlistingMechanism  String?
+  companyRemarks         String?
+  companySheetUrl        String?
+  internalSheetUrl       String?
+  archivedAt             DateTime?
+  createdById            String              @db.Uuid
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+  company                Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  psmOwner               User?               @relation("JobRequestOwner", fields: [psmOwnerId], references: [id], onDelete: SetNull)
+  createdBy              User                @relation("JobRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  assignments            PSMAssignment[]
+  skills                 JobRequestSkill[]
+  eligibleProducts       JobRequestProduct[]
 
   @@index([companyId, status])
-  @@index([productId, status])
   @@index([psmOwnerId, status])
   @@index([deadline, status])
 }
@@ -212,6 +231,16 @@ model JobRequestSkill {
 
   @@id([jobRequestId, skillId])
   @@index([skillId])
+}
+
+model JobRequestProduct {
+  jobRequestId String     @db.Uuid
+  productId    String     @db.Uuid
+  jobRequest   JobRequest @relation(fields: [jobRequestId], references: [id], onDelete: Cascade)
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@id([jobRequestId, productId])
+  @@index([productId])
 }
 
 // Ownership is per job request. One row per (re)assignment; `endedAt` closes the

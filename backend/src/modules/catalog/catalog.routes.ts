@@ -9,3 +9,4 @@ catalogRouter.use(authenticate, requirePermission("dashboard:read"));
 
 catalogRouter.get("/products", catalogController.products);
 catalogRouter.get("/skills", catalogController.skills);
+catalogRouter.get("/owners", requirePermission("job:write"), catalogController.owners);

@@ -53,3 +53,35 @@ export async function recordAudit(db: Db, context: AuditContext, entry: AuditEnt
     },
   });
 }
+
+/** Recent audit events for the given records, newest first, with the actor's name. */
+export function listAuditHistory(db: Db, entityType: string, entityIds: string[], take = 50) {
+  return db.auditLog.findMany({
+    where: { entityType, entityId: { in: entityIds } },
+    select: {
+      id: true,
+      action: true,
+      entityId: true,
+      metadata: true,
+      createdAt: true,
+      actor: { select: { id: true, fullName: true } },
+    },
+    orderBy: { createdAt: "desc" },
+    take,
+  });
+}
+
+/** Field-level before/after for the keys that changed. */
+export function diffFields(before: Record<string, unknown>, after: Record<string, unknown>): Record<string, { from: unknown; to: unknown }> {
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const [key, value] of Object.entries(after)) {
+    const previous = before[key];
+    const same = previous instanceof Date && value instanceof Date
+      ? previous.getTime() === value.getTime()
+      : JSON.stringify(previous) === JSON.stringify(value);
+    if (value !== undefined && !same) {
+      changes[key] = { from: previous ?? null, to: value ?? null };
+    }
+  }
+  return changes;
+}

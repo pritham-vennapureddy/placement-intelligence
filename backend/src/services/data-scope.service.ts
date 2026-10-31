@@ -61,3 +61,8 @@ export async function resolveDataScope(
 export function jobRequestScopeFilter(scope: DataScope): { psmOwnerId?: { in: string[] } } {
   return scope.kind === "organization" ? {} : { psmOwnerId: { in: scope.ownerIds } };
 }
+
+/** Whether a job request with this owner is inside the scope. */
+export function isJobOwnerInScope(scope: DataScope, psmOwnerId: string | null): boolean {
+  return scope.kind === "organization" || (psmOwnerId !== null && scope.ownerIds.includes(psmOwnerId));
+}

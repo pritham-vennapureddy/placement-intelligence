@@ -36,6 +36,28 @@ async function main(): Promise<void> {
     });
   }
 
+  // Candidate products as they appear in platform exports. Category mapping is
+  // an assumption to confirm: Academy plans, Intensive plans, External.
+  const products = [
+    { code: "CCBP_ACADEMY_SMART", name: "CCBP Academy Smart", category: "ACADEMY" },
+    { code: "CCBP_ACADEMY_GENIUS", name: "CCBP Academy Genius", category: "ACADEMY" },
+    { code: "CCBP_ACADEMY_EDGE", name: "CCBP Academy Edge", category: "ACADEMY" },
+    { code: "CCBP_ACADEMY_SMART_CAREER_PLUS", name: "CCBP Academy Smart Career Plus", category: "ACADEMY" },
+    { code: "CCBP_ACADEMY_GENIUS_CAREER_PLUS", name: "CCBP Academy Genius Career Plus", category: "ACADEMY" },
+    { code: "CCBP_INTENSIVE", name: "CCBP Intensive", category: "ACADEMY_INTENSIVE" },
+    { code: "CCBP_INTENSIVE_NSDC_SKILL_INDIA", name: "CCBP Intensive NSDC Skill India", category: "ACADEMY_INTENSIVE" },
+    { code: "INTENSIVE_COLLEGE_PLUS", name: "Intensive College Plus", category: "ACADEMY_INTENSIVE" },
+    { code: "External", name: "External", category: "EXTERNAL" },
+  ] as const;
+
+  for (const product of products) {
+    await prisma.product.upsert({
+      where: { code: product.code },
+      create: product,
+      update: { name: product.name, category: product.category },
+    });
+  }
+
   const passwordHash = await hash(adminPassword, 12);
   const admin = await prisma.user.upsert({
     where: { email: adminEmail },
