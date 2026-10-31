@@ -14,6 +14,7 @@ export interface DashboardSummary {
   psmCount: number;
   scope: "organization" | "team" | "individual";
   teamName: string | null;
+  funnel?: import("./workflow").Funnel;
   companies: {
     id: string;
     name: string;

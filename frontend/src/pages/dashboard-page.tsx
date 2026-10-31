@@ -24,6 +24,7 @@ import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { useAuth } from "../contexts/auth-context";
 import { FilterBar } from "../components/filter-bar";
+import { LiveFunnel } from "../components/live-funnel";
 import { useDashboardFilters } from "../hooks/use-dashboard-filters";
 import { dashboardApi } from "../services/api";
 
@@ -43,14 +44,6 @@ const assessedCandidates = [
   { name: "Ishaan Kapoor", initials: "IK", role: "Product designer", skills: "Figma · Research · UX", score: 76, stage: "Assessment complete", company: "Mosaic Finance", activity: "No activity for 6 days", priority: "Follow up" },
   { name: "Diya Nair", initials: "DN", role: "Backend engineer", skills: "Java · Spring · AWS", score: 91, stage: "Final round", company: "Cloudline", activity: "Round feedback pending", priority: "High" },
   { name: "Kabir Patel", initials: "KP", role: "ML engineer", skills: "Python · PyTorch · NLP", score: 73, stage: "Ready for matching", company: "—", activity: "Review target companies", priority: "Follow up" },
-];
-
-const pipeline = [
-  { label: "Applications", count: 486, percent: 100, color: "bg-indigo-500" },
-  { label: "Resume shortlisted", count: 164, percent: 76, color: "bg-violet-500" },
-  { label: "Screened", count: 110, percent: 58, color: "bg-sky-500" },
-  { label: "Interviewing", count: 68, percent: 42, color: "bg-teal-500" },
-  { label: "Selected", count: 42, percent: 27, color: "bg-emerald-500" },
 ];
 
 const pageDetails: Record<string, { title: string; subtitle: string }> = {
@@ -136,39 +129,6 @@ function WorkspaceMetrics() {
   );
 }
 
-function PipelineCard() {
-  return (
-    <Card>
-      <CardContent className="p-5 md:p-6">
-        <CardHeader className="mb-6">
-          <div>
-            <CardTitle>Candidate funnel</CardTitle>
-            <p className="mt-1 text-xs text-slate-400">Progress by latest recorded stage</p>
-          </div>
-          <PreviewLabel />
-        </CardHeader>
-        <div className="space-y-4">
-          {pipeline.map((stage) => (
-            <div key={stage.label}>
-              <div className="mb-1.5 flex items-center justify-between text-xs">
-                <span className="font-medium text-slate-600">{stage.label}</span>
-                <span className="font-semibold tabular-nums text-slate-800">{numberFormat.format(stage.count)}</span>
-              </div>
-              <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                <div className={`h-full rounded-full ${stage.color}`} style={{ width: `${stage.percent}%` }} />
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="mt-5 grid grid-cols-2 gap-3 border-t border-slate-100 pt-4">
-          <div><p className="text-xs text-slate-400">Shortlist → selected</p><p className="mt-1 text-lg font-semibold text-slate-800">25.6%</p></div>
-          <div><p className="text-xs text-slate-400">Application → selected</p><p className="mt-1 text-lg font-semibold text-slate-800">8.6%</p></div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 function CompanyTable({ onSelect }: { onSelect: (name: string) => void }) {
   return (
     <Card>
@@ -227,21 +187,9 @@ function Overview({ isAdmin, onSelectCompany }: { isAdmin: boolean; onSelectComp
 
       <WorkspaceMetrics />
 
-      <div className="flex items-center justify-between">
-        <div><h2 className="text-sm font-semibold text-slate-800">Placement outcomes</h2><p className="mt-0.5 text-xs text-slate-400">Monthly targets and conversion performance</p></div>
-        <PreviewLabel />
-      </div>
-      <section aria-label="Monthly placement metrics" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="Placements" value="42 / 50" detail="8 more to reach monthly target" icon={Target} accent="bg-indigo-50 text-indigo-600" trend="8% vs last month" />
-        <MetricCard label="Positions closed" value="18 / 29" detail="62% of open positions filled" icon={Check} accent="bg-emerald-50 text-emerald-600" />
-        <MetricCard label="Companies hiring" value="15 / 21" detail="71% of active companies hired" icon={Building2} accent="bg-sky-50 text-sky-600" />
-        <MetricCard label="Shortlist → selected" value="38.2%" detail="42 selections from 110 screened" icon={ArrowUpRight} accent="bg-amber-50 text-amber-600" trend="4.3% vs last month" />
-      </section>
+      <LiveFunnel />
 
-      <section className="grid gap-5 xl:grid-cols-[1.05fr_1.6fr]">
-        <PipelineCard />
-        <CompanyTable onSelect={onSelectCompany} />
-      </section>
+      <CompanyTable onSelect={onSelectCompany} />
 
       <section className="grid gap-5 lg:grid-cols-2">
         <Card>
@@ -312,11 +260,12 @@ function PsmWorkspace({ teamLead }: { teamLead: boolean }) {
   ];
   return (
     <div className="space-y-5">
+      <LiveFunnel />
       {summary.isError && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">Could not load your live workspace: {summary.error instanceof Error ? summary.error.message : "Unknown error"}</div>}
       <div className="rounded-2xl bg-indigo-700 p-5 text-white sm:p-6">
         <p className="text-xs font-semibold uppercase tracking-wide text-indigo-200">{teamLead ? "Team lead workspace" : "PSM workspace"}{summary.data?.teamName ? ` · ${summary.data.teamName}` : ""}</p>
         <h2 className="mt-2 text-xl font-semibold">{teamLead ? "Your team’s placement work" : "Your assigned company pipelines"}</h2>
-        <p className="mt-1 text-sm text-indigo-200">Live counts from your database assignments. Student analytics will appear after the mapped sheet data is imported.</p>
+        <p className="mt-1 text-sm text-indigo-200">Live counts for the job requests you own or your team owns.</p>
       </div>
       <div className="grid gap-4 sm:grid-cols-3">
         <MetricCard label="Assigned companies" value={numberFormat.format(summary.data?.totalCompanies ?? 0)} detail="Based on current ownership" icon={Building2} accent="bg-indigo-50 text-indigo-600" />
@@ -336,7 +285,6 @@ function PsmWorkspace({ teamLead }: { teamLead: boolean }) {
             </div>;
           })}</div>}
       </CardContent></Card>
-      <Card><CardContent className="flex gap-3 p-5"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600"><FileSpreadsheet size={18} /></span><div><p className="text-sm font-semibold text-slate-800">Student pipeline is not imported yet</p><p className="mt-1 text-xs leading-5 text-slate-500">After your team lead maps application and interview tabs, the next phase can import candidate rows and provide live shortlist, interview and selection metrics. No sample candidate totals are shown here.</p></div></CardContent></Card>
     </div>
   );
 }
@@ -373,8 +321,7 @@ export function DashboardPage() {
       {location.pathname === "/assessed-pool" && <AssessedPoolPage />}
       {location.pathname === "/psm-workspace" && <PsmWorkspace teamLead={isManager} />}
       <p className="border-t border-slate-200 pt-4 text-[11px] text-slate-400">
-        Placement funnel, company details and assessed-pool records on this screen are preview data. Live database metrics are labeled separately.
-      </p>
+        Panels marked “Preview data” show sample figures; the placement funnel and workspace totals are live.</p>
     </div>
   );
 }

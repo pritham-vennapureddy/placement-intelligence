@@ -281,3 +281,37 @@ Open:
 
 - The database round trip from India to Neon's us-east-2 region is about 250 ms. In production the API should run in the same region as the database, and an Asia-Pacific region would suit users in India. A Neon project's region cannot be changed, so this needs deciding before go-live.
 - Company activities and follow-ups move to Phase 6 (PSM operations).
+
+## 11. Phases 3–4 outcome (2026-10-31)
+
+Built on the dev branch (migration `20261031180000_candidates_screening_pipeline_imports`, additive only).
+
+**Sheet imports (both phases use one pipeline).** Upload .xlsx/.csv on a job request → the PSM maps tabs and columns (pre-filled from the last approved import of that job) → the whole file is checked into staged rows with errors / warnings / notes → the PSM reviews, includes or leaves out rows, and (company sheets) matches unmatched profiles by hand → approve saves everything in one transaction. The original file, every staged row (original and normalised values), every issue and the approval are kept. Nothing is deleted when a row disappears from a later file; it is reported.
+
+**Internal sheet (Phase 3).** Applications tab and columns; products from a column or a lookup tab (e.g. Eligible Students); for RS / SC / AS / SP: a tab, a decision column inside another tab, "not conducted", "select in the dashboard" or "leave as is", with the meaning of each value (e.g. `c` / `reject` / `hold`), priority and scores. Candidates are matched by Candidate ID, else email then mobile.
+
+**In the dashboard (Phase 3).** Job request → Internal screening: stage cards with counts, stage status set by hand and logged, next planned date and remarks, candidate decisions saved one at a time, manual selection onto a stage, shortlisting method notes, adding candidates by hand, and re-using candidates from an earlier drive (D6). Candidates list and profile with every job's internal and company history; contact details hidden from roles without `candidate:pii:read`.
+
+**Company pipeline (Phase 4).** Rounds configured per job (added by hand or from the company sheet's columns), nominations (the owning PSM nominates; internally rejected candidates are refused), round results, and Selected → Offer released → Offer accepted → Joined (or declined / dropped) with dates and history. Company sheet import matches profiles by email then mobile and nominates profiles the company already has.
+
+**Dashboard.** Live funnel from candidate records (applications, RS/SC/AS/SP selections, nominated, selected, offers, joined), following the date / product / tech-stack filters. Internal screening and Company pipeline pages show progress per active job; the Import centre lists every upload.
+
+**Rules assumed (please confirm):**
+
+| Topic | Assumed rule |
+|---|---|
+| Stage flow | Being recorded at a later stage after a rejection at an earlier one is a **warning**, not a block. A stage tab without a decision column means everyone listed is selected. |
+| Re-imports | A sheet only fills blank candidate fields; a different stored email / mobile is kept and reported. Decisions a PSM entered by hand are kept unless the PSM ticks "let the sheet replace". |
+| Nominations | Any applicant never rejected at an internal stage can be nominated; final-shortlist candidates are offered first. |
+| Company sheet | Being in the company's sheet means "in company process"; a rejected round means rejected unless the final-status column says otherwise; offers and joining recorded by a PSM are never overwritten by a sheet. |
+| Pipeline moves | Not sent → In process → On hold / Rejected / Selected / Dropped; Selected → Offer released → Offer accepted / declined; Accepted → Joined / Dropped. Rejected, declined, joined and dropped are final. |
+| Candidate category | Derived from the product (Academy plans → Academy, Intensive plans → Academy Intensive, External → External) when not set. |
+
+**Verified:** 52 unit tests (import planners, matching, value meanings, normalisers, status rules); an end-to-end API run on the dev branch with fictional workbooks shaped like the real sheets (rows from another drive, hand-entered decisions vs re-imports, manual company-sheet match, offers to joining, re-use from an earlier drive, data scope); and a browser walkthrough of both wizards, screening, nominations, pipeline, dashboard and candidate history.
+
+**Not yet:**
+
+- Google Sheets links and scheduled re-sync (Phase 5); uploads only for now.
+- The resume-analysis ("tool") tab and the Google Form profile tab are not imported yet.
+- Uploaded files are stored in the database; move to object storage before volumes grow.
+- Newer modules (applications, pipeline, candidates, imports service) query Prisma from their services for brevity; split into repositories when they grow.

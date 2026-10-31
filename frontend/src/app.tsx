@@ -7,11 +7,16 @@ import { Button } from "./components/ui/button";
 import { Toaster } from "./components/ui/sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { AuthProvider, useAuth } from "./contexts/auth-context";
+import { CandidateDetailPage } from "./features/candidates/candidate-detail-page";
+import { CandidatesPage } from "./features/candidates/candidates-page";
 import { CompaniesPage } from "./features/companies/companies-page";
 import { CompanyDetailPage } from "./features/companies/company-detail-page";
 import { JobRequestDetailPage } from "./features/job-requests/job-request-detail-page";
 import { JobRequestFormPage } from "./features/job-requests/job-request-form-page";
+import { ImportBatchPage } from "./features/imports/import-batch-page";
+import { ImportUploadPage } from "./features/imports/import-upload-page";
 import { JobRequestsPage } from "./features/job-requests/job-requests-page";
+import { ImportCentrePage, PipelineOverviewPage, ScreeningOverviewPage } from "./features/pipeline/progress-pages";
 import { DashboardPage } from "./pages/dashboard-page";
 import { LoginPage } from "./pages/login-page";
 import { MODULE_OUTLINES, ModulePlaceholderPage } from "./pages/module-placeholder-page";
@@ -34,13 +39,13 @@ const pages: Record<string, ReactNode> = {
   "/psm-workspace": <DashboardPage />,
   "/companies": <CompaniesPage />,
   "/job-requests": <JobRequestsPage />,
-  "/candidates": <ModulePlaceholderPage module={MODULE_OUTLINES.candidates} />,
-  "/assessed-pool": <DashboardPage />,
-  "/screening": <ModulePlaceholderPage module={MODULE_OUTLINES.screening} />,
-  "/pipeline": <ModulePlaceholderPage module={MODULE_OUTLINES.pipeline} />,
+  "/candidates": <CandidatesPage />,
+  "/assessed-pool": <CandidatesPage assessedOnly />,
+  "/screening": <ScreeningOverviewPage />,
+  "/pipeline": <PipelineOverviewPage />,
   "/psm-operations": <ModulePlaceholderPage module={MODULE_OUTLINES.psmOperations} />,
   "/rsa": <ModulePlaceholderPage module={MODULE_OUTLINES.rsa} />,
-  "/imports": <ModulePlaceholderPage module={MODULE_OUTLINES.imports} />,
+  "/imports": <ImportCentrePage />,
   "/sheets": <SheetsPage />,
   "/reports": <ModulePlaceholderPage module={MODULE_OUTLINES.reports} />,
   "/teams": <TeamsPage />,
@@ -48,6 +53,9 @@ const pages: Record<string, ReactNode> = {
 
 const DETAIL_ROUTES: { path: string; permission: Permission; element: ReactNode }[] = [
   { path: "/companies/:companyId", permission: "company:read", element: <CompanyDetailPage /> },
+  { path: "/candidates/:candidateId", permission: "candidate:read", element: <CandidateDetailPage /> },
+  { path: "/imports/:batchId", permission: "job:read", element: <ImportBatchPage /> },
+  { path: "/job-requests/:jobRequestId/imports/new", permission: "import:run", element: <ImportUploadPage /> },
   { path: "/job-requests/new", permission: "job:write", element: <JobRequestFormPage /> },
   { path: "/job-requests/:jobRequestId", permission: "job:read", element: <JobRequestDetailPage /> },
   { path: "/job-requests/:jobRequestId/edit", permission: "job:write", element: <JobRequestFormPage /> },

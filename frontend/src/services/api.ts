@@ -104,9 +104,9 @@ async function refreshAccessToken(): Promise<boolean> {
   return refreshInFlight;
 }
 
-type RequestOptions = RequestInit & { idempotencyKey?: string };
+export type RequestOptions = RequestInit & { idempotencyKey?: string };
 
-async function request<T>(
+export async function request<T>(
   path: string,
   options: RequestOptions = {},
   retryAfterRefresh = true,
@@ -116,7 +116,7 @@ async function request<T>(
   if (idempotencyKey) {
     headers.set(IDEMPOTENCY_HEADER, idempotencyKey);
   }
-  if (init.body && !headers.has("Content-Type")) {
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
   if (accessToken) {
@@ -187,7 +187,7 @@ export const authApi = {
   },
 };
 
-function toQueryString(params: Record<string, string | undefined>): string {
+export function toQueryString(params: Record<string, string | undefined>): string {
   const search = new URLSearchParams(
     Object.entries(params).filter((entry): entry is [string, string] => Boolean(entry[1])),
   ).toString();

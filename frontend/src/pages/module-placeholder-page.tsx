@@ -36,46 +36,9 @@ export function ModulePlaceholderPage({ module }: { module: ModuleOutline }) {
 }
 
 export const MODULE_OUTLINES = {
-  candidates: {
-    eyebrow: "Placements",
-    title: "Candidates",
-    description: "Candidate profiles, categories, assessed-pool status and application history.",
-    phase: 3,
-    capabilities: [
-      "Profiles with Candidate ID, college, degree and skills",
-      "Academy, Academy Intensive and External categories",
-      "Assessed pool: Yes, No or Unknown (never assumed)",
-      "Separate history for every job request applied to",
-      "Contact details visible only to permitted roles",
-      "Classification change history",
-    ],
-  },
-  screening: {
-    eyebrow: "Placements",
-    title: "Internal screening",
-    description: "The PSM's TA → RS → SC → AS → SP shortlist for each job request.",
-    phase: 3,
-    capabilities: [
-      "Stage status set explicitly, never inferred",
-      "Candidate outcome, reason and remarks per stage",
-      "Save progress candidate by candidate",
-      "Shortlisting method recorded per job request",
-      "Next planned date and stage owner",
-      "Internally rejected candidates cannot be nominated",
-    ],
-  },
-  pipeline: {
-    eyebrow: "Placements",
-    title: "Company pipeline",
-    description: "Company-side interview rounds, offers and joining for nominated candidates.",
-    phase: 4,
-    capabilities: [
-      "Configurable rounds per job request",
-      "Interview dates, interviewer and feedback",
-      "Selected, offer released, offer accepted and joined tracked separately",
-      "Full stage history per candidate",
-    ],
-  },
+
+
+
   psmOperations: {
     eyebrow: "Operations",
     title: "PSM operations",
@@ -100,20 +63,7 @@ export const MODULE_OUTLINES = {
       "Ready for WhatsApp and Google Forms channels",
     ],
   },
-  imports: {
-    eyebrow: "Data",
-    title: "Import centre",
-    description: "Excel, CSV and Google Sheets imports with review before anything is saved.",
-    phase: 5,
-    capabilities: [
-      "Worksheet detection and preview",
-      "Column mapping and TA/RS/SC/AS/SP sheet mapping",
-      "Duplicate detection and validation errors",
-      "Human approval before saving",
-      "Job ID used to match job requests",
-      "Rows missing from a source are flagged, never deleted",
-    ],
-  },
+
   reports: {
     eyebrow: "Data",
     title: "Reports",

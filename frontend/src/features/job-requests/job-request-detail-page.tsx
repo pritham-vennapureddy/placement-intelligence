@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { differenceInCalendarDays, format } from "date-fns";
 import { ArrowLeft, ExternalLink, Pencil, RefreshCw, UserRoundCog } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { HistoryList } from "../../components/history-list";
 import { PageHeader } from "../../components/page-header";
 import { EmptyState, ErrorState, LoadingRows } from "../../components/states";
@@ -10,6 +10,9 @@ import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { jobRequestsApi } from "../../services/api";
+import { importsApi } from "../../services/workflow-api";
+import { PipelineTab } from "../pipeline/pipeline-tab";
+import { ScreeningTab } from "../screening/screening-tab";
 import { ChangeStatusDialog, ReassignOwnerDialog } from "./job-request-dialogs";
 import { JobStatusBadge } from "./job-status-badge";
 
@@ -32,10 +35,44 @@ function ExternalAnchor({ href, children }: { href: string; children: ReactNode 
   );
 }
 
+function JobImports({ jobRequestId }: { jobRequestId: string }) {
+  const imports = useQuery({ queryKey: ["imports", "job", jobRequestId], queryFn: () => importsApi.listForJob(jobRequestId) });
+  if (imports.isPending) return <Card><LoadingRows /></Card>;
+  if (imports.error) return <Card><ErrorState error={imports.error} /></Card>;
+  if (imports.data.length === 0) return <Card><EmptyState title="No imports yet" description="Import the internal sheet from the Internal screening tab, and the company sheet from the Company pipeline tab." /></Card>;
+  const statusLabel = { UPLOADED: "Waiting for mapping", VALIDATED: "Waiting for approval", COMMITTED: "Saved", CANCELLED: "Cancelled" } as const;
+  return (
+    <Card className="overflow-hidden">
+      <ol className="divide-y divide-slate-100">
+        {imports.data.map((batch) => (
+          <li key={batch.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+            <div>
+              <Link to={`/imports/${batch.id}`} className="text-sm font-semibold text-slate-800 hover:text-indigo-700">{batch.sourceFileName}</Link>
+              <p className="text-xs text-slate-500">
+                {batch.target === "COMPANY_PIPELINE" ? "Company sheet" : "Internal sheet"} · {batch.batchCode} · {format(new Date(batch.createdAt), "d MMM yyyy, HH:mm")} · {batch.importedBy.fullName}
+              </p>
+            </div>
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${batch.status === "COMMITTED" ? "bg-emerald-50 text-emerald-700" : batch.status === "CANCELLED" ? "bg-slate-100 text-slate-500" : "bg-amber-50 text-amber-700"}`}>
+              {statusLabel[batch.status]}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </Card>
+  );
+}
+
 export function JobRequestDetailPage() {
   const { jobRequestId = "" } = useParams();
   const [changingStatus, setChangingStatus] = useState(false);
   const [reassigning, setReassigning] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const tab = params.get("tab") ?? "overview";
+  const setTab = (value: string) => setParams((current) => {
+    const next = new URLSearchParams(current);
+    if (value === "overview") next.delete("tab"); else next.set("tab", value);
+    return next;
+  }, { replace: true });
   const job = useQuery({ queryKey: ["job-requests", jobRequestId], queryFn: () => jobRequestsApi.get(jobRequestId) });
 
   if (job.isPending) return <Card><LoadingRows rows={6} /></Card>;
@@ -88,9 +125,12 @@ export function JobRequestDetailPage() {
         ))}
       </div>
 
-      <Tabs defaultValue="overview">
-        <TabsList>
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="max-w-full flex-wrap justify-start group-data-[orientation=horizontal]/tabs:h-auto">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="screening">Internal screening</TabsTrigger>
+          <TabsTrigger value="pipeline">Company pipeline</TabsTrigger>
+          <TabsTrigger value="imports">Imports</TabsTrigger>
           <TabsTrigger value="ownership">Ownership ({data.assignments.length})</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
@@ -122,6 +162,10 @@ export function JobRequestDetailPage() {
             </dl>
           </Card>
         </TabsContent>
+
+        <TabsContent value="screening"><ScreeningTab jobRequestId={data.id} /></TabsContent>
+        <TabsContent value="pipeline"><PipelineTab jobRequestId={data.id} /></TabsContent>
+        <TabsContent value="imports"><JobImports jobRequestId={data.id} /></TabsContent>
 
         <TabsContent value="ownership">
           <Card className="overflow-hidden">

@@ -60,4 +60,4 @@ Enable the Google Sheets API for the service-account project, set the service-ac
 
 ## Status
 
-Phases 1 (foundation) and 2 (companies, job requests, PSM ownership) are complete. Other modules show what each later phase will deliver. Set `HUBSPOT_PORTAL_ID` in `.env` so companies and deals link back to HubSpot.
+Phases 1–4 are complete: foundation; companies, job requests and PSM ownership; candidates and internal screening with the internal-sheet import wizard; and the company pipeline with the company-sheet import wizard. Other modules show what each later phase will deliver. Set `HUBSPOT_PORTAL_ID` in `.env` so companies and deals link back to HubSpot.
