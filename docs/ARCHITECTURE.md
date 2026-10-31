@@ -158,7 +158,7 @@ Notes on specific choices:
 
 | # | Topic | Decision | Effect on the design |
 |---|---|---|---|
-| D1 | Candidate identity | Candidate ID is globally unique and stable; email is unique too | `Candidate.candidateCode` and `Candidate.email` are both unique. An import row whose email matches a different Candidate ID is raised as a conflict for review |
+| D1 | Candidate identity | Candidate ID is globally unique and stable; ~~email is unique too~~ **revision proposed:** the source data has emails and mobiles shared by several user IDs (see [source-sheets-analysis.md](source-sheets-analysis.md)), so email and mobile are indexed, not unique, and probable duplicates are flagged | `Candidate.candidateCode` and `Candidate.email` are both unique. An import row whose email matches a different Candidate ID is raised as a conflict for review |
 | D2 | Job ID & company data | PSMs enter the Job ID and company details manually. Later, company details will come from HubSpot via an API, keyed by an ID the PSM provides | `JobRequest.jobId` is a required, unique text field entered by the PSM. `Company.hubspotCompanyId` is optional and unique, reserved for the HubSpot integration |
 | D3 | Company identity | No separate company code exists; the Job ID is the business key | Companies are not matched automatically on import. Job rows are matched by Job ID; new companies are picked or created by the PSM |
 | D4 | PSM ownership | Ownership is per job request | `PSMAssignment` is job-level only (`companyId` removed, `jobRequestId` required, one open assignment per job). A company's PSMs are derived from its job requests. The dashboard company filter that uses company assignments changes accordingly |
@@ -173,7 +173,7 @@ Needed before Phase 3–4:
 7. **"Partially Completed".** Purely a manual status, or does it mean "some candidates still PENDING"?
 8. **Shortlisting notes.** Should a PSM have to fill in the shortlisting method before closing the internal process or nominating anyone?
 9. **Offer data.** Should CTC / offer letter be stored? It is sensitive; it is left out for now.
-9a. **Products per job.** Can one job request belong to more than one product? Assumed no (one product per job).
+9a. **Products per job.** Answered by the source sheets: applicants come from many products, so product belongs to the candidate and the application. Jobs can optionally list eligible products.
 
 Needed before Phase 5–6:
 

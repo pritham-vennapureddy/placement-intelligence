@@ -79,6 +79,62 @@ enum InternalStage {
   FINAL_SHORTLIST
 }
 
+// NEW (source sheets)
+enum ScreeningPriority {
+  P1
+  P2
+  P3
+}
+
+// NEW (source sheets)
+enum EducationLevel {
+  TENTH
+  INTERMEDIATE
+  DIPLOMA
+  BACHELORS
+  MASTERS
+}
+
+// NEW (source sheets) - the sheets mix percentages and CGPA
+enum ScoreType {
+  PERCENTAGE
+  CGPA
+}
+
+// NEW (source sheets)
+enum ExperienceType {
+  INTERNSHIP
+  FULL_TIME
+}
+
+// NEW (source sheets) - the lead owner is the job's PSM owner (PSMAssignment)
+enum ContributionRole {
+  SCREENER_PRIMARY
+  SCREENER_SECONDARY
+  GUIDANCE_PRIMARY
+  GUIDANCE_SECONDARY
+}
+
+// NEW (source sheets)
+enum TaskStatus {
+  ACTIVE
+  COMPLETED
+}
+
+// NEW (source sheets)
+enum GuidanceStatus {
+  SCHEDULED
+  CONDUCTED
+  CANCELLED
+}
+
+// NEW (source sheets) - who an incentive weight applies to
+enum IncentiveRole {
+  LEAD_OWNER
+  SCREENER_PRIMARY
+  GUIDANCE_PRIMARY
+}
+
 // NEW
 enum StageStatus {
   NOT_STARTED
@@ -285,6 +341,11 @@ model User {
   homeworkAssigned      HomeworkAssignment[]             @relation("HomeworkAssigner")
   mentorFeedback        MentorFeedback[]                 @relation("MentorFeedbackAuthor")
   idempotencyKeys       IdempotencyKey[]
+  tasksDone             PsmTask[]                        @relation("PsmTaskDoneBy")
+  contributions         JobContribution[]
+  guidancePrimary       GuidanceSession[]                @relation("GuidancePrimaryHost")
+  guidanceSecondary     GuidanceSession[]                @relation("GuidanceSecondaryHost")
+  monthlyTargets        PsmMonthlyTarget[]
 }
 
 model Role {
@@ -363,16 +424,20 @@ model Company {
   @@index([status, createdAt])
 }
 
+// CHANGED (source sheets): products are candidate programmes such as
+// CCBP_INTENSIVE or CCBP_ACADEMY_SMART; the category follows from the product.
 model Product {
-  id          String       @id @default(uuid()) @db.Uuid
-  name        String       @unique
-  description String?
-  isActive    Boolean      @default(true)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  jobRequests JobRequest[]
-  // NEW
-  candidates  Candidate[]
+  id           String              @id @default(uuid()) @db.Uuid
+  code         String              @unique // e.g. CCBP_ACADEMY_SMART, External
+  name         String              @unique
+  category     CandidateCategory
+  description  String?
+  isActive     Boolean             @default(true)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  eligibleFor  JobRequestProduct[]
+  candidates   CandidateProduct[]
+  applications Application[]
 }
 
 // NEW — normalized tech stack / skills for filtering and tech-stack analytics.
@@ -390,8 +455,9 @@ model Skill {
 model JobRequest {
   id                     String                  @id @default(uuid()) @db.Uuid
   jobId                  String                  @unique // entered manually by the PSM; reconciliation key for imports
+  // Platform job UUID seen in the "Applied Users" export; matches application imports.
+  platformJobId          String?                 @unique
   companyId              String                  @db.Uuid
-  productId              String                  @db.Uuid
   roleTitle              String
   techStack              String[] // existing; superseded by `skills`, dropped after backfill
   openings               Int
@@ -401,13 +467,17 @@ model JobRequest {
   requestDate            DateTime                @db.Date
   deadline               DateTime?               @db.Date
   status                 JobRequestStatus        @default(DRAFT)
-  // NEW
+  // NEW (source sheets: work tracker)
+  timeline               String? // Immediate / 1 Week / 2 Weeks
+  shortlistingMechanism  String? // proposed by the company or PSM
+  companyRemarks         String?
+  companySheetUrl        String?
+  internalSheetUrl       String?
   archivedAt             DateTime?
   createdById            String                  @db.Uuid
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   company                Company                 @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  product                Product                 @relation(fields: [productId], references: [id], onDelete: Restrict)
   psmOwner               User?                   @relation("JobRequestOwner", fields: [psmOwnerId], references: [id], onDelete: SetNull)
   createdBy              User                    @relation("JobRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
   assignments            PSMAssignment[]
@@ -419,9 +489,12 @@ model JobRequest {
   activities             CompanyActivity[]
   followUps              FollowUp[]
   importBatches          ImportBatch[]
+  eligibleProducts       JobRequestProduct[]
+  tasks                  PsmTask[]
+  contributions          JobContribution[]
+  guidanceSessions       GuidanceSession[]
 
   @@index([companyId, status])
-  @@index([productId, status])
   @@index([psmOwnerId, status])
   @@index([deadline, status])
 }
@@ -436,6 +509,17 @@ model JobRequestSkill {
 
   @@id([jobRequestId, skillId])
   @@index([skillId])
+}
+
+// NEW — products whose candidates may apply (applicants come from many products).
+model JobRequestProduct {
+  jobRequestId String     @db.Uuid
+  productId    String     @db.Uuid
+  jobRequest   JobRequest @relation(fields: [jobRequestId], references: [id], onDelete: Cascade)
+  product      Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@id([jobRequestId, productId])
+  @@index([productId])
 }
 
 // CHANGED — ownership is per job request only (company-level assignment removed;
@@ -463,21 +547,27 @@ model PSMAssignment {
 // NEW
 model Candidate {
   id                    String                           @id @default(uuid()) @db.Uuid
-  candidateCode         String                           @unique // business "Candidate ID"
+  candidateCode         String                           @unique // platform user_id (UUID)
   fullName              String
-  email                 String?                          @unique // PII; unique per person
-  mobile                String? // PII
-  college               String?
-  degree                String?
-  graduationYear        Int?
+  // PII. Not unique: the source data has emails and mobiles shared by several
+  // user IDs; probable duplicates are raised as DataQualityIssue rows instead.
+  email                 String?
+  mobile                String?
+  alternateMobile       String?
+  gender                String?
+  currentCity           String?
+  state                 String?
+  githubUrl             String?
+  codingProfileUrl      String?
   resumeUrl             String?
-  productId             String?                          @db.Uuid
-  category              CandidateCategory?
+  category              CandidateCategory? // current category; per-product history in CandidateProduct
   assessedPool          AssessedPoolStatus               @default(UNKNOWN)
   archivedAt            DateTime?
   createdAt             DateTime                         @default(now())
   updatedAt             DateTime                         @updatedAt
-  product               Product?                         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  products              CandidateProduct[]
+  education             CandidateEducation[]
+  experience            CandidateExperience[]
   skills                CandidateSkill[]
   classificationHistory CandidateClassificationHistory[]
   applications          Application[]
@@ -486,8 +576,9 @@ model Candidate {
   rsaAssessments        RSAAssessment[]
   homework              HomeworkAssignment[]
 
+  @@index([email])
   @@index([mobile])
-  @@index([productId, category])
+  @@index([category])
   @@index([assessedPool])
   @@index([fullName])
 }
@@ -524,25 +615,29 @@ model CandidateClassificationHistory {
 
 // NEW — one candidate ↔ one job request. Separate history per application.
 model Application {
-  id            String                   @id @default(uuid()) @db.Uuid
-  candidateId   String                   @db.Uuid
-  jobRequestId  String                   @db.Uuid
-  status        ApplicationStatus        @default(ACTIVE)
-  appliedAt     DateTime                 @default(now())
-  source        ChangeSource             @default(MANUAL)
-  importBatchId String?                  @db.Uuid
-  withdrawnAt   DateTime?
-  createdAt     DateTime                 @default(now())
-  updatedAt     DateTime                 @updatedAt
-  candidate     Candidate                @relation(fields: [candidateId], references: [id], onDelete: Restrict)
-  jobRequest    JobRequest               @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
-  importBatch   ImportBatch?             @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
-  stageOutcomes InternalStageCandidate[]
-  nomination    CompanyNomination?
+  id                String                   @id @default(uuid()) @db.Uuid
+  candidateId       String                   @db.Uuid
+  jobRequestId      String                   @db.Uuid
+  status            ApplicationStatus        @default(ACTIVE)
+  productId         String?                  @db.Uuid // candidate's product when they applied
+  appliedAt         DateTime                 @default(now())
+  source            ChangeSource             @default(MANUAL)
+  importBatchId     String?                  @db.Uuid
+  withdrawnAt       DateTime?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  candidate         Candidate                @relation(fields: [candidateId], references: [id], onDelete: Restrict)
+  jobRequest        JobRequest               @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  product           Product?                 @relation(fields: [productId], references: [id], onDelete: Restrict)
+  importBatch       ImportBatch?             @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
+  stageOutcomes     InternalStageCandidate[]
+  resumeAssessments ResumeAssessment[]
+  nomination        CompanyNomination?
 
   @@unique([candidateId, jobRequestId])
   @@unique([id, jobRequestId]) // target for composite FKs that pin rows to one job request
   @@index([jobRequestId, status])
+  @@index([productId])
 }
 
 // ─────────────────────── Internal PSM screening ───────────────────────
@@ -594,6 +689,9 @@ model InternalStageCandidate {
   applicationId   String                @db.Uuid
   jobRequestId    String                @db.Uuid
   outcome         StageCandidateOutcome @default(PENDING)
+  priority        ScreeningPriority? // P1-P3 as used in the SC / SP tabs
+  techScore       Decimal?              @db.Decimal(3, 1) // 1-5
+  commScore       Decimal?              @db.Decimal(3, 1) // 1-5
   rejectionReason String?
   remarks         String?
   source          ChangeSource          @default(MANUAL)
@@ -1066,4 +1164,153 @@ model IdempotencyKey {
 
   @@unique([userId, key])
   @@index([expiresAt])
+}
+
+// --------------- Added after reviewing the source sheets ---------------
+
+// Candidate <-> product, many-to-many (some candidates hold two products).
+model CandidateProduct {
+  candidateId String    @db.Uuid
+  productId   String    @db.Uuid
+  firstSeenAt DateTime  @default(now())
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@id([candidateId, productId])
+  @@index([productId])
+}
+
+model CandidateEducation {
+  id          String         @id @default(uuid()) @db.Uuid
+  candidateId String         @db.Uuid
+  level       EducationLevel
+  institution String?
+  degree      String?
+  department  String?
+  passOutYear Int?
+  score       Decimal?       @db.Decimal(5, 2)
+  scoreType   ScoreType?
+  candidate   Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, level])
+}
+
+model CandidateExperience {
+  id               String         @id @default(uuid()) @db.Uuid
+  candidateId      String         @db.Uuid
+  type             ExperienceType
+  companyName      String
+  startDate        DateTime?      @db.Date
+  durationBand     String? // as captured: "6-12 months", "1-2 years"
+  noticePeriod     String?
+  skills           String?
+  responsibilities String?
+  candidate        Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId])
+}
+
+// Resume-analysis scores per application (the "tool" tab), 0-1 per dimension.
+model ResumeAssessment {
+  id                 String      @id @default(uuid()) @db.Uuid
+  applicationId      String      @db.Uuid
+  analysedAt         DateTime
+  skillsScore        Decimal?    @db.Decimal(5, 4)
+  projectsScore      Decimal?    @db.Decimal(5, 4)
+  experienceScore    Decimal?    @db.Decimal(5, 4)
+  certificationScore Decimal?    @db.Decimal(5, 4)
+  educationScore     Decimal?    @db.Decimal(5, 4)
+  summaryScore       Decimal?    @db.Decimal(5, 4)
+  extracted          Json? // skills, project titles, latest experience as read by the tool
+  importBatchId      String?     @db.Uuid
+  createdAt          DateTime    @default(now())
+  application        Application @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+
+  @@index([applicationId, analysedAt])
+}
+
+// One row of the PSM work tracker: a task on a job request. TAT is computed
+// from requestedAt and deliveredAt, not stored.
+model PsmTask {
+  id               String     @id @default(uuid()) @db.Uuid
+  jobRequestId     String     @db.Uuid
+  doneById         String     @db.Uuid
+  title            String // e.g. "Resume shortlisting"
+  requestedAt      DateTime
+  deliveredAt      DateTime?
+  status           TaskStatus @default(ACTIVE)
+  inputCount       Int?
+  outputCount      Int?
+  academyCount     Int?
+  intensiveCount   Int?
+  externalCount    Int?
+  assessedCount    Int?
+  criteriaFollowed String?
+  sourceSubsheets  String?
+  tatRemark        String?
+  remarks          String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  jobRequest       JobRequest @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  doneBy           User       @relation("PsmTaskDoneBy", fields: [doneById], references: [id], onDelete: Restrict)
+
+  @@index([jobRequestId, requestedAt])
+  @@index([doneById, requestedAt])
+}
+
+// Who screened or guided for a job (primary / secondary). Used for credit.
+model JobContribution {
+  id           String           @id @default(uuid()) @db.Uuid
+  jobRequestId String           @db.Uuid
+  userId       String           @db.Uuid
+  role         ContributionRole
+  createdAt    DateTime         @default(now())
+  jobRequest   JobRequest       @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  user         User             @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([jobRequestId, userId, role])
+  @@index([userId, role])
+}
+
+model GuidanceSession {
+  id              String         @id @default(uuid()) @db.Uuid
+  jobRequestId    String         @db.Uuid
+  status          GuidanceStatus @default(SCHEDULED)
+  scheduledAt     DateTime?
+  conductedAt     DateTime?
+  primaryHostId   String?        @db.Uuid
+  secondaryHostId String?        @db.Uuid
+  notes           String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  jobRequest      JobRequest     @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  primaryHost     User?          @relation("GuidancePrimaryHost", fields: [primaryHostId], references: [id], onDelete: SetNull)
+  secondaryHost   User?          @relation("GuidanceSecondaryHost", fields: [secondaryHostId], references: [id], onDelete: SetNull)
+
+  @@index([jobRequestId])
+}
+
+// Credit weight per contribution role, versioned by date
+// (today: lead owner 1.00, primary screener 0.25, primary guidance 0.20).
+model IncentiveRule {
+  id            String        @id @default(uuid()) @db.Uuid
+  role          IncentiveRole
+  weight        Decimal       @db.Decimal(4, 2)
+  effectiveFrom DateTime      @db.Date
+  effectiveTo   DateTime?     @db.Date
+  createdAt     DateTime      @default(now())
+
+  @@index([role, effectiveFrom])
+}
+
+model PsmMonthlyTarget {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  month     DateTime @db.Date // first day of the month
+  target    Decimal  @db.Decimal(6, 2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, month])
 }

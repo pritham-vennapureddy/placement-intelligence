@@ -8,3 +8,7 @@ coverage/
 backend/src/generated/prisma/
 frontend/.vite/
 .neon
+
+# Source workbooks contain candidate personal data; never commit them.
+docs/samples/
+*.xlsx
