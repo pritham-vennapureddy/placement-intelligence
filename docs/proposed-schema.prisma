@@ -61,6 +61,7 @@ enum ChangeSource {
   MANUAL
   IMPORT
   SYSTEM
+  CARRIED_OVER // re-used from an earlier drive by the PSM
 }
 
 // NEW
@@ -615,24 +616,28 @@ model CandidateClassificationHistory {
 
 // NEW — one candidate ↔ one job request. Separate history per application.
 model Application {
-  id                String                   @id @default(uuid()) @db.Uuid
-  candidateId       String                   @db.Uuid
-  jobRequestId      String                   @db.Uuid
-  status            ApplicationStatus        @default(ACTIVE)
-  productId         String?                  @db.Uuid // candidate's product when they applied
-  appliedAt         DateTime                 @default(now())
-  source            ChangeSource             @default(MANUAL)
-  importBatchId     String?                  @db.Uuid
-  withdrawnAt       DateTime?
-  createdAt         DateTime                 @default(now())
-  updatedAt         DateTime                 @updatedAt
-  candidate         Candidate                @relation(fields: [candidateId], references: [id], onDelete: Restrict)
-  jobRequest        JobRequest               @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
-  product           Product?                 @relation(fields: [productId], references: [id], onDelete: Restrict)
-  importBatch       ImportBatch?             @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
-  stageOutcomes     InternalStageCandidate[]
-  resumeAssessments ResumeAssessment[]
-  nomination        CompanyNomination?
+  id                  String                   @id @default(uuid()) @db.Uuid
+  candidateId         String                   @db.Uuid
+  jobRequestId        String                   @db.Uuid
+  status              ApplicationStatus        @default(ACTIVE)
+  productId           String?                  @db.Uuid // candidate's product when they applied
+  // Set when the PSM re-uses this candidate from an earlier drive's application.
+  sourceApplicationId String?                  @db.Uuid
+  appliedAt           DateTime                 @default(now())
+  source              ChangeSource             @default(MANUAL)
+  importBatchId       String?                  @db.Uuid
+  withdrawnAt         DateTime?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  candidate           Candidate                @relation(fields: [candidateId], references: [id], onDelete: Restrict)
+  jobRequest          JobRequest               @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  product             Product?                 @relation(fields: [productId], references: [id], onDelete: Restrict)
+  importBatch         ImportBatch?             @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
+  stageOutcomes       InternalStageCandidate[]
+  resumeAssessments   ResumeAssessment[]
+  sourceApplication   Application?             @relation("CarriedOver", fields: [sourceApplicationId], references: [id], onDelete: SetNull)
+  carriedInto         Application[]            @relation("CarriedOver")
+  nomination          CompanyNomination?
 
   @@unique([candidateId, jobRequestId])
   @@unique([id, jobRequestId]) // target for composite FKs that pin rows to one job request

@@ -164,6 +164,8 @@ Notes on specific choices:
 | D4 | PSM ownership | Ownership is per job request | `PSMAssignment` is job-level only (`companyId` removed, `jobRequestId` required, one open assignment per job). A company's PSMs are derived from its job requests. The dashboard company filter that uses company assignments changes accordingly |
 | D5 | Nominations | No manager review of internal rejections or nominations; PSM decisions are trusted. PSMs record, for every company/job, which shortlisting method they followed | Approval fields and statuses removed from `CompanyNomination`. Internally rejected candidates cannot be nominated (no override). `InternalProcess.shortlistingNotes` stores the method; each stage keeps its own `remarks` |
 
+| D6 | Internal sheet scope (2026-10-31) | Each job request has its own internal sheet. When a company returns with a new job request, profiles from an earlier drive may be reused, decided by the PSM | Two human-driven paths in the Phase 3 wizard: (a) **Add from a previous drive**: pick an earlier job request (same company by default), filter by its stage outcomes, tick candidates, and they get a new application linked to the old one (`sourceApplicationId`); (b) if an uploaded sheet's `Job Id` column belongs to a different job request, the dashboard says which one and the PSM confirms before rows are used. Each candidate keeps a separate history per job request, and their past outcomes are shown during review |
+
 ### Still open
 
 Needed before Phase 3–4:
