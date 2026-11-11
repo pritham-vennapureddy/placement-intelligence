@@ -1,5 +1,5 @@
 import { prisma } from "../../db.js";
-import { shareStatusOf } from "../tracking/tracking.service.js";
+import { assumedSharedWhere, companySheetPendingSelect, isCompanySheetPending, shareStatusOf } from "../tracking/tracking.service.js";
 import { companyProcessLabel, type DecisionStage, type StageOutcome } from "@placement/shared";
 import type { Prisma } from "../../generated/prisma/client.js";
 import type { KpiJob } from "./placement-kpis.js";
@@ -488,7 +488,8 @@ export const dashboardRepository = {
         select: {
           candidateId: true,
           recruitmentBatchId: true,
-          recruitmentBatch: { select: { name: true } },
+          jobRequest: companySheetPendingSelect.jobRequest,
+          recruitmentBatch: { select: { name: true, importBatches: companySheetPendingSelect.importBatches } },
           product: { select: { name: true, category: true } },
           candidate: {
             select: {
@@ -537,7 +538,7 @@ export const dashboardRepository = {
       page,
       pageSize,
       total,
-      items: applications.map(({ candidateId, recruitmentBatchId, recruitmentBatch, product, candidate, stageOutcomes, nomination, support }) => ({
+      items: applications.map(({ candidateId, recruitmentBatchId, recruitmentBatch, jobRequest, product, candidate, stageOutcomes, nomination, support }) => ({
         candidateId,
         recruitmentBatchId,
         recruitmentBatchName: recruitmentBatch.name,
@@ -551,7 +552,7 @@ export const dashboardRepository = {
         skills: candidate.skills.map(({ skill }) => skill.name),
         resumeAssessment: assessmentsByCandidate.get(candidateId) ?? null,
         additionalProfiles: profilesByCandidate.get(candidateId) ?? [],
-        shareStatus: shareStatusOf({ stageOutcomes, nomination }),
+        shareStatus: shareStatusOf({ stageOutcomes, nomination, companySheetPending: isCompanySheetPending({ jobRequest, recruitmentBatch }) }),
         pipelineStatus: nomination?.status === "NOMINATED" ? nomination.pipelineStatus : null,
         guidance: supportCell(support.find(({ kind }) => kind === "GUIDANCE")),
         rsa: supportCell(support.find(({ kind }) => kind === "RSA")),
@@ -576,7 +577,7 @@ export const dashboardRepository = {
       prisma.internalStageCandidate.count({
         where: { outcome: "SELECTED", stage: { stage }, application: { ...inJobs, status: { not: "WITHDRAWN" } } },
       });
-    const [candidates, applications, rs, sc, as, sp, pipeline] = await Promise.all([
+    const [candidates, applications, rs, sc, as, sp, pipeline, assumedShared] = await Promise.all([
       prisma.candidate.count({ where: { applications: { some: { ...inJobs, status: { not: "WITHDRAWN" } } } } }),
       prisma.application.count({ where: { ...inJobs, status: { not: "WITHDRAWN" } } }),
       selectedAt("RESUME_SHORTLIST"),
@@ -584,6 +585,8 @@ export const dashboardRepository = {
       selectedAt("ASSIGNMENT_SHORTLIST"),
       selectedAt("FINAL_SHORTLIST"),
       prisma.companyNomination.groupBy({ by: ["pipelineStatus"], where: { status: "NOMINATED", application: inJobs }, _count: { _all: true } }),
+      // Shared per the job's process status while the company sheet is pending, with no nomination yet.
+      prisma.application.count({ where: { ...inJobs, ...assumedSharedWhere, nomination: { is: null } } }),
     ]);
     const count = (...statuses: string[]) => pipeline.filter((row) => statuses.includes(row.pipelineStatus)).reduce((sum, row) => sum + row._count._all, 0);
     return {
@@ -593,7 +596,7 @@ export const dashboardRepository = {
       screeningShortlisted: sc,
       assignmentShortlisted: as,
       finalShortlisted: sp,
-      nominated: count("NOT_SUBMITTED", "IN_PROCESS", "ON_HOLD", "REJECTED", "SELECTED", "OFFER_RELEASED", "OFFER_ACCEPTED", "OFFER_DECLINED", "JOINED", "DROPPED"),
+      nominated: assumedShared + count("NOT_SUBMITTED", "IN_PROCESS", "ON_HOLD", "REJECTED", "SELECTED", "OFFER_RELEASED", "OFFER_ACCEPTED", "OFFER_DECLINED", "JOINED", "DROPPED"),
       inCompanyProcess: count("IN_PROCESS", "ON_HOLD"),
       selected: count("SELECTED", "OFFER_RELEASED", "OFFER_ACCEPTED", "OFFER_DECLINED", "JOINED"),
       offersReleased: count("OFFER_RELEASED", "OFFER_ACCEPTED", "OFFER_DECLINED", "JOINED"),

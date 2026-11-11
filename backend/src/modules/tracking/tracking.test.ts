@@ -7,14 +7,26 @@ import { guidanceSessionSchema, processStatusSchema } from "./tracking.validator
 
 const sp = (outcome: string) => [{ outcome, stage: { stage: "FINAL_SHORTLIST" } }];
 
-test("an SP student missing from the company sheet is not shared with the company", () => {
-  assert.equal(shareStatusOf({ stageOutcomes: sp("SELECTED"), nomination: null }), "NOT_SHARED");
-  assert.equal(shareStatusOf({ stageOutcomes: sp("SELECTED"), nomination: { status: "WITHDRAWN", pipelineStatus: "IN_PROCESS" } }), "NOT_SHARED");
-  assert.equal(shareStatusOf({ stageOutcomes: sp("SELECTED"), nomination: { status: "NOMINATED", pipelineStatus: "NOT_SUBMITTED" } }), "NOT_SHARED");
-  assert.equal(shareStatusOf({ stageOutcomes: sp("SELECTED"), nomination: { status: "NOMINATED", pipelineStatus: "IN_PROCESS" } }), "SHARED");
+test("with the company sheet imported, an SP student missing from it is not shared", () => {
+  const status = (stageOutcomes: { outcome: string; stage: { stage: string } }[], nomination: { status: string; pipelineStatus: string } | null) =>
+    shareStatusOf({ stageOutcomes, nomination, companySheetPending: false });
+  assert.equal(status(sp("SELECTED"), null), "NOT_SHARED");
+  assert.equal(status(sp("SELECTED"), { status: "WITHDRAWN", pipelineStatus: "IN_PROCESS" }), "NOT_SHARED");
+  assert.equal(status(sp("SELECTED"), { status: "NOMINATED", pipelineStatus: "NOT_SUBMITTED" }), "NOT_SHARED");
+  assert.equal(status(sp("SELECTED"), { status: "NOMINATED", pipelineStatus: "IN_PROCESS" }), "SHARED");
   // Nominated without SP selection (any non-rejected applicant may be nominated) still counts as shared once sent.
-  assert.equal(shareStatusOf({ stageOutcomes: [], nomination: { status: "NOMINATED", pipelineStatus: "SELECTED" } }), "SHARED");
-  assert.equal(shareStatusOf({ stageOutcomes: sp("REJECTED"), nomination: null }), "NOT_SHORTLISTED");
+  assert.equal(status([], { status: "NOMINATED", pipelineStatus: "SELECTED" }), "SHARED");
+  assert.equal(status(sp("REJECTED"), null), "NOT_SHORTLISTED");
+});
+
+test("past Yet to share CVs with the company sheet pending, SP students count as shared", () => {
+  const status = (stageOutcomes: { outcome: string; stage: { stage: string } }[], nomination: { status: string; pipelineStatus: string } | null) =>
+    shareStatusOf({ stageOutcomes, nomination, companySheetPending: true });
+  assert.equal(status(sp("SELECTED"), null), "SHARED");
+  assert.equal(status(sp("SELECTED"), { status: "NOMINATED", pipelineStatus: "NOT_SUBMITTED" }), "SHARED");
+  // A withdrawn nomination is an explicit decision not to share.
+  assert.equal(status(sp("SELECTED"), { status: "WITHDRAWN", pipelineStatus: "NOT_SUBMITTED" }), "NOT_SHARED");
+  assert.equal(status(sp("REJECTED"), null), "NOT_SHORTLISTED");
 });
 
 test("round phases of the company process need a round", () => {

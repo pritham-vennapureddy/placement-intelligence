@@ -29,29 +29,74 @@ const INTERNAL_REJECTION_STAGES = ["RESUME_SHORTLIST", "SCREENING_SHORTLIST", "A
 const toDate = (value: string) => new Date(`${value}T00:00:00Z`);
 const isAdmin = (user: AuthenticatedUser) => user.roles.includes("ADMIN");
 
-/** Shortlisted at SP, but the company does not have the profile (no active nomination, or never sent). */
-export const notSharedWhere: Prisma.ApplicationWhereInput = {
-  status: { not: "WITHDRAWN" },
-  stageOutcomes: { some: { outcome: "SELECTED", stage: { stage: "FINAL_SHORTLIST" } } },
-  OR: [{ nomination: { is: null } }, { nomination: { status: "WITHDRAWN" } }, { nomination: { pipelineStatus: "NOT_SUBMITTED" } }],
+/**
+ * The company sheet for this application's drive is not imported yet, but the
+ * PSM has moved the job past "Yet to share CVs". The sheet is often late, so
+ * SP-shortlisted profiles are then treated as shared rather than "not shared".
+ */
+export const companySheetPendingWhere: Prisma.ApplicationWhereInput = {
+  jobRequest: { processPhase: { not: "YET_TO_SHARE_CVS" } },
+  recruitmentBatch: { importBatches: { none: { target: "COMPANY_PIPELINE", status: "COMMITTED" } } },
 };
 
-/** SP-selected, or nominated, and whether the company actually has the profile. */
+/** Select these on an application to call isCompanySheetPending on it. */
+export const companySheetPendingSelect = {
+  jobRequest: { select: { processPhase: true } },
+  importBatches: { where: { target: "COMPANY_PIPELINE", status: "COMMITTED" }, select: { id: true }, take: 1 },
+} satisfies { jobRequest: Prisma.ApplicationSelect["jobRequest"]; importBatches: Prisma.RecruitmentBatch$importBatchesArgs };
+
+export function isCompanySheetPending(application: {
+  jobRequest: { processPhase: string };
+  recruitmentBatch: { importBatches: unknown[] };
+}): boolean {
+  return application.jobRequest.processPhase !== "YET_TO_SHARE_CVS" && application.recruitmentBatch.importBatches.length === 0;
+}
+
+const spSelected: Prisma.ApplicationWhereInput = { stageOutcomes: { some: { outcome: "SELECTED", stage: { stage: "FINAL_SHORTLIST" } } } };
+/** No nomination, or nominated but not yet confirmed by the company sheet. */
+const notConfirmedBySheet: Prisma.ApplicationWhereInput = {
+  OR: [{ nomination: { is: null } }, { nomination: { status: "NOMINATED", pipelineStatus: "NOT_SUBMITTED" } }],
+};
+
+/**
+ * Shortlisted at SP, but the company does not have the profile: the nomination
+ * was withdrawn, or the company sheet is in and does not list it, or the job is
+ * still at "Yet to share CVs".
+ */
+export const notSharedWhere: Prisma.ApplicationWhereInput = {
+  status: { not: "WITHDRAWN" },
+  ...spSelected,
+  OR: [
+    { nomination: { status: "WITHDRAWN" } },
+    { AND: [notConfirmedBySheet, { NOT: companySheetPendingWhere }] },
+  ],
+};
+
+/** SP-shortlisted profiles counted as shared only because the company sheet is pending. */
+export const assumedSharedWhere: Prisma.ApplicationWhereInput = {
+  status: { not: "WITHDRAWN" },
+  AND: [spSelected, notConfirmedBySheet, companySheetPendingWhere],
+};
+
+/** SP-selected, or nominated, and whether the company has the profile. */
 export function shareStatusOf(application: {
   stageOutcomes: { outcome: string; stage: { stage: string } }[];
   nomination: { status: string; pipelineStatus: string } | null;
+  companySheetPending: boolean;
 }): CompanyShareStatus {
   const nomination = application.nomination;
   if (nomination && nomination.status === "NOMINATED" && nomination.pipelineStatus !== "NOT_SUBMITTED") return "SHARED";
   const atSp = application.stageOutcomes.some(({ outcome, stage }) => stage.stage === "FINAL_SHORTLIST" && outcome === "SELECTED");
-  return atSp || nomination?.status === "NOMINATED" ? "NOT_SHARED" : "NOT_SHORTLISTED";
+  if (!atSp && nomination?.status !== "NOMINATED") return "NOT_SHORTLISTED";
+  if (nomination?.status === "WITHDRAWN") return "NOT_SHARED";
+  return application.companySheetPending ? "SHARED" : "NOT_SHARED";
 }
 
 /** Per-job candidate counts used by My work. */
 async function jobCounts(jobIds: string[]) {
   if (jobIds.length === 0) return new Map<string, ReturnType<typeof emptyCounts>>();
   const inJobs = { jobRequestId: { in: jobIds } };
-  const [applications, rejected, sp, notShared, nominations, supportDone] = await Promise.all([
+  const [applications, rejected, sp, notShared, assumedShared, nominations, supportDone] = await Promise.all([
     prisma.application.groupBy({ by: ["jobRequestId"], where: { ...inJobs, status: { not: "WITHDRAWN" } }, _count: { _all: true } }),
     prisma.application.groupBy({
       by: ["jobRequestId"],
@@ -64,6 +109,7 @@ async function jobCounts(jobIds: string[]) {
       _count: { _all: true },
     }),
     prisma.application.groupBy({ by: ["jobRequestId"], where: { ...inJobs, ...notSharedWhere }, _count: { _all: true } }),
+    prisma.application.groupBy({ by: ["jobRequestId"], where: { ...inJobs, ...assumedSharedWhere }, _count: { _all: true } }),
     prisma.companyNomination.groupBy({ by: ["jobRequestId", "pipelineStatus"], where: { ...inJobs, status: "NOMINATED" }, _count: { _all: true } }),
     prisma.studentSupport.groupBy({ by: ["jobRequestId", "kind"], where: { ...inJobs, status: { countsAsDone: true } }, _count: { _all: true } }),
   ]);
@@ -72,6 +118,7 @@ async function jobCounts(jobIds: string[]) {
   for (const row of rejected) counts.get(row.jobRequestId)!.internalRejected = row._count._all;
   for (const row of sp) counts.get(row.jobRequestId)!.finalShortlisted = row._count._all;
   for (const row of notShared) counts.get(row.jobRequestId)!.notShared = row._count._all;
+  for (const row of assumedShared) counts.get(row.jobRequestId)!.shared += row._count._all;
   for (const row of supportDone) {
     if (row.kind === "GUIDANCE") counts.get(row.jobRequestId)!.studentsGuided = row._count._all;
     else counts.get(row.jobRequestId)!.studentsRsaDone = row._count._all;
@@ -238,7 +285,11 @@ export const trackingService = {
       guidance: { sessions, studentsGuided },
       notShared: notShared.map(({ stageOutcomes, nomination, ...application }) => ({
         ...application,
-        reason: nomination?.status === "NOMINATED" ? "Nominated but not in the company sheet" : nomination ? "Nomination withdrawn" : "Not in the company sheet",
+        reason: nomination?.status === "WITHDRAWN"
+          ? "Nomination withdrawn"
+          : detail.processPhase === "YET_TO_SHARE_CVS"
+            ? "CVs not shared yet"
+            : nomination ? "Nominated but not in the company sheet" : "Not in the company sheet",
         priority: stageOutcomes[0]?.priority ?? null,
         selectionBasis: stageOutcomes[0]?.selectionBasis ?? null,
       })),
@@ -304,6 +355,8 @@ export const trackingService = {
           nomination: { select: { status: true, pipelineStatus: true } },
           stageOutcomes: { where: { stage: { stage: "FINAL_SHORTLIST" } }, select: { outcome: true, stage: { select: { stage: true } } } },
           support: { select: supportSelect },
+          jobRequest: companySheetPendingSelect.jobRequest,
+          recruitmentBatch: { select: { importBatches: companySheetPendingSelect.importBatches } },
         },
         orderBy: { candidate: { fullName: "asc" } },
         take: 2000,
@@ -318,9 +371,9 @@ export const trackingService = {
       people,
       statusOptions,
       canEdit: hasPermission(user.roles, "pipeline:write"),
-      students: applications.map(({ stageOutcomes, nomination, support, ...application }) => ({
+      students: applications.map(({ stageOutcomes, nomination, support, jobRequest, recruitmentBatch, ...application }) => ({
         ...application,
-        shareStatus: shareStatusOf({ stageOutcomes, nomination }),
+        shareStatus: shareStatusOf({ stageOutcomes, nomination, companySheetPending: isCompanySheetPending({ jobRequest, recruitmentBatch }) }),
         pipelineStatus: nomination?.status === "NOMINATED" ? nomination.pipelineStatus : null,
         guidance: presentSupport(support.find(({ kind }) => kind === "GUIDANCE")),
         rsa: presentSupport(support.find(({ kind }) => kind === "RSA")),

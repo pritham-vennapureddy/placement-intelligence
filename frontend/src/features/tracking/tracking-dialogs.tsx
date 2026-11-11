@@ -185,6 +185,10 @@ export function ProcessBadge({ label, phase }: { label: string; phase: CompanyPr
 /** Where a student stands with the company: Not shared with company, or the pipeline status. */
 export function CompanyStatusCell({ shareStatus, pipelineStatus }: { shareStatus: CompanyShareStatus; pipelineStatus: PipelineStatus | null }) {
   if (shareStatus === "NOT_SHARED") return <Badge variant="outline" className="whitespace-nowrap border-amber-200 bg-amber-50 text-amber-700">Not shared with company</Badge>;
+  // Shared by the job's process status; the company sheet has not been imported yet.
+  if (shareStatus === "SHARED" && (!pipelineStatus || pipelineStatus === "NOT_SUBMITTED")) {
+    return <Badge variant="outline" className="whitespace-nowrap border-sky-200 bg-sky-50 text-sky-700" title="The job is past “Yet to share CVs”; the company sheet is not imported yet.">Shared · sheet pending</Badge>;
+  }
   if (shareStatus === "SHARED" && pipelineStatus) return <PipelineBadge status={pipelineStatus} />;
   return <span className="text-xs text-slate-300">—</span>;
 }

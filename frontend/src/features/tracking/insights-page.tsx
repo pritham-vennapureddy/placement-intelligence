@@ -192,7 +192,7 @@ export function InsightsPage() {
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <KpiCard label="Rejected at RS / SC / AS" value={`${t.rejectedAt.RS} / ${t.rejectedAt.SC} / ${t.rejectedAt.AS}`} hint={`${t.screeningNoShow} SC no-shows`} icon={UserMinus} tone="slate" />
-              <KpiCard label="Not shared after SP" value={t.notShared} hint="Shortlisted but not in the company sheet" icon={UserX} tone="amber" />
+              <KpiCard label="Not shared after SP" value={t.notShared} hint="Shortlisted, but the job is still at “Yet to share CVs” or the imported company sheet does not list them" icon={UserX} tone="amber" />
               <KpiCard label="Shared with company" value={t.shared} hint={`${t.inProcess} in process · ${t.companyRejected} rejected`} icon={Send} tone="sky" />
               <KpiCard label="Drives with screening skipped" value={data.screeningSkipped.total} hint={data.screeningSkipped.byReason[0] ? `Most often: ${data.screeningSkipped.byReason[0].reason === "UNSPECIFIED" ? "no reason chosen" : SCREENING_SKIP_REASON_LABELS[data.screeningSkipped.byReason[0].reason]}` : "Every drive was screened"} icon={GraduationCap} tone="slate" />
             </div>

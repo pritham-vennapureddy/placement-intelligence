@@ -45,7 +45,13 @@ function applicationFacts(query: InsightsQuery, owners: Prisma.Sql): Prisma.Sql 
         COALESCE(bool_or(ps.stage = 'ASSIGNMENT_SHORTLIST' AND isc.outcome = 'REJECTED'), FALSE) AS as_rejected,
         COALESCE(bool_or(ps.stage = 'SCREENING_SHORTLIST' AND isc.outcome = 'NO_SHOW'), FALSE) AS sc_no_show,
         COALESCE(bool_or(ps.stage = 'FINAL_SHORTLIST' AND isc.outcome = 'SELECTED'), FALSE) AS sp,
-        CASE WHEN n.status = 'NOMINATED' THEN n."pipelineStatus"::text END AS pipeline
+        CASE WHEN n.status = 'NOMINATED' THEN n."pipelineStatus"::text END AS pipeline,
+        COALESCE(n.status = 'WITHDRAWN', FALSE) AS withdrawn,
+        -- Job moved past "Yet to share CVs" but this drive's company sheet is not imported yet.
+        (j."processPhase" <> 'YET_TO_SHARE_CVS' AND NOT EXISTS (
+          SELECT 1 FROM "ImportBatch" ib
+          WHERE ib."recruitmentBatchId" = a."recruitmentBatchId" AND ib.target = 'COMPANY_PIPELINE' AND ib.status = 'COMMITTED'
+        )) AS sheet_pending
       FROM "Application" a
       JOIN "JobRequest" j ON j.id = a."jobRequestId"
       JOIN "Candidate" c ON c.id = a."candidateId"
@@ -59,8 +65,8 @@ function applicationFacts(query: InsightsQuery, owners: Prisma.Sql): Prisma.Sql 
     f AS (
       SELECT *,
         (rs_rejected OR sc_rejected OR as_rejected) AS internal_rejected,
-        (pipeline IS NOT NULL AND pipeline <> 'NOT_SUBMITTED') AS shared,
-        (sp AND (pipeline IS NULL OR pipeline = 'NOT_SUBMITTED')) AS not_shared
+        ((pipeline IS NOT NULL AND pipeline <> 'NOT_SUBMITTED') OR (sp AND sheet_pending AND NOT withdrawn)) AS shared,
+        (sp AND (pipeline IS NULL OR pipeline = 'NOT_SUBMITTED') AND NOT (sheet_pending AND NOT withdrawn)) AS not_shared
       FROM facts
       ${query.category ? Prisma.sql`WHERE category = ${query.category}` : Prisma.empty}
     )`;
