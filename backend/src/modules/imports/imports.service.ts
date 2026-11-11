@@ -7,7 +7,7 @@ import {
   normalizeValueKey,
   type DecisionStage,
 } from "@placement/shared";
-import { inTransaction, prisma } from "../../db.js";
+import { inTransaction, prisma, type Db } from "../../db.js";
 import type { Prisma } from "../../generated/prisma/client.js";
 import type { AuthenticatedUser } from "../../middleware/authenticate.js";
 import { jobRequestScopeFilter, resolveDataScope } from "../../services/data-scope.service.js";
@@ -409,6 +409,28 @@ async function createGoogleBatch(user: AuthenticatedUser, jobRequestId: string, 
   });
 }
 
+/**
+ * A company sheet means CVs have reached the company, so a job still at
+ * "Yet to share CVs" moves to "CVs shared". Later statuses are left alone.
+ */
+async function markCvsShared(db: Db, jobRequestId: string, userId: string, batchCode: string, audit: AuditContext) {
+  const moved = await db.jobRequest.updateMany({
+    where: { id: jobRequestId, processPhase: "YET_TO_SHARE_CVS" },
+    data: { processPhase: "CVS_SHARED", processRoundId: null, processPhaseAt: new Date() },
+  });
+  if (moved.count === 0) return;
+  const notes = `Set automatically when the company sheet was imported (${batchCode}).`;
+  await db.companyProcessHistory.create({
+    data: { jobRequestId, fromPhase: "YET_TO_SHARE_CVS", toPhase: "CVS_SHARED", changedById: userId, notes },
+  });
+  await recordAudit(db, audit, {
+    action: "COMPANY_PROCESS_STATUS_CHANGED",
+    entityType: "JobRequest",
+    entityId: jobRequestId,
+    metadata: { from: "YET_TO_SHARE_CVS", to: "CVS_SHARED", round: null, notes },
+  });
+}
+
 export const importsService = {
   /** Reads a Google Sheet (read-only) into a snapshot and starts an import from it. */
   async importFromGoogle(user: AuthenticatedUser, jobRequestId: string, target: ImportTarget, url: string, audit: AuditContext, requestedBatchId?: string) {
@@ -625,6 +647,9 @@ export const importsService = {
         await transaction.importApproval.create({
           data: { batchId: batch.id, decision: "APPROVED", decidedById: user.id, counts: result as unknown as Prisma.InputJsonValue, ...(notes ? { notes } : {}) },
         });
+      }
+      if (batch.target === "COMPANY_PIPELINE") {
+        await markCvsShared(transaction, job.id, user.id, batch.batchCode, audit);
       }
       await recordAudit(transaction, audit, {
         action: batch.target === "INTERNAL_SCREENING" ? "INTERNAL_SHEET_IMPORTED" : "COMPANY_SHEET_IMPORTED",
