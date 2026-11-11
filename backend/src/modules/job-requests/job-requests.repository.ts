@@ -86,8 +86,21 @@ export const jobRequestsRepository = {
     return prisma.jobRequest.findUnique({ where: { hubspotDealId }, select: { id: true, roleTitle: true } });
   },
 
-  findActiveCompany(id: string) {
-    return prisma.company.findFirst({ where: { id, archivedAt: null }, select: { id: true, status: true } });
+  /** A company with this name (ignoring case), preferring an active one, then the oldest. */
+  findCompanyByName(db: Db, name: string) {
+    return db.company.findFirst({
+      where: { name: { equals: name, mode: "insensitive" }, archivedAt: null },
+      orderBy: [{ status: "asc" }, { createdAt: "asc" }],
+      select: { id: true, name: true, status: true },
+    });
+  },
+
+  createCompany(db: Db, name: string, createdById: string) {
+    return db.company.create({ data: { name, createdById }, select: { id: true, name: true, status: true } });
+  },
+
+  reactivateCompany(db: Db, id: string) {
+    return db.company.update({ where: { id }, data: { status: "ACTIVE" }, select: { id: true, name: true, status: true } });
   },
 
   countActiveProducts(ids: string[]) {

@@ -8,7 +8,7 @@ import {
   JOB_STATUS_TRANSITIONS,
 } from "@placement/shared";
 import { env } from "../../config/env.js";
-import { inTransaction, prisma } from "../../db.js";
+import { inTransaction, prisma, type Db } from "../../db.js";
 import { Prisma } from "../../generated/prisma/client.js";
 import type { AuthenticatedUser } from "../../middleware/authenticate.js";
 import {
@@ -160,6 +160,25 @@ function present(job: JobRequestDetail, user: AuthenticatedUser, scope: DataScop
   };
 }
 
+/**
+ * The company for a typed name: an existing one with the same name (ignoring
+ * case), or a new one. Teams no longer add companies separately.
+ */
+async function resolveCompany(db: Db, name: string, user: AuthenticatedUser, audit: AuditContext) {
+  const existing = await jobRequestsRepository.findCompanyByName(db, name);
+  if (existing) {
+    return existing.status === "INACTIVE" ? jobRequestsRepository.reactivateCompany(db, existing.id) : existing;
+  }
+  const company = await jobRequestsRepository.createCompany(db, name, user.id);
+  await recordAudit(db, audit, {
+    action: "COMPANY_CREATED",
+    entityType: "Company",
+    entityId: company.id,
+    metadata: { name: company.name, source: "job request" },
+  });
+  return company;
+}
+
 export const jobRequestsService = {
   async list(user: AuthenticatedUser, query: ListJobRequestsQuery) {
     const scope = await resolveDataScope(user);
@@ -309,24 +328,18 @@ export const jobRequestsService = {
     const { ownerId, adminSelfAssignment } = resolveJobRequestOwner(user, input.psmOwnerId);
     if (!adminSelfAssignment) await assertAssignableOwner(scope, ownerId);
 
-    const company = await jobRequestsRepository.findActiveCompany(input.companyId);
-    if (!company) {
-      throw new ApiError(404, "COMPANY_NOT_FOUND", "The selected company was not found.");
-    }
-    if (company.status === "INACTIVE") {
-      throw new ApiError(409, "COMPANY_INACTIVE", "Reactivate the company before adding job requests.");
-    }
     await assertUniqueKeys(input.jobId, input.hubspotDeal);
     const productIds = await assertProductsExist(input.eligibleProductIds);
     const skills = splitSkills(input.techStack);
 
     return inTransaction(async (transaction) => {
+      const company = await resolveCompany(transaction, input.companyName, user, audit);
       const job = await jobRequestsRepository.create(
         transaction,
         {
           jobId: input.jobId,
           hubspotDealId: input.hubspotDeal ?? null,
-          companyId: input.companyId,
+          companyId: company.id,
           roleTitle: input.roleTitle,
           openings: input.openings,
           requiredCandidateCount: input.requiredCandidateCount,
@@ -370,7 +383,8 @@ export const jobRequestsService = {
       throw new ApiError(403, "FORBIDDEN", "You cannot edit this job request.");
     }
 
-    const { techStack, eligibleProductIds, hubspotDeal, requestDate, deadline, ...fields } = input;
+    const { techStack, eligibleProductIds, hubspotDeal, requestDate, deadline, companyName, ...fields } = input;
+    const companyChanged = companyName !== undefined && companyName.toLowerCase() !== job.company.name.toLowerCase();
     const nextRequest = requestDate ?? job.requestDate.toISOString().slice(0, 10);
     const nextDeadline = deadline === undefined ? job.deadline?.toISOString().slice(0, 10) : deadline;
     if (nextDeadline && nextDeadline < nextRequest) {
@@ -395,12 +409,16 @@ export const jobRequestsService = {
     if (productIds && JSON.stringify([...productIds].sort()) !== JSON.stringify(previousProducts)) {
       changes.eligibleProductIds = { from: previousProducts, to: productIds };
     }
+    if (companyChanged) {
+      changes.company = { from: job.company.name, to: companyName };
+    }
     if (Object.keys(changes).length === 0) {
       return present(job, user, scope);
     }
 
     const updated = await inTransaction(async (transaction) => {
-      await jobRequestsRepository.update(transaction, job.id, data, skills, productIds);
+      const company = companyChanged ? await resolveCompany(transaction, companyName, user, audit) : null;
+      await jobRequestsRepository.update(transaction, job.id, company ? { ...data, companyId: company.id } : data, skills, productIds);
       await recordAudit(transaction, audit, {
         action: "JOB_REQUEST_UPDATED",
         entityType: "JobRequest",

@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { parseHubspotRecordId } from "@placement/shared";
 import { format } from "date-fns";
 import { ArrowLeft } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -22,8 +22,7 @@ import { usePermissions } from "../../hooks/use-permissions";
 import { useAuth } from "../../contexts/auth-context";
 import { catalogApi, companiesApi, jobRequestsApi, newIdempotencyKey } from "../../services/api";
 import type { JobRequestDetail, JobRequestInput, ProductOption } from "../../types/api";
-import { CompanyFormDialog } from "../companies/company-form-dialog";
-import { CompanyPicker } from "./company-picker";
+import { CompanyNameInput } from "./company-name-input";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const optionalUrl = z.string().trim().refine((value) => !value || /^https?:\/\/\S+$/.test(value), "Enter a full link starting with https://");
@@ -32,7 +31,7 @@ const schema = z
   .object({
     jobId: z.string().trim().regex(UUID, "Paste the Job ID from HubSpot, e.g. 78e5a531-6ff2-4f04-970a-8162b9fa2a1a."),
     hubspotDeal: z.string().trim().refine((value) => !value || parseHubspotRecordId(value, "deal") !== null, "Paste the HubSpot deal link (…/record/0-3/…) or its numeric ID."),
-    company: z.object({ id: z.string(), name: z.string() }, { message: "Choose the company." }).nullable().refine(Boolean, "Choose the company."),
+    companyName: z.string().trim().min(2, "Enter the company name.").max(160),
     roleTitle: z.string().trim().min(2, "Enter the role.").max(160),
     techStack: z.array(z.string()).min(1, "Add at least one skill."),
     openings: z.coerce.number().int().min(1, "At least 1."),
@@ -62,11 +61,11 @@ const CATEGORY_LABELS: Record<ProductOption["category"], string> = {
 const TIMELINES = ["Immediate", "1 Week", "2 Weeks", "1 Month"];
 const nullIfBlank = (value: string) => value.trim() || null;
 
-function defaultsFrom(job: JobRequestDetail | undefined, company: { id: string; name: string } | null): FormInput {
+function defaultsFrom(job: JobRequestDetail | undefined, companyName = ""): FormInput {
   return {
     jobId: job?.jobId ?? "",
     hubspotDeal: job?.hubspotDealId ?? "",
-    company: job ? { id: job.company.id, name: job.company.name } : company,
+    companyName: job?.company.name ?? companyName,
     roleTitle: job?.roleTitle ?? "",
     techStack: job?.skills.map(({ skill }) => skill.name) ?? [],
     openings: job?.openings ?? 1,
@@ -106,7 +105,6 @@ export function JobRequestFormPage() {
   const { user } = useAuth();
   const { can } = usePermissions();
   const canAssign = can("job:assign");
-  const [addingCompany, setAddingCompany] = useState(false);
   const idempotencyKey = useMemo(() => newIdempotencyKey(), []);
 
   const existing = useQuery({ queryKey: ["job-requests", jobRequestId], queryFn: () => jobRequestsApi.get(jobRequestId!), enabled: editing });
@@ -115,12 +113,12 @@ export function JobRequestFormPage() {
   const products = useQuery({ queryKey: ["catalog", "products"], queryFn: catalogApi.products, staleTime: 5 * 60_000 });
   const owners = useQuery({ queryKey: ["catalog", "owners"], queryFn: catalogApi.owners, enabled: canAssign && !editing });
 
-  const form = useForm<FormInput, unknown, FormValues>({ resolver: zodResolver(schema), defaultValues: defaultsFrom(undefined, null) });
+  const form = useForm<FormInput, unknown, FormValues>({ resolver: zodResolver(schema), defaultValues: defaultsFrom(undefined) });
   useEffect(() => {
-    if (existing.data) form.reset(defaultsFrom(existing.data, null));
+    if (existing.data) form.reset(defaultsFrom(existing.data));
   }, [existing.data, form]);
   useEffect(() => {
-    if (presetCompany.data) form.setValue("company", { id: presetCompany.data.id, name: presetCompany.data.name });
+    if (presetCompany.data) form.setValue("companyName", presetCompany.data.name);
   }, [presetCompany.data, form]);
 
   const save = useMutation({
@@ -128,7 +126,7 @@ export function JobRequestFormPage() {
       const input: JobRequestInput = {
         jobId: values.jobId,
         hubspotDeal: nullIfBlank(values.hubspotDeal),
-        companyId: values.company!.id,
+        companyName: values.companyName,
         roleTitle: values.roleTitle,
         techStack: values.techStack,
         openings: values.openings,
@@ -145,8 +143,7 @@ export function JobRequestFormPage() {
         eligibleProductIds: values.eligibleProductIds,
       };
       if (editing) {
-        const { companyId: _companyId, ...changes } = input;
-        await jobRequestsApi.update(jobRequestId!, changes);
+        await jobRequestsApi.update(jobRequestId!, input);
         return jobRequestId!;
       }
       const created = await jobRequestsApi.create(
@@ -195,22 +192,26 @@ export function JobRequestFormPage() {
       </Section>
 
       <Section title="Role">
-        <FormField id="company" label="Company" required error={errors.company?.message} className="sm:col-span-2">
+        <FormField
+          id="companyName"
+          label="Company"
+          required
+          error={errors.companyName?.message}
+          hint="Type the company name. Pick a suggestion if the company has had a job before; a new name is added automatically."
+          className="sm:col-span-2"
+        >
           <Controller
             control={form.control}
-            name="company"
+            name="companyName"
             render={({ field }) => (
-              editing ? (
-                <Input id="company" value={field.value?.name ?? ""} disabled />
-              ) : (
-                <CompanyPicker
-                  id="company"
-                  value={field.value ?? null}
-                  onChange={field.onChange}
-                  onCreate={can("company:write") ? () => setAddingCompany(true) : undefined}
-                  invalid={Boolean(errors.company)}
-                />
-              )
+              <CompanyNameInput
+                ref={field.ref}
+                id="companyName"
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                invalid={Boolean(errors.companyName)}
+              />
             )}
           />
         </FormField>
@@ -354,12 +355,6 @@ export function JobRequestFormPage() {
         <Button type="button" variant="outline" onClick={() => navigate(-1)} disabled={save.isPending}>Cancel</Button>
         <Button type="submit" disabled={save.isPending}>{save.isPending ? "Saving…" : editing ? "Save changes" : "Create job request"}</Button>
       </div>
-
-      <CompanyFormDialog
-        open={addingCompany}
-        onOpenChange={setAddingCompany}
-        onSaved={(company) => form.setValue("company", company, { shouldValidate: true })}
-      />
     </form>
   );
 }

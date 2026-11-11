@@ -2,7 +2,6 @@ import type { Permission } from "@placement/shared";
 import {
   Activity,
   BriefcaseBusiness,
-  Building2,
   ChartNoAxesCombined,
   ClipboardCheck,
   FileSpreadsheet,
@@ -40,7 +39,6 @@ export const NAVIGATION: NavGroup[] = [
   {
     label: "Placements",
     items: [
-      { label: "Companies", icon: Building2, path: "/companies", permission: "company:read" },
       { label: "Job requests", icon: BriefcaseBusiness, path: "/job-requests", permission: "job:read" },
       { label: "Candidates", icon: Users, path: "/candidates", permission: "candidate:read" },
       { label: "Assessed pool", icon: UserRoundCheck, path: "/assessed-pool", permission: "candidate:read" },

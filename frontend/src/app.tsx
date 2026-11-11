@@ -9,7 +9,6 @@ import { TooltipProvider } from "./components/ui/tooltip";
 import { AuthProvider, useAuth } from "./contexts/auth-context";
 import { CandidateDetailPage } from "./features/candidates/candidate-detail-page";
 import { CandidatesPage } from "./features/candidates/candidates-page";
-import { CompaniesPage } from "./features/companies/companies-page";
 import { CompanyDetailPage } from "./features/companies/company-detail-page";
 import { JobRequestDetailPage } from "./features/job-requests/job-request-detail-page";
 import { JobRequestFormPage } from "./features/job-requests/job-request-form-page";
@@ -42,7 +41,6 @@ const pages: Record<string, ReactNode> = {
   "/": <DashboardPage />,
   "/my-work": <MyWorkPage />,
   "/insights": <InsightsPage />,
-  "/companies": <CompaniesPage />,
   "/job-requests": <JobRequestsPage />,
   "/candidates": <CandidatesPage />,
   "/assessed-pool": <AssessedPoolPage />,
@@ -100,6 +98,7 @@ function SessionGate() {
           <Route key={path} path={path} element={<RequirePermission item={{ permission }}>{element}</RequirePermission>} />
         ))}
       </Route>
+      <Route path="/companies" element={<Navigate to="/job-requests" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

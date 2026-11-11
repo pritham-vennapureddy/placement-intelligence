@@ -442,7 +442,7 @@ export function CompanyDetailPage() {
         queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
       ]);
       toast.success("Company and its job requests permanently deleted");
-      navigate("/companies");
+      navigate("/job-requests");
     },
   });
 
@@ -453,8 +453,8 @@ export function CompanyDetailPage() {
 
   return (
     <div className="space-y-6">
-      <Link to="/companies" className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800">
-        <ArrowLeft size={15} /> Companies
+      <Link to="/job-requests" className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800">
+        <ArrowLeft size={15} /> Job requests
       </Link>
       <PageHeader
         eyebrow="Company"

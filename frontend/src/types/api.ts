@@ -442,7 +442,8 @@ export interface InternalSheetTabs {
 export interface JobRequestInput {
   jobId: string;
   hubspotDeal: string | null;
-  companyId: string;
+  /** Matched to an existing company by name, or added as a new one. */
+  companyName: string;
   roleTitle: string;
   techStack: string[];
   openings: number;

@@ -41,7 +41,8 @@ const jobFields = {
   // Generated in HubSpot; stored lower-case so lookups ignore case.
   jobId: z.uuid({ message: "Enter the Job ID from HubSpot (a UUID such as 78e5a531-6ff2-…)." }).transform((value) => value.toLowerCase()),
   hubspotDeal,
-  companyId: z.uuid(),
+  /** Typed on the job; matched to an existing company by name, or added. */
+  companyName: z.string().trim().min(2, "Enter the company name.").max(160).transform((value) => value.replace(/\s+/g, " ")),
   roleTitle: z.string().trim().min(2).max(160),
   techStack: z.array(z.string().trim().min(1).max(80)).min(1, "Add at least one skill.").max(30),
   openings: z.number().int().min(1).max(10000),
@@ -76,7 +77,6 @@ export const createJobRequestSchema = z
 
 export const updateJobRequestSchema = z
   .object(jobFields)
-  .omit({ companyId: true })
   .partial()
   .refine(deadlineAfterRequest, { message: "The deadline cannot be before the request date.", path: ["deadline"] });
 

@@ -13,10 +13,9 @@ import { createCompanySchema } from "../companies/companies.validators.js";
 import { createJobRequestSchema, updateJobRequestSchema } from "./job-requests.validators.js";
 import { resolveJobRequestOwner } from "./owner-policy.js";
 
-const COMPANY_ID = "0b6f7a3e-2c1d-4e5f-9a8b-7c6d5e4f3a2b";
 const validJob = {
   jobId: "78E5A531-6FF2-4F04-970A-8162B9FA2A1A",
-  companyId: COMPANY_ID,
+  companyName: "Asama.ai",
   roleTitle: "MERN Developer",
   techStack: ["React", "Node.js"],
   openings: 3,
