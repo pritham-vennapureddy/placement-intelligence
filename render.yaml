@@ -1,0 +1,32 @@
+# Render blueprint: one free web service runs the API and serves the built
+# frontend from the same address (keeps the login cookie first-party).
+# Secrets marked `sync: false` are entered in the Render dashboard, never here.
+services:
+  - type: web
+    name: placement-intelligence
+    runtime: node
+    plan: free
+    region: singapore # closest Render region to the Supabase Mumbai database
+    branch: main
+    buildCommand: npm ci --include=dev && npx prisma generate && npm run build
+    startCommand: npm run start --workspace backend
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL # Supabase transaction pooler (:6543)
+        sync: false
+      - key: DIRECT_URL # Supabase session pooler (:5432); used by Prisma CLI
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: FRONTEND_ORIGIN # this service's own https://….onrender.com address
+        sync: false
+      - key: HUBSPOT_PORTAL_ID
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_BASE64
+        sync: false

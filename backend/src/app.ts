@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
@@ -78,6 +81,17 @@ app.use("/api/my-work", myWorkRouter);
 app.use("/api/integrations/neon", neonRouter);
 app.use("/api/teams", teamsRouter);
 app.use("/api/sheets", sheetsRouter);
+
+// In production the API also serves the built frontend, so both share one
+// origin and the refresh cookie stays first-party.
+const frontendDist = fileURLToPath(new URL("../../frontend/dist/", import.meta.url));
+if (env.NODE_ENV === "production" && existsSync(join(frontendDist, "index.html"))) {
+  app.use(express.static(frontendDist, { index: false, maxAge: "1y", immutable: true }));
+  app.get(/^(?!\/api(\/|$)).*/, (_request, response) => {
+    response.setHeader("Cache-Control", "no-cache");
+    response.sendFile(join(frontendDist, "index.html"));
+  });
+}
 
 app.use((_request, response) => {
   response.status(404).json({
