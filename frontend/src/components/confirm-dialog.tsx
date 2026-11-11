@@ -33,15 +33,20 @@ export function ConfirmDialog({
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [requestId, setRequestId] = useState<string | null>(null);
 
   const confirm = async () => {
     setPending(true);
     setError(null);
+    setRequestId(null);
     try {
       await onConfirm();
       onOpenChange(false);
     } catch (confirmError) {
       setError(confirmError instanceof Error ? confirmError.message : "The action could not be completed.");
+      if (typeof confirmError === "object" && confirmError !== null && "requestId" in confirmError && typeof confirmError.requestId === "string") {
+        setRequestId(confirmError.requestId);
+      }
     } finally {
       setPending(false);
     }
@@ -54,7 +59,7 @@ export function ConfirmDialog({
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
-        {error && <p role="alert" className="text-sm text-rose-600">{error}</p>}
+        {error && <div role="alert" className="space-y-1 text-sm text-rose-600"><p>{error}</p>{requestId && <p className="text-xs text-slate-500">Reference ID: {requestId}</p>}</div>}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
           <Button variant={destructive ? "destructive" : "default"} disabled={pending} onClick={() => void confirm()}>

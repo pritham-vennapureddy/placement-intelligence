@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { columnLetter, normalizeValueKey } from "@placement/shared";
 import type { ReactNode } from "react";
-import { Input } from "../../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { importsApi } from "../../services/workflow-api";
 import type { ImportBatch, ValueSuggestion } from "../../types/workflow";
@@ -9,7 +8,7 @@ import { cn } from "../../utils/cn";
 
 const NONE = "__none__";
 
-/** Top rows of a sheet, used both to choose the header row and to label columns. */
+/** Top rows of a sheet, used to identify headers and label columns automatically. */
 export function useSheetPreview(batchId: string, sheet: string | undefined) {
   return useQuery({
     queryKey: ["imports", batchId, "preview", sheet],
@@ -19,20 +18,46 @@ export function useSheetPreview(batchId: string, sheet: string | undefined) {
   });
 }
 
-/** "C · Email Id" labels for every column, from the chosen header row. */
+/** Labels columns with detected headers, or sample values when the sheet has no header. */
 export function columnOptions(rows: { rowNumber: number; cells: string[] }[] | undefined, headerRow: number) {
   const header = rows?.find((row) => row.rowNumber === headerRow)?.cells ?? [];
+  const sampleRow = rows?.find((row) => row.rowNumber > headerRow && row.cells.some(Boolean))
+    ?? rows?.find((row) => row.cells.some(Boolean));
   const width = Math.max(header.length, ...(rows ?? []).map((row) => row.cells.length));
   return Array.from({ length: width }, (_, index) => ({
     index,
     header: header[index]?.trim() ?? "",
-    label: header[index]?.trim() ? `${columnLetter(index)} · ${header[index]!.trim()}` : columnLetter(index),
+    label: header[index]?.trim()
+      ? `${columnLetter(index)} · ${header[index]!.trim()}`
+      : sampleRow?.cells[index]?.trim()
+        ? `${columnLetter(index)} · e.g. ${sampleRow.cells[index]!.trim().slice(0, 28)}`
+        : columnLetter(index),
   })).filter((option) => option.header || (rows ?? []).some((row) => row.cells[option.index]));
 }
 
 /** Index of the first column whose header matches, for sensible defaults. */
 export function guessColumn(options: ReturnType<typeof columnOptions>, pattern: RegExp, exclude: number[] = []): number | undefined {
-  return options.find((option) => pattern.test(option.header) && !exclude.includes(option.index))?.index;
+  return options.find((option) => pattern.test(option.header.replace(/[_-]+/g, " ")) && !exclude.includes(option.index))?.index;
+}
+
+/** Uses the first data rows to recognize common contact columns when headers are absent. */
+export function guessColumnByValues(
+  rows: { rowNumber: number; cells: string[] }[] | undefined,
+  headerRow: number,
+  matches: (value: string) => boolean,
+  exclude: number[] = [],
+): number | undefined {
+  const dataRows = (rows ?? []).filter((row) => row.rowNumber > headerRow).slice(0, 12);
+  const width = Math.max(0, ...dataRows.map((row) => row.cells.length));
+  let best: { index: number; ratio: number } | undefined;
+  for (let index = 0; index < width; index++) {
+    if (exclude.includes(index)) continue;
+    const values = dataRows.map((row) => row.cells[index]?.trim()).filter((value): value is string => Boolean(value));
+    if (values.length === 0) continue;
+    const ratio = values.filter(matches).length / values.length;
+    if (ratio >= 0.8 && (!best || ratio > best.ratio)) best = { index, ratio };
+  }
+  return best?.index;
 }
 
 export function Field({ label, hint, children, className }: { label: string; hint?: ReactNode; children: ReactNode; className?: string }) {
@@ -82,16 +107,14 @@ export function ColumnSelect({
   );
 }
 
-/** Preview table; clicking a row makes it the header row. */
+/** Preview table with the detected header row highlighted, when one is present. */
 export function SheetPreview({
   rows,
   headerRow,
-  onHeaderRow,
   isLoading,
 }: {
   rows: { rowNumber: number; cells: string[] }[] | undefined;
   headerRow: number;
-  onHeaderRow: (row: number) => void;
   isLoading?: boolean;
 }) {
   if (isLoading) return <p className="py-6 text-center text-xs text-slate-400">Reading the tab…</p>;
@@ -99,11 +122,11 @@ export function SheetPreview({
   const width = Math.min(14, Math.max(...rows.map((row) => row.cells.length)));
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-2">
-        <span className="text-xs font-semibold text-slate-600">Header row</span>
-        <Input type="number" min={1} value={headerRow} onChange={(event) => onHeaderRow(Math.max(1, Number(event.target.value) || 1))} className="h-8 w-20" />
-        <span className="text-[11px] text-slate-400">or click a row below</span>
-      </div>
+      <p className="text-[11px] text-slate-500">
+        {headerRow > 0
+          ? `Header detected in row ${headerRow}.`
+          : "No header detected; all rows will be treated as data."}
+      </p>
       <div className="max-h-64 overflow-auto rounded-lg border border-slate-200">
         <table className="w-full text-left text-[11px]">
           <thead className="sticky top-0 bg-slate-50 text-slate-400">
@@ -116,8 +139,7 @@ export function SheetPreview({
             {rows.map((row) => (
               <tr
                 key={row.rowNumber}
-                onClick={() => onHeaderRow(row.rowNumber)}
-                className={cn("cursor-pointer border-t border-slate-100 hover:bg-indigo-50/50", row.rowNumber === headerRow && "bg-indigo-50 font-semibold text-indigo-800")}
+                className={cn("border-t border-slate-100", row.rowNumber === headerRow && "bg-indigo-50 font-semibold text-indigo-800")}
               >
                 <td className="px-2 py-1 text-slate-400">{row.rowNumber}</td>
                 {Array.from({ length: width }, (_, index) => (

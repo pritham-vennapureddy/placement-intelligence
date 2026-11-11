@@ -104,10 +104,13 @@ export const pipelineService = {
 
   async createRound(user: AuthenticatedUser, jobRequestId: string, input: CreateRoundInput, audit: AuditContext) {
     const { job } = await loadJobForUser(user, jobRequestId, "pipeline:write");
+    // Rounds added by hand go to the job's first active recruitment batch, as imports do by default.
+    const batch = await prisma.recruitmentBatch.findFirst({ where: { jobRequestId: job.id, status: "ACTIVE" }, orderBy: { sequence: "asc" }, select: { id: true } });
+    if (!batch) throw new ApiError(409, "RECRUITMENT_BATCH_MISSING", "Create an active recruitment batch before adding rounds.");
     return inTransaction(async (transaction) => {
-      const last = await transaction.companyInterviewRound.aggregate({ where: { jobRequestId: job.id }, _max: { sequence: true } });
+      const last = await transaction.companyInterviewRound.aggregate({ where: { jobRequestId: job.id, recruitmentBatchId: batch.id }, _max: { sequence: true } });
       const round = await transaction.companyInterviewRound.create({
-        data: { jobRequestId: job.id, name: input.name, roundType: input.roundType, sequence: (last._max.sequence ?? 0) + 1 },
+        data: { jobRequestId: job.id, recruitmentBatchId: batch.id, name: input.name, roundType: input.roundType, sequence: (last._max.sequence ?? 0) + 1 },
       });
       await recordAudit(transaction, audit, { action: "ROUND_ADDED", entityType: "JobRequest", entityId: job.id, metadata: { name: input.name } });
       return round;

@@ -12,3 +12,6 @@ frontend/.vite/
 # Source workbooks contain candidate personal data; never commit them.
 docs/samples/
 *.xlsx
+
+# Database backups
+backups/

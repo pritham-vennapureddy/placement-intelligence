@@ -12,8 +12,8 @@ A first Phase 1 pass already exists and is healthy:
 | Workspaces | npm workspaces `backend/`, `frontend/`; root Prisma config; `shared/types` empty |
 | Backend | Express 5, Zod 4, Prisma 7 + `@prisma/adapter-pg`, pino, helmet, CORS allowlist, rate limit, central error handler, `{ data }` / `{ error }` envelopes |
 | Auth | bcrypt; short-lived HS256 access JWT in memory; opaque refresh token (hashed in DB, HttpOnly cookie) with rotation and family revocation on reuse; no public sign-up; seed creates admin |
-| RBAC | Roles `ADMIN`, `MANAGER`, `PSM`, `VIEWER`; role-check middleware; team-scoped data (manager → team, PSM → self) |
-| Modules | auth, dashboard summary, teams/user provisioning, Google Sheets connections + tab/column mapping (metadata + header row only), Neon service health |
+| RBAC | Roles `ADMIN`, `MANAGER`, `STAKEHOLDER`, `EMPLOYEE`; role-check middleware; one shared workspace (manager → workspace, employee/stakeholder → self) |
+| Modules | auth, dashboard summary, teams/user provisioning, Google Sheets connections + tab/column mapping (automatic header detection with headerless data support), Neon service health |
 | Frontend | React 19, Vite 7, Tailwind 4, React Router 7, TanStack Query, RHF, Recharts, Lucide; shadcn-style `Button`/`Card`; app shell with sidebar; login, dashboard (partly labeled preview data), teams, sheets pages |
 | Database | Neon, 2 migrations applied, schema up to date |
 | Checks | backend + frontend `tsc` pass; 1 unit test passes |
@@ -60,8 +60,8 @@ Gaps against the target spec:
 Key design rules:
 
 - **Two pipelines, one link.** Internal PSM screening (TA→RS→SC→AS→SP) and the company hiring pipeline are separate tables. The only link is `CompanyNomination`, created explicitly by the owning PSM. Nothing moves a candidate across automatically, and internally rejected candidates cannot be nominated.
-- **Explicit stage status.** `InternalProcessStage.status` is only changed by an explicit action, logged in `StageCompletionRecord`. Supplying a rejection reason never changes it.
-- **One ingestion pipeline.** Sheets sync and Excel/CSV upload both produce an `ImportBatch` → `ImportSheetMapping` → `ImportStagingRecord` (raw + normalized) → `DataQualityIssue` → human `ImportApproval` → transactional commit. Rows missing from a re-import are flagged, never deleted.
+- **Sheet-driven stage status.** Stage decisions are maintained in Google Sheets. Imports update read-only candidate outcomes and stage completion status, with transitions logged in `StageCompletionRecord`; a stage marked not conducted requires a reason.
+- **Google Sheets ingestion.** A mapped spreadsheet import produces an `ImportBatch` → `ImportSheetMapping` → `ImportStagingRecord` (raw + normalized) → `DataQualityIssue` → transactional commit. The dashboard reads Sheets and never writes shortlist decisions back to them.
 - **Reconciliation keys.** Job requests by `jobId`; candidates by `candidateCode` (email also unique); companies by `hubspotCompanyId` once available, otherwise by explicit user choice, never by name.
 - **Metrics are computed**, from `InternalStageCandidate`, `CompanyNomination`, `CompanyStageHistory` etc. If dashboards get slow, add refreshed materialized views, not hand-maintained counters.
 - **Integrity in the database.** Composite foreign keys (`[id, jobRequestId]`) make it impossible for a stage outcome, nomination or interview to reference an application from a different job request. Business history tables use `onDelete: Restrict`; entities are archived (`archivedAt`), not deleted.
@@ -158,7 +158,7 @@ Notes on specific choices:
 
 | # | Topic | Decision | Effect on the design |
 |---|---|---|---|
-| D1 | Candidate identity | Candidate ID is globally unique and stable; ~~email is unique too~~ **revision proposed:** the source data has emails and mobiles shared by several user IDs (see [source-sheets-analysis.md](source-sheets-analysis.md)), so email and mobile are indexed, not unique, and probable duplicates are flagged | `Candidate.candidateCode` and `Candidate.email` are both unique. An import row whose email matches a different Candidate ID is raised as a conflict for review |
+| D1 | Candidate identity | Placement sheet imports use normalized mobile as their only candidate match key. Source UUID and email are ignored for matching; a missing or duplicate mobile is blocked for review. The source workbook still contains duplicate mobiles and needs cleanup (see [source-sheets-analysis.md](source-sheets-analysis.md)). | `Candidate.candidateCode` remains a unique internal database code. Mobile is indexed, and the importer rejects ambiguous matches rather than choosing a candidate. |
 | D2 | Job ID & company data | PSMs enter the Job ID and company details manually. Later, company details will come from HubSpot via an API, keyed by an ID the PSM provides | `JobRequest.jobId` is a required, unique text field entered by the PSM. `Company.hubspotCompanyId` is optional and unique, reserved for the HubSpot integration |
 | D3 | Company identity | No separate company code exists; the Job ID is the business key | Companies are not matched automatically on import. Job rows are matched by Job ID; new companies are picked or created by the PSM |
 | D4 | PSM ownership | Ownership is per job request | `PSMAssignment` is job-level only (`companyId` removed, `jobRequestId` required, one open assignment per job). A company's PSMs are derived from its job requests. The dashboard company filter that uses company assignments changes accordingly |
@@ -179,7 +179,7 @@ Needed before Phase 3–4:
 
 Needed before Phase 5–6:
 
-10. **PII visibility.** Which roles can see candidate email, mobile and resume? Should VIEWER / leadership see only aggregates?
+10. **PII visibility.** Which roles can see candidate email, mobile and resume? Stakeholders currently see candidate records without write access or PII permission.
 11. **Conflicting edits.** If a PSM edits a candidate's category or assessed-pool status and a later import says otherwise, which wins?
 12. **Sheets sync.** Frequency? Strictly read-only (no write-back)? When a row disappears from the sheet, should it be flagged for review or ignored?
 13. **RSA.** Score scales, who mentors (new `MENTOR` role?), what defines "improvement"?
@@ -236,28 +236,26 @@ Deferred:
 
 ## 9. Drive setup workflow (agreed direction, 2026-10-31)
 
-The dashboard cannot know what a sheet's tabs mean, so the PSM tells it, step by step. Sheet uploads are the main way data enters the platform, so the import pipeline moves earlier in the plan.
+For Google Sheets, the PSM selects the tabs to use; the dashboard detects headers, student identity, and relevant columns automatically. Mapping errors are surfaced before saving; company imports also show staged rows for review. Google Sheets remain the source of truth for candidate-stage decisions.
 
 1. **Company.** Pick an existing company or create one: name plus HubSpot company ID or link, industry, location. The PSM owner enters it; HubSpot auto-fill comes later.
 2. **Job request (drive).** Role, tech stack, openings, profiles required, timeline, proposed shortlisting mechanism, deadline, PSM owner (defaults to the creator).
-3. **Internal sheet.** Upload an .xlsx / .csv (a Google Sheets link comes later). The dashboard lists every tab with its row count and a preview, then asks:
-   - **Total applications (TA):** which tab, and which column identifies the candidate (user ID, email or mobile).
-   - **Products:** which tab and column give each candidate's product. It can be the TA tab or another tab such as an eligible-students list joined by user ID.
-   - **Resume shortlist (RS), screening (SC), assignment (AS), final profiles (SP):** for each stage, either a tab, a decision column inside another tab, "not conducted", or "I'll select candidates manually". Where a tab has a decision column, the PSM maps its values (e.g. `c` → Selected, `reject` → Rejected, `hold` → On hold), and optionally priority and score columns.
-4. **Review.** Preview funnel counts per stage, rows that match no applicant, duplicates and conflicts. The PSM approves, then everything is saved in one transaction.
-5. **Company sheet.** Upload the sheet shared with the company. The PSM picks which tabs belong to this job; the dashboard detects the round columns (e.g. Screening Round, TR Round 1, MR Round, Final Status) and the PSM confirms them as the job's rounds. Rows are matched to internal candidates automatically (email, then mobile); anything unmatched or ambiguous is shown for the PSM to resolve. The job's tech stack is attached to the matched profiles.
-6. **Later uploads** of the same sheets update outcomes. Nothing is deleted when a row disappears; it is flagged.
+3. **Internal sheet.** Connect a Google Sheets workbook and select the applications tab and any RS / SC / AS / SP tabs to include. Headers, student identity, product fields, decisions, and stage details are inferred automatically, including headerless tabs. A stage can instead be marked not conducted with a reason.
+4. **Review.** Inspect stage counts, rows that match no applicant, duplicates and conflicts, then commit the import. The dashboard displays stage candidates and analytics without offering shortlist controls.
+5. **Assessed pools.** Map Bucket, TR and Competency tabs by candidate ID to track each pool's applicant and stage outcomes.
+6. **Company sheet.** Connect the company workbook and select the tabs for this job. Student identity, interview rounds, final status, and recognizable outcome values are inferred automatically.
+7. **Refreshes** read the latest sheet data. Nothing is written back to Sheets.
 
-Saved mappings are reused for the next upload of the same job.
+Previously selected tabs are preselected for the next Google Sheets import of the same job. Other file imports continue to use column mapping.
 
 ### Revised phase order
 
 | Phase | Scope |
 |---|---|
 | 2 | Companies and job requests (manual entry, HubSpot fields), PSM ownership, a job workspace page |
-| 3 | Internal sheet upload and mapping wizard → candidates, products, applications, TA–SP outcomes, with review and approval; manual stage edits |
-| 4 | Company sheet upload and mapping → rounds, profile matching, company outcomes, offers and joining |
-| 5 | Google Sheets links and scheduled re-sync (Redis / BullMQ), re-import differences |
+| 3 | Google Sheets mapping and import → candidates, products, applications and TA–SP outcomes; read-only stage analytics |
+| 4 | Company Google Sheets mapping and import → rounds, profile matching, company outcomes, offers and joining |
+| 5 | Scheduled Google Sheets re-sync and re-import differences |
 | 6 | PSM tasks, contributions and incentives, RSA and homework, reports |
 | 7 | Testing, security review, performance, deployment, backup and restore |
 
@@ -286,15 +284,17 @@ Open:
 
 Built on the dev branch (migration `20261031180000_candidates_screening_pipeline_imports`, additive only).
 
-**Sheet imports (both phases use one pipeline).** Upload .xlsx/.csv on a job request → the PSM maps tabs and columns (pre-filled from the last approved import of that job) → the whole file is checked into staged rows with errors / warnings / notes → the PSM reviews, includes or leaves out rows, and (company sheets) matches unmatched profiles by hand → approve saves everything in one transaction. The original file, every staged row (original and normalised values), every issue and the approval are kept. Nothing is deleted when a row disappears from a later file; it is reported.
+**Sheet imports (both phases use one pipeline).** Connect a Google Sheets workbook on a job request → select relevant tabs (previous selections are prefilled) → automatically infer headers and columns → validate with errors / warnings / notes → save. Company imports show staged rows for review before commit; internal Google Sheets imports are validated before their existing direct-save flow. Internal stage decisions remain in Sheets and are shown read-only in the dashboard. Nothing is written back to Sheets.
 
-**Internal sheet (Phase 3).** Applications tab and columns; products from a column or a lookup tab (e.g. Eligible Students); for RS / SC / AS / SP: a tab, a decision column inside another tab, "not conducted", "select in the dashboard" or "leave as is", with the meaning of each value (e.g. `c` / `reject` / `hold`), priority and scores. Candidates are matched by Candidate ID, else email then mobile.
+**Internal sheet (Phase 3).** Select the applications tab and any RS / SC / AS / SP tabs to import. Student details, product columns, candidate identity, and stage decisions are inferred, including headerless data. Placement imports now ignore source UUIDs and match candidates by normalized mobile only; duplicate or missing mobiles are excluded for review.
 
-**In the dashboard (Phase 3).** Job request → Internal screening: stage cards with counts, stage status set by hand and logged, next planned date and remarks, candidate decisions saved one at a time, manual selection onto a stage, shortlisting method notes, adding candidates by hand, and re-using candidates from an earlier drive (D6). Candidates list and profile with every job's internal and company history; contact details hidden from roles without `candidate:pii:read`.
+**Company-wise placement refresh (2026-11-04).** The internal Google Sheets flow now treats Applied Users as the application/profile base and derives TA from the job's distinct applications; RS / SC / AS / SP rows use their mapped shortlist statuses. Normalized mobile is the sole candidate match key across placement imports; source UUIDs and email are ignored for matching. Missing or shared mobiles are reported and excluded instead of being merged. SP does not require a manual stage or decision column: its row denotes final selection, while `Selection_Basis` and `Remarks` are saved on the stage outcome. `tool` analysis is stored in `CandidateResumeAssessment`; other supplemental tabs are saved as `CandidateAdditionalProfile` records classified independently from recruitment stages. The company dashboard shows job funnels, profile counts, candidate resume analysis, and SP selection-basis totals. Both profile tables retain the import-batch link; re-imports update the same candidate/job/source record.
 
-**Company pipeline (Phase 4).** Rounds configured per job (added by hand or from the company sheet's columns), nominations (the owning PSM nominates; internally rejected candidates are refused), round results, and Selected → Offer released → Offer accepted → Joined (or declined / dropped) with dates and history. Company sheet import matches profiles by email then mobile and nominates profiles the company already has.
+**In the dashboard (Phase 3).** Job request → Internal screening: stage cards with counts and status, read-only candidate lists, product breakdowns, and Bucket / TR / Competency pool outcomes. Candidates list and profile show each job's internal and company history; contact details are hidden from roles without `candidate:pii:read`.
 
-**Dashboard.** Live funnel from candidate records (applications, RS/SC/AS/SP selections, nominated, selected, offers, joined), following the date / product / tech-stack filters. Internal screening and Company pipeline pages show progress per active job; the Import centre lists every upload.
+**Company pipeline (Phase 4).** Rounds configured per job (added by hand or from detected company-sheet columns), nominations (the owning PSM nominates; internally rejected candidates are refused), round results, and Selected → Offer released → Offer accepted → Joined (or declined / dropped) with dates and history. Company sheet import matches profiles by normalized mobile only and nominates profiles the company already has.
+
+**Dashboard.** Live funnel from candidate records (applications, RS/SC/AS/SP selections, nominated, selected, offers, joined), following the date / product / tech-stack filters. Internal screening and Company pipeline pages show progress per active job; the Import centre lists each Google Sheets import.
 
 **Rules assumed (please confirm):**
 
@@ -311,7 +311,26 @@ Built on the dev branch (migration `20261031180000_candidates_screening_pipeline
 
 **Not yet:**
 
-- Google Sheets links and scheduled re-sync (Phase 5); uploads only for now.
-- The resume-analysis ("tool") tab and the Google Form profile tab are not imported yet.
+- Scheduled Google Sheets re-sync (Phase 5).
+- Scheduled Google Sheets refresh still requires an explicit refresh/import action; background scheduling remains Phase 5.
 - Uploaded files are stored in the database; move to object storage before volumes grow.
 - Newer modules (applications, pipeline, candidates, imports service) query Prisma from their services for brevity; split into repositories when they grow.
+
+## 12. Recruitment batches and sheets (2026-11-10)
+
+**The job request owns the sheets.** `JobRequest.internalSheetUrl` / `companySheetUrl` are the workbooks every batch reads. `RecruitmentBatch.internalSheetUrl` / `companySheetUrl` are set only when a batch lives in a *different* workbook; links equal to the job's are stored as null, so editing the job's sheet applies to all batches that follow it. "Refresh from Google Sheets" reads the linked sheet (batch's own, else the job's) and falls back to the last imported sheet only when no link is set.
+
+**Batch tabs.** Internal screening → Recruitment batches: add or edit a batch (name, openings, closed) and choose which tabs of the internal sheet are its TA / RS / SC / AS / SP (`RecruitmentBatch.internalTabs`). Tab names are suggested (`TA`, then `TA-1`, …). A new import for the batch starts from those tabs; the last approved mapping is reused only while it reads the same tabs. The tabs confirmed on the mapping screen are written back to the batch on save. Edge cases: one tab belongs to one batch per workbook (409 `TAB_IN_USE`); batch names are unique per job; a chosen tab missing from the sheet is flagged and that stage is mapped on import; without a TA tab the import detects tabs itself; a sheet not shared with the service account returns `SHEET_ACCESS_DENIED` with the email to share with.
+
+**SP selection basis.** A `Selection_Basis` column is optional. Without one, the SP tab's Remarks are used as the selection basis (existing SP rows were backfilled), and the SP list shows the selection basis.
+
+## Company status, guidance and stakeholder insights (2026-11-10)
+
+Migration `20261110200000_guidance_company_process_skip_reason` (additive only).
+
+- **Skipped screening.** When SC is marked not conducted, the PSM picks a reason (`InternalProcessStage.skipReason`: time constraint, company asked for profiles directly, repeat drive, profiles already assessed, too few applications, other) and writes a required note. Profiles go straight to SP; each student's `Selection_Basis` records the signals that were used. Only SC can be skipped.
+- **Not shared with company.** A student selected at SP is *not shared* when the company does not have the profile: no nomination, a withdrawn nomination, or a nomination still `NOT_SUBMITTED`. The company sheet import is what creates nominations, so "not in the company sheet" means not shared. This status appears on the pipeline tab, the company page, My companies and Insights.
+- **Company process status** (per job): Yet to share CVs → CVs shared → Hiring in progress → *round* yet to start / in progress (pointing at one of the job's configured rounds, e.g. "Yet to start TR1", "TR2 in progress") → On hold → Offers released → Process completed. Set by hand and logged in `CompanyProcessHistory`; it is separate from the job request's open/closed status.
+- **Guidance.** `GuidanceSession` = a drive-level session; `CandidateGuidance` = one student guided individually. Any PSM with `pipeline:write` can open `/guidance/:jobId` for any live job (it shows student names, not contact details) and record guidance under their own name. Only the giver, or an administrator, can remove it. A student already guided by another PSM cannot be overwritten (409).
+- **My companies** (`/my-work`): the PSM's jobs, with company status, TA, internal rejections, SP, shared / not shared, in process, company rejections, selects, offers / joined, and guidance. Administrators and managers can switch to another PSM in their scope.
+- **Insights** (`/insights`, admin / manager / stakeholder): company-level, monthly (by job request month), category-level and student-level metrics. "Rejected internally" means rejected at RS, SC or AS. The page also shows Academy internal rejections, SC no-shows, drives with screening skipped (by reason), top rejection reasons, and active jobs by company status. **Stakeholders see the whole workspace here**; managers see their team and employees their own jobs, as elsewhere.

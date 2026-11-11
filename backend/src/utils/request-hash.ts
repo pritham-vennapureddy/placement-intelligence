@@ -15,5 +15,7 @@ export function stableStringify(value: unknown): string {
 }
 
 export function hashRequest(method: string, path: string, body: unknown): string {
-  return createHash("sha256").update(`${method.toUpperCase()} ${path}\n${stableStringify(body ?? null)}`).digest("hex");
+  const hash = createHash("sha256").update(`${method.toUpperCase()} ${path}\n`);
+  hash.update(Buffer.isBuffer(body) ? body : stableStringify(body ?? null));
+  return hash.digest("hex");
 }

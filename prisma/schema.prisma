@@ -164,42 +164,98 @@ enum JobRequestStatus {
   CLOSED
 }
 
+enum RecruitmentBatchStatus {
+  ACTIVE
+  CLOSED
+}
+
 enum SheetSourceType {
+  INTERNAL_PROCESS
   COMPANY_PROCESS
   STUDENT_APPLICATIONS
   CANDIDATE_PROFILES
   ASSESSED_POOL
 }
 
+enum CandidatePoolType {
+  BUCKET
+  TR
+  COMPETENCY
+}
+
+// Why the SC (screening) stage was skipped and profiles went to SP on other signals.
+enum ScreeningSkipReason {
+  TIME_CONSTRAINT
+  COMPANY_REQUESTED_DIRECT
+  REPEAT_DRIVE
+  PRE_ASSESSED_PROFILES
+  LOW_APPLICATIONS
+  OTHER
+}
+
+// Where the company's hiring process stands for a job. Round phases point at one
+// of the job's configured rounds (JobRequest.processRoundId).
+enum CompanyProcessPhase {
+  YET_TO_SHARE_CVS
+  CVS_SHARED
+  HIRING_IN_PROGRESS
+  ROUND_YET_TO_START
+  ROUND_IN_PROGRESS
+  ON_HOLD
+  OFFERS_RELEASED
+  PROCESS_DONE_HIRED
+  PROCESS_DONE_NOT_HIRED
+}
+
+// Per-student tasks on the Guidance & RSA page. RSA = rejection section analysis.
+enum StudentSupportKind {
+  GUIDANCE
+  RSA
+}
+
+enum AssessedProcessType {
+  OLD
+  NEW
+  UNKNOWN
+}
+
 model User {
-  id                  String                   @id @default(uuid()) @db.Uuid
-  email               String                   @unique
-  fullName            String
-  passwordHash        String
-  isActive            Boolean                  @default(true)
-  createdAt           DateTime                 @default(now())
-  updatedAt           DateTime                 @updatedAt
-  roles               UserRole[]
-  refreshTokens       RefreshToken[]
-  createdCompanies    Company[]                @relation("CompanyCreator")
-  ownedJobRequests    JobRequest[]             @relation("JobRequestOwner")
-  createdJobRequests  JobRequest[]             @relation("JobRequestCreator")
-  assignmentsReceived PSMAssignment[]          @relation("AssignmentOwner")
-  assignmentsCreated  PSMAssignment[]          @relation("AssignmentCreator")
-  auditLogs           AuditLog[]
-  teamId              String?                  @db.Uuid
-  team                Team?                    @relation("TeamMembers", fields: [teamId], references: [id], onDelete: SetNull)
-  ledTeam             Team?                    @relation("TeamLead")
-  teamsCreated        Team[]                   @relation("TeamCreator")
-  sheetConnections    SheetConnection[]        @relation("SheetConnectionCreator")
-  idempotencyKeys     IdempotencyKey[]
-  stageOwnership      InternalProcessStage[]   @relation("StageOwner")
-  stageDecisions      InternalStageCandidate[] @relation("StageDecisionMaker")
-  stageCompletions    StageCompletionRecord[]  @relation("StageCompletionRecorder")
-  nominationsCreated  CompanyNomination[]      @relation("NominationCreator")
-  companyStageChanges CompanyStageHistory[]    @relation("CompanyStageChanger")
-  importBatches       ImportBatch[]            @relation("ImportBatchCreator")
-  importApprovals     ImportApproval[]         @relation("ImportApprover")
+  id                     String                      @id @default(uuid()) @db.Uuid
+  email                  String                      @unique
+  fullName               String
+  passwordHash           String
+  isActive               Boolean                     @default(true)
+  createdAt              DateTime                    @default(now())
+  updatedAt              DateTime                    @updatedAt
+  roles                  UserRole[]
+  refreshTokens          RefreshToken[]
+  createdCompanies       Company[]                   @relation("CompanyCreator")
+  ownedJobRequests       JobRequest[]                @relation("JobRequestOwner")
+  createdJobRequests     JobRequest[]                @relation("JobRequestCreator")
+  assignmentsReceived    PSMAssignment[]             @relation("AssignmentOwner")
+  assignmentsCreated     PSMAssignment[]             @relation("AssignmentCreator")
+  auditLogs              AuditLog[]
+  teamId                 String?                     @db.Uuid
+  team                   Team?                       @relation("TeamMembers", fields: [teamId], references: [id], onDelete: SetNull)
+  ledTeam                Team?                       @relation("TeamLead")
+  teamsCreated           Team[]                      @relation("TeamCreator")
+  sheetConnections       SheetConnection[]           @relation("SheetConnectionCreator")
+  idempotencyKeys        IdempotencyKey[]
+  stageOwnership         InternalProcessStage[]      @relation("StageOwner")
+  stageDecisions         InternalStageCandidate[]    @relation("StageDecisionMaker")
+  stageCompletions       StageCompletionRecord[]     @relation("StageCompletionRecorder")
+  nominationsCreated     CompanyNomination[]         @relation("NominationCreator")
+  companyStageChanges    CompanyStageHistory[]       @relation("CompanyStageChanger")
+  importBatches          ImportBatch[]               @relation("ImportBatchCreator")
+  importApprovals        ImportApproval[]            @relation("ImportApprover")
+  assessedPoolImports    AssessedPoolImport[]        @relation("AssessedPoolImportCreator")
+  assessedPoolSources    AssessedPoolSource[]        @relation("AssessedPoolSourceCreator")
+  processPhaseChanges    CompanyProcessHistory[]     @relation("CompanyProcessChanger")
+  guidanceSessions       GuidanceSession[]           @relation("GuidanceGiver")
+  guidanceRecorded       GuidanceSession[]           @relation("GuidanceRecorder")
+  supportContributions   StudentSupportContributor[]
+  supportUpdates         StudentSupport[]            @relation("StudentSupportUpdater")
+  supportStatusesCreated SupportStatusOption[]       @relation("SupportStatusCreator")
 }
 
 model Role {
@@ -227,17 +283,18 @@ model Team {
 }
 
 model SheetConnection {
-  id            String            @id @default(uuid()) @db.Uuid
-  spreadsheetId String
-  title         String
-  sourceType    SheetSourceType
-  teamId        String?           @db.Uuid
-  createdById   String            @db.Uuid
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  team          Team?             @relation(fields: [teamId], references: [id], onDelete: SetNull)
-  createdBy     User              @relation("SheetConnectionCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  tabMappings   SheetTabMapping[]
+  id              String                    @id @default(uuid()) @db.Uuid
+  spreadsheetId   String
+  title           String
+  sourceType      SheetSourceType
+  teamId          String?                   @db.Uuid
+  createdById     String                    @db.Uuid
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+  team            Team?                     @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  createdBy       User                      @relation("SheetConnectionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  tabMappings     SheetTabMapping[]
+  poolMemberships CandidatePoolMembership[]
 
   @@unique([spreadsheetId, sourceType])
   @@index([teamId, sourceType])
@@ -257,6 +314,82 @@ model SheetTabMapping {
 
   @@unique([connectionId, workflowStage])
   @@index([connectionId, sheetId])
+}
+
+model CandidatePoolMembership {
+  id                 String            @id @default(uuid()) @db.Uuid
+  candidateCode      String
+  candidateId        String?           @db.Uuid
+  poolType           CandidatePoolType
+  sourceConnectionId String            @db.Uuid
+  updatedAt          DateTime          @updatedAt
+  candidate          Candidate?        @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  sourceConnection   SheetConnection   @relation(fields: [sourceConnectionId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateCode, poolType, sourceConnectionId])
+  @@index([candidateId, poolType])
+  @@index([sourceConnectionId, poolType])
+}
+
+model AssessedPoolImport {
+  id             String               @id @default(uuid()) @db.Uuid
+  sourceFileName String
+  sourceSheet    String
+  rowCount       Int
+  importedCount  Int
+  updatedCount   Int
+  skippedCount   Int
+  mapping        Json
+  rawRows        Json                 @default("[]")
+  importedById   String               @db.Uuid
+  createdAt      DateTime             @default(now())
+  importedBy     User                 @relation("AssessedPoolImportCreator", fields: [importedById], references: [id], onDelete: Restrict)
+  records        AssessedPoolRecord[]
+
+  @@index([createdAt])
+  @@index([importedById, createdAt])
+}
+
+/// The Google Sheet the assessed pool is kept in. One source per workspace; each sync re-reads it.
+model AssessedPoolSource {
+  id               String    @id @default(uuid()) @db.Uuid
+  spreadsheetId    String
+  spreadsheetUrl   String
+  spreadsheetTitle String
+  sheetTitle       String
+  sheetTitles      Json      @default("[]")
+  mapping          Json
+  lastSyncedAt     DateTime?
+  connectedById    String    @db.Uuid
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  connectedBy      User      @relation("AssessedPoolSourceCreator", fields: [connectedById], references: [id], onDelete: Restrict)
+}
+
+model AssessedPoolRecord {
+  id                     String              @id @default(uuid()) @db.Uuid
+  mobile                 String              @unique
+  sourceUserId           String?
+  sourceName             String?
+  processType            AssessedProcessType @default(UNKNOWN)
+  isCompetencyPoolMember Boolean             @default(false)
+  competencyLevel        String?
+  category               CandidateCategory?
+  bucketTier             String?
+  tr1Status              String?
+  tr2Status              String?
+  competencyStatus       String?
+  spReason               String?
+  sourceData             Json                @default("{}")
+  sourceImportId         String              @db.Uuid
+  updatedAt              DateTime            @updatedAt
+  sourceImport           AssessedPoolImport  @relation(fields: [sourceImportId], references: [id], onDelete: Restrict)
+
+  @@index([sourceName])
+  @@index([sourceUserId])
+  @@index([category])
+  @@index([bucketTier])
+  @@index([sourceImportId])
 }
 
 model UserRole {
@@ -331,44 +464,88 @@ model Product {
 }
 
 model JobRequest {
-  id                     String                  @id @default(uuid()) @db.Uuid
+  id                     String                       @id @default(uuid()) @db.Uuid
   // Job ID generated in HubSpot (a UUID); the PSM copies it in. Internal-sheet
   // application exports carry the same value, so imports match on it.
-  jobId                  String                  @unique
+  jobId                  String                       @unique
   // HubSpot deal record (object 0-3) the job belongs to.
-  hubspotDealId          String?                 @unique
-  companyId              String                  @db.Uuid
+  hubspotDealId          String?                      @unique
+  companyId              String                       @db.Uuid
   roleTitle              String
   openings               Int
-  requiredCandidateCount Int                     @default(1)
+  requiredCandidateCount Int                          @default(1)
+  // Offered CTC in lakhs per annum (upper bound when the company gives a range).
+  // Drives the < 8 LPA placement KPIs; null means not entered yet.
+  ctcLpa                 Float?
   description            String
-  psmOwnerId             String?                 @db.Uuid
-  requestDate            DateTime                @db.Date
-  deadline               DateTime?               @db.Date
-  status                 JobRequestStatus        @default(DRAFT)
+  psmOwnerId             String?                      @db.Uuid
+  requestDate            DateTime                     @db.Date
+  deadline               DateTime?                    @db.Date
+  status                 JobRequestStatus             @default(DRAFT)
   timeline               String?
   shortlistingMechanism  String?
   companyRemarks         String?
   companySheetUrl        String?
   internalSheetUrl       String?
+  // Company process status, set by a PSM (see CompanyProcessPhase).
+  processPhase           CompanyProcessPhase          @default(YET_TO_SHARE_CVS)
+  processRoundId         String?                      @db.Uuid
+  processPhaseAt         DateTime?
   archivedAt             DateTime?
-  createdById            String                  @db.Uuid
-  createdAt              DateTime                @default(now())
-  updatedAt              DateTime                @updatedAt
-  company                Company                 @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  psmOwner               User?                   @relation("JobRequestOwner", fields: [psmOwnerId], references: [id], onDelete: SetNull)
-  createdBy              User                    @relation("JobRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdById            String                       @db.Uuid
+  createdAt              DateTime                     @default(now())
+  updatedAt              DateTime                     @updatedAt
+  company                Company                      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  psmOwner               User?                        @relation("JobRequestOwner", fields: [psmOwnerId], references: [id], onDelete: SetNull)
+  createdBy              User                         @relation("JobRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
   assignments            PSMAssignment[]
   skills                 JobRequestSkill[]
   eligibleProducts       JobRequestProduct[]
   applications           Application[]
+  recruitmentBatches     RecruitmentBatch[]
   internalProcess        InternalProcess?
   interviewRounds        CompanyInterviewRound[]
   importBatches          ImportBatch[]
+  resumeAssessments      CandidateResumeAssessment[]
+  additionalProfiles     CandidateAdditionalProfile[]
+  processRound           CompanyInterviewRound?       @relation("JobProcessRound", fields: [processRoundId], references: [id], onDelete: SetNull)
+  processHistory         CompanyProcessHistory[]
+  guidanceSessions       GuidanceSession[]
+  studentSupport         StudentSupport[]
 
   @@index([companyId, status])
   @@index([psmOwnerId, status])
   @@index([deadline, status])
+}
+
+/// A distinct hiring cycle inside a stable company/job request. Each cycle can
+/// use the same workbook with different tabs or a separate read-only workbook.
+model RecruitmentBatch {
+  id                 String                       @id @default(uuid()) @db.Uuid
+  jobRequestId       String                       @db.Uuid
+  name               String
+  sequence           Int
+  status             RecruitmentBatchStatus       @default(ACTIVE)
+  openings           Int?
+  startsAt           DateTime?                    @db.Date
+  endsAt             DateTime?                    @db.Date
+  // Null means "use the job request's sheet"; set only when this batch lives in a different workbook.
+  internalSheetUrl   String?
+  companySheetUrl    String?
+  // Tabs of the internal sheet that belong to this batch, chosen by the PSM: { TA, RS, SC, AS, SP } → tab name.
+  internalTabs       Json?
+  createdAt          DateTime                     @default(now())
+  updatedAt          DateTime                     @updatedAt
+  jobRequest         JobRequest                   @relation(fields: [jobRequestId], references: [id], onDelete: Cascade)
+  applications       Application[]
+  importBatches      ImportBatch[]
+  interviewRounds    CompanyInterviewRound[]
+  resumeAssessments  CandidateResumeAssessment[]
+  additionalProfiles CandidateAdditionalProfile[]
+
+  @@unique([jobRequestId, sequence])
+  @@unique([jobRequestId, name])
+  @@index([jobRequestId, status, sequence])
 }
 
 model JobRequestSkill {
@@ -447,31 +624,34 @@ model IdempotencyKey {
 // ───────────────────────── Candidates & applications ─────────────────────────
 
 model Candidate {
-  id             String             @id @default(uuid()) @db.Uuid
+  id                 String                       @id @default(uuid()) @db.Uuid
   // Platform user ID where known; otherwise generated ("GEN-…") when a sheet has none.
-  candidateCode  String             @unique
-  fullName       String
+  candidateCode      String                       @unique
+  fullName           String
   // PII. Not unique: source data shares emails/mobiles across user IDs, so
   // likely duplicates are flagged for review instead of blocked.
-  email          String?
-  mobile         String? // digits only, 10-digit Indian numbers without +91
-  gender         String?
-  currentCity    String?
-  state          String?
-  college        String?
-  degree         String?
-  department     String?
-  graduationYear Int?
-  academicScore  Decimal?           @db.Decimal(5, 2)
-  resumeUrl      String?
-  category       CandidateCategory?
-  assessedPool   AssessedPoolStatus @default(UNKNOWN)
-  archivedAt     DateTime?
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
-  products       CandidateProduct[]
-  skills         CandidateSkill[]
-  applications   Application[]
+  email              String?
+  mobile             String? // digits only, 10-digit Indian numbers without +91
+  gender             String?
+  currentCity        String?
+  state              String?
+  college            String?
+  degree             String?
+  department         String?
+  graduationYear     Int?
+  academicScore      Decimal?                     @db.Decimal(5, 2)
+  resumeUrl          String?
+  category           CandidateCategory?
+  assessedPool       AssessedPoolStatus           @default(UNKNOWN)
+  archivedAt         DateTime?
+  createdAt          DateTime                     @default(now())
+  updatedAt          DateTime                     @updatedAt
+  products           CandidateProduct[]
+  skills             CandidateSkill[]
+  applications       Application[]
+  poolMemberships    CandidatePoolMembership[]
+  resumeAssessments  CandidateResumeAssessment[]
+  additionalProfiles CandidateAdditionalProfile[]
 
   @@index([email])
   @@index([mobile])
@@ -506,6 +686,7 @@ model Application {
   id                  String                   @id @default(uuid()) @db.Uuid
   candidateId         String                   @db.Uuid
   jobRequestId        String                   @db.Uuid
+  recruitmentBatchId  String                   @db.Uuid
   productId           String?                  @db.Uuid // candidate's product when they applied
   status              ApplicationStatus        @default(ACTIVE)
   appliedAt           DateTime                 @default(now())
@@ -517,14 +698,16 @@ model Application {
   updatedAt           DateTime                 @updatedAt
   candidate           Candidate                @relation(fields: [candidateId], references: [id], onDelete: Restrict)
   jobRequest          JobRequest               @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  recruitmentBatch    RecruitmentBatch         @relation(fields: [recruitmentBatchId], references: [id], onDelete: Restrict)
   product             Product?                 @relation(fields: [productId], references: [id], onDelete: Restrict)
   importBatch         ImportBatch?             @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
   sourceApplication   Application?             @relation("CarriedOver", fields: [sourceApplicationId], references: [id], onDelete: SetNull)
   carriedInto         Application[]            @relation("CarriedOver")
   stageOutcomes       InternalStageCandidate[]
   nomination          CompanyNomination?
+  support             StudentSupport[]
 
-  @@unique([candidateId, jobRequestId])
+  @@unique([candidateId, jobRequestId, recruitmentBatchId])
   @@unique([id, jobRequestId])
   @@index([jobRequestId, status])
   @@index([productId])
@@ -556,6 +739,8 @@ model InternalProcessStage {
   completedAt     DateTime?
   nextPlannedDate DateTime?                @db.Date
   remarks         String?
+  // Set with NOT_CONDUCTED on SC; `remarks` holds the required note.
+  skipReason      ScreeningSkipReason?
   createdAt       DateTime                 @default(now())
   updatedAt       DateTime                 @updatedAt
   process         InternalProcess          @relation(fields: [processId, jobRequestId], references: [id, jobRequestId], onDelete: Restrict)
@@ -580,6 +765,7 @@ model InternalStageCandidate {
   commScore       Decimal?              @db.Decimal(4, 1)
   rejectionReason String?
   remarks         String?
+  selectionBasis  String?
   source          ChangeSource          @default(MANUAL)
   importBatchId   String?               @db.Uuid
   decidedById     String?               @db.Uuid
@@ -594,6 +780,50 @@ model InternalStageCandidate {
   @@unique([stageId, applicationId])
   @@index([applicationId])
   @@index([stageId, outcome])
+}
+
+// Resume analysis and extra candidate profile classifications are independent
+// of recruitment stage outcomes, so they never affect funnel counts.
+model CandidateResumeAssessment {
+  id                 String           @id @default(uuid()) @db.Uuid
+  candidateId        String           @db.Uuid
+  jobRequestId       String           @db.Uuid
+  recruitmentBatchId String           @db.Uuid
+  importBatchId      String?          @db.Uuid
+  analyzedAt         DateTime?
+  scores             Json
+  skills             Json
+  projects           Json
+  details            Json
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  candidate          Candidate        @relation(fields: [candidateId], references: [id], onDelete: Restrict)
+  jobRequest         JobRequest       @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  recruitmentBatch   RecruitmentBatch @relation(fields: [recruitmentBatchId], references: [id], onDelete: Restrict)
+  importBatch        ImportBatch?     @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
+
+  @@unique([candidateId, jobRequestId, recruitmentBatchId])
+  @@index([jobRequestId, analyzedAt])
+}
+
+model CandidateAdditionalProfile {
+  id                 String           @id @default(uuid()) @db.Uuid
+  candidateId        String           @db.Uuid
+  jobRequestId       String           @db.Uuid
+  recruitmentBatchId String           @db.Uuid
+  importBatchId      String?          @db.Uuid
+  classification     String
+  sourceSheet        String
+  data               Json
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  candidate          Candidate        @relation(fields: [candidateId], references: [id], onDelete: Restrict)
+  jobRequest         JobRequest       @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  recruitmentBatch   RecruitmentBatch @relation(fields: [recruitmentBatchId], references: [id], onDelete: Restrict)
+  importBatch        ImportBatch?     @relation(fields: [importBatchId], references: [id], onDelete: Restrict)
+
+  @@unique([candidateId, jobRequestId, recruitmentBatchId, classification, sourceSheet])
+  @@index([jobRequestId, classification])
 }
 
 // Append-only log of explicit stage status changes.
@@ -642,17 +872,21 @@ model CompanyNomination {
 
 // Rounds are configured per job request; no fixed number.
 model CompanyInterviewRound {
-  id           String             @id @default(uuid()) @db.Uuid
-  jobRequestId String             @db.Uuid
-  name         String
-  roundType    InterviewRoundType @default(OTHER)
-  sequence     Int
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  jobRequest   JobRequest         @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
-  interviews   CompanyInterview[]
+  id                 String                  @id @default(uuid()) @db.Uuid
+  jobRequestId       String                  @db.Uuid
+  recruitmentBatchId String                  @db.Uuid
+  name               String
+  roundType          InterviewRoundType      @default(OTHER)
+  sequence           Int
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  jobRequest         JobRequest              @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  recruitmentBatch   RecruitmentBatch        @relation(fields: [recruitmentBatchId], references: [id], onDelete: Restrict)
+  interviews         CompanyInterview[]
+  currentForJobs     JobRequest[]            @relation("JobProcessRound")
+  processHistory     CompanyProcessHistory[]
 
-  @@unique([jobRequestId, name])
+  @@unique([jobRequestId, recruitmentBatchId, name])
   @@unique([id, jobRequestId])
   @@index([jobRequestId, sequence])
 }
@@ -694,46 +928,143 @@ model CompanyStageHistory {
   @@index([toStatus, changedAt])
 }
 
+// Append-only log of company process status changes for a job.
+model CompanyProcessHistory {
+  id           String                 @id @default(uuid()) @db.Uuid
+  jobRequestId String                 @db.Uuid
+  fromPhase    CompanyProcessPhase?
+  toPhase      CompanyProcessPhase
+  roundId      String?                @db.Uuid
+  // Round name at the time, kept if the round is renamed or removed.
+  roundName    String?
+  notes        String?
+  changedById  String?                @db.Uuid
+  changedAt    DateTime               @default(now())
+  jobRequest   JobRequest             @relation(fields: [jobRequestId], references: [id], onDelete: Cascade)
+  round        CompanyInterviewRound? @relation(fields: [roundId], references: [id], onDelete: SetNull)
+  changedBy    User?                  @relation("CompanyProcessChanger", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([jobRequestId, changedAt])
+}
+
+// ─────────────────────────────── Guidance ───────────────────────────────
+
+// Interview guidance given for a whole job drive. Any PSM may record a session
+// they gave, including on another PSM's job; several sessions are allowed.
+model GuidanceSession {
+  id           String     @id @default(uuid()) @db.Uuid
+  jobRequestId String     @db.Uuid
+  givenById    String     @db.Uuid
+  givenOn      DateTime   @db.Date
+  notes        String?
+  recordedById String     @db.Uuid
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  jobRequest   JobRequest @relation(fields: [jobRequestId], references: [id], onDelete: Cascade)
+  givenBy      User       @relation("GuidanceGiver", fields: [givenById], references: [id], onDelete: Restrict)
+  recordedBy   User       @relation("GuidanceRecorder", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  @@index([jobRequestId, givenOn])
+  @@index([givenById, givenOn])
+}
+
+// Guidance or RSA for one student on one job: a status plus everyone who
+// contributed. Names of people without an account go in otherContributors.
+model StudentSupport {
+  id                String                      @id @default(uuid()) @db.Uuid
+  applicationId     String                      @db.Uuid
+  jobRequestId      String                      @db.Uuid
+  kind              StudentSupportKind
+  statusId          String                      @db.Uuid
+  doneOn            DateTime?                   @db.Date
+  otherContributors String?
+  notes             String?
+  updatedById       String?                     @db.Uuid
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
+  application       Application                 @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  status            SupportStatusOption         @relation(fields: [statusId], references: [id], onDelete: Restrict)
+  jobRequest        JobRequest                  @relation(fields: [jobRequestId], references: [id], onDelete: Cascade)
+  updatedBy         User?                       @relation("StudentSupportUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  contributors      StudentSupportContributor[]
+
+  @@unique([applicationId, kind])
+  @@index([jobRequestId, kind, statusId])
+  @@index([statusId])
+}
+
+// The team-managed status list for Guidance and for RSA. Deleting a status that
+// students already have archives it, so their records keep the label.
+model SupportStatusOption {
+  id               String             @id @default(uuid()) @db.Uuid
+  kind             StudentSupportKind
+  label            String
+  // Colour key from SUPPORT_TONES in @placement/shared.
+  tone             String             @default("slate")
+  // Counted as "done" in My work and job summaries.
+  countsAsDone     Boolean            @default(false)
+  needsContributor Boolean            @default(false)
+  needsNote        Boolean            @default(false)
+  sortOrder        Int                @default(0)
+  archivedAt       DateTime?
+  createdById      String?            @db.Uuid
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  createdBy        User?              @relation("SupportStatusCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  supports         StudentSupport[]
+
+  @@index([kind, archivedAt, sortOrder])
+}
+
+model StudentSupportContributor {
+  supportId String         @db.Uuid
+  userId    String         @db.Uuid
+  support   StudentSupport @relation(fields: [supportId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@id([supportId, userId])
+  @@index([userId])
+}
+
 // ──────────────────────────────── Imports ────────────────────────────────
 
-// One upload. Never deleted: committed rows point back to it.
+// One source read for a job and target. Structured snapshot rows support review and revalidation.
 model ImportBatch {
-  id             String                   @id @default(uuid()) @db.Uuid
-  batchCode      String                   @unique
-  target         ImportTarget
-  sourceType     ImportSourceType
-  status         ImportBatchStatus        @default(UPLOADED)
-  jobRequestId   String                   @db.Uuid
-  sourceFileName String
-  sourceChecksum String
-  fileSize       Int
-  sheets         Json // [{ name, rowCount, columnCount }]
-  mapping        Json? // the PSM's choices, reused for the next upload
-  summary        Json? // validation counts shown during review
-  importedById   String                   @db.Uuid
-  createdAt      DateTime                 @default(now())
-  updatedAt      DateTime                 @updatedAt
-  committedAt    DateTime?
-  jobRequest     JobRequest               @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
-  importedBy     User                     @relation("ImportBatchCreator", fields: [importedById], references: [id], onDelete: Restrict)
-  file           ImportFile?
-  sheetMappings  ImportSheetMapping[]
-  stagingRecords ImportStagingRecord[]
-  issues         DataQualityIssue[]
-  approvals      ImportApproval[]
-  applications   Application[]
-  stageOutcomes  InternalStageCandidate[]
+  id                  String                       @id @default(uuid()) @db.Uuid
+  batchCode           String                       @unique
+  target              ImportTarget
+  sourceType          ImportSourceType
+  status              ImportBatchStatus            @default(UPLOADED)
+  jobRequestId        String                       @db.Uuid
+  recruitmentBatchId  String                       @db.Uuid
+  sourceFileName      String
+  // Google Sheets imports: the spreadsheet read, so the PSM can refresh from it.
+  sourceSpreadsheetId String?
+  sourceUrl           String?
+  sourceChecksum      String
+  snapshotSize        Int
+  sourceSnapshot      Json?
+  sheets              Json // [{ name, rowCount, columnCount }]
+  mapping             Json? // the PSM's choices, reused for the next upload
+  summary             Json? // validation counts shown during review
+  importedById        String                       @db.Uuid
+  createdAt           DateTime                     @default(now())
+  updatedAt           DateTime                     @updatedAt
+  committedAt         DateTime?
+  jobRequest          JobRequest                   @relation(fields: [jobRequestId], references: [id], onDelete: Restrict)
+  recruitmentBatch    RecruitmentBatch             @relation(fields: [recruitmentBatchId], references: [id], onDelete: Restrict)
+  importedBy          User                         @relation("ImportBatchCreator", fields: [importedById], references: [id], onDelete: Restrict)
+  sheetMappings       ImportSheetMapping[]
+  stagingRecords      ImportStagingRecord[]
+  issues              DataQualityIssue[]
+  approvals           ImportApproval[]
+  applications        Application[]
+  stageOutcomes       InternalStageCandidate[]
+  resumeAssessments   CandidateResumeAssessment[]
+  additionalProfiles  CandidateAdditionalProfile[]
 
   @@index([jobRequestId, createdAt])
   @@index([sourceChecksum])
-}
-
-// The uploaded original, kept for audit.
-model ImportFile {
-  batchId     String      @id @db.Uuid
-  contentType String
-  bytes       Bytes
-  batch       ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
 }
 
 model ImportSheetMapping {

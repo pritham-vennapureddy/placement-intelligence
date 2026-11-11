@@ -21,7 +21,7 @@ export interface CandidateSummary {
   graduationYear: number | null;
   resumeUrl: string | null;
   category: "ACADEMY" | "ACADEMY_INTENSIVE" | "EXTERNAL" | null;
-  assessedPool: "YES" | "NO" | "UNKNOWN";
+  poolMemberships?: { poolType: "BUCKET" | "TR" | "COMPETENCY" }[];
 }
 
 export interface StageView {
@@ -31,6 +31,7 @@ export interface StageView {
   completedAt: string | null;
   nextPlannedDate: string | null;
   remarks: string | null;
+  skipReason?: import("@placement/shared").ScreeningSkipReason | null;
   owner: PersonRef | null;
   counts: Partial<Record<StageOutcome, number>>;
   completionLog: { fromStatus: StageStatus; toStatus: StageStatus; remarks: string | null; recordedAt: string; recordedBy: { fullName: string } | null }[];
@@ -41,6 +42,20 @@ export interface ScreeningProcess {
   shortlistingNotes: string | null;
   totalApplications: number;
   canEdit: boolean;
+  productCounts: { productId: string; name: string; category: "ACADEMY" | "ACADEMY_INTENSIVE" | "EXTERNAL"; applicants: number }[];
+  poolProgress: {
+    poolType: "BUCKET" | "TR" | "COMPETENCY";
+    applicants: number;
+    stages: Partial<Record<DecisionStage, { selected: number; rejected: number }>>;
+  }[];
+  /** TA = every applicant; later stages = candidates selected there. */
+  stageAnalytics: {
+    byProduct: { productId: string | null; name: string; category: "ACADEMY" | "ACADEMY_INTENSIVE" | "EXTERNAL" | null; stages: Record<"TOTAL_APPLICATIONS" | DecisionStage, number> }[];
+    assessedPool: {
+      poolSize: number;
+      stages: Record<"TOTAL_APPLICATIONS" | DecisionStage, { inPool: number; buckets: { A: number; B: number; C: number; D: number; other: number }; trCleared: number; competencyPool: number }>;
+    };
+  };
   stages: StageView[];
 }
 
@@ -52,6 +67,7 @@ export interface StageCandidateRow {
   commScore?: number | null;
   rejectionReason?: string | null;
   remarks?: string | null;
+  selectionBasis?: string | null;
   source?: string;
   decidedAt?: string | null;
   decidedBy?: { fullName: string } | null;
@@ -80,8 +96,8 @@ export interface ImportIssue {
 }
 
 export interface InternalSummary {
-  applications: { total: number; newCandidates: number; newApplications: number; updated: number; unchanged: number; errors: number };
-  stages: Partial<Record<DecisionStage, { mode: string; rows: number; selected: number; rejected: number; onHold: number; pending: number; other: number; errors: number; conflicts: number }>>;
+  applications: { total: number; newCandidates: number; newApplications: number; updated: number; unchanged: number; errors: number; /** Repeated applicants counted once; absent on older imports. */ duplicates?: number };
+  stages: Partial<Record<DecisionStage, { mode: string; reason?: string; rows: number; selected: number; rejected: number; onHold: number; noShow?: number; pending: number; other: number; errors: number; conflicts: number }>>;
   otherJobIds: { jobId: string; label: string | null; rows: number }[];
   missingFromSource: number;
   issues: Record<"ERROR" | "WARNING" | "INFO", number>;
@@ -106,7 +122,9 @@ export interface ImportBatch {
   status: "UPLOADED" | "VALIDATED" | "COMMITTED" | "CANCELLED";
   jobRequestId: string;
   sourceFileName: string;
-  fileSize: number;
+  sourceSpreadsheetId: string | null;
+  sourceUrl: string | null;
+  snapshotSize: number;
   sheets: { name: string; rowCount: number; columnCount: number }[];
   mapping: Record<string, unknown> | null;
   summary: InternalSummary | CompanySummary | null;
@@ -114,6 +132,8 @@ export interface ImportBatch {
   committedAt: string | null;
   importedBy: PersonRef;
   jobRequest: { id: string; jobId: string; roleTitle: string; company: { id: string; name: string } };
+  /** The recruitment batch (company request round) this import belongs to. */
+  recruitmentBatch: { id: string; name: string; sequence: number } | null;
   batchIssues?: ImportIssue[];
 }
 
@@ -187,7 +207,8 @@ export interface EligibleApplication {
 
 // ── Candidates ──
 
-export interface CandidateListItem extends Pick<CandidateSummary, "id" | "candidateCode" | "fullName" | "email" | "mobile" | "college" | "graduationYear" | "category" | "assessedPool"> {
+export interface CandidateListItem extends Pick<CandidateSummary, "id" | "candidateCode" | "fullName" | "email" | "mobile" | "college" | "graduationYear" | "category"> {
+  poolMemberships: { poolType: "BUCKET" | "TR" | "COMPETENCY" }[];
   updatedAt: string;
   products: { code: string; name: string }[];
   applications: number;

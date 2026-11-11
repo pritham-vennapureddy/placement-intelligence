@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-export const sourceTypes = ["COMPANY_PROCESS", "STUDENT_APPLICATIONS", "CANDIDATE_PROFILES", "ASSESSED_POOL"] as const;
+export const sourceTypes = ["INTERNAL_PROCESS", "COMPANY_PROCESS", "ASSESSED_POOL"] as const;
+
+export const poolWorkflowStages = ["BUCKET_POOL", "TR_POOL", "COMPETENCY_POOL"] as const;
 
 // Saved default tab mappings. Phase 5 replaces these with per-batch
 // ImportSheetMapping rows that separate internal stages from company rounds.
@@ -20,6 +22,7 @@ export const workflowStages = [
   "REJECTION_REASON",
   "RSA_ASSESSMENT",
   "ROUND_TRANSCRIPTS",
+  ...poolWorkflowStages,
 ] as const;
 
 export const columnKeys = [
@@ -45,25 +48,19 @@ export const headerParamsSchema = z.object({
   sheetId: z.coerce.number().int().nonnegative(),
 });
 
-export const headerQuerySchema = z.object({
-  row: z.coerce.number().int().min(1).max(500).default(1),
-});
-
 export const createConnectionSchema = z.object({
   url: z.url(),
   sourceType: z.enum(sourceTypes),
-  teamId: z.uuid().nullable().optional(),
 });
 
 export const createMappingSchema = z.object({
   workflowStage: z.enum(workflowStages),
   sheetId: z.number().int().nonnegative(),
   sheetTitle: z.string().min(1).max(100),
-  headerRow: z.number().int().min(1).max(500),
-  columnMapping: z.record(z.enum(columnKeys), z.string().max(256)).optional(),
+  headerRow: z.number().int().min(0).max(500),
+  columnMapping: z.partialRecord(z.enum(columnKeys), z.string().max(256)).optional(),
 });
 
 export type CreateConnectionInput = z.infer<typeof createConnectionSchema>;
 export type CreateMappingInput = z.infer<typeof createMappingSchema>;
 export type HeaderParams = z.infer<typeof headerParamsSchema>;
-export type HeaderQuery = z.infer<typeof headerQuerySchema>;

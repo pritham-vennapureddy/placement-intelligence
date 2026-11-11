@@ -94,7 +94,7 @@ export function ReassignOwnerDialog({ job, open, onOpenChange }: { job: JobReque
     <Dialog open={open} onOpenChange={(next) => !save.isPending && onOpenChange(next)}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Reassign PSM owner</DialogTitle>
+          <DialogTitle>Reassign employee owner</DialogTitle>
           <DialogDescription>
             Currently owned by {job.psmOwner?.fullName ?? "nobody"}. The previous owner stays in the ownership history.
           </DialogDescription>
@@ -102,7 +102,7 @@ export function ReassignOwnerDialog({ job, open, onOpenChange }: { job: JobReque
         <div className="grid gap-4">
           <FormField id="new-owner" label="New owner" required>
             <Select value={ownerId || undefined} onValueChange={setOwnerId}>
-              <SelectTrigger id="new-owner" className="h-10 w-full"><SelectValue placeholder="Choose a PSM" /></SelectTrigger>
+              <SelectTrigger id="new-owner" className="h-10 w-full"><SelectValue placeholder="Choose an employee" /></SelectTrigger>
               <SelectContent>
                 {owners.data?.filter((owner) => owner.id !== job.psmOwner?.id).map((owner) => (
                   <SelectItem key={owner.id} value={owner.id}>{owner.fullName}{owner.team ? ` · ${owner.team.name}` : ""}</SelectItem>

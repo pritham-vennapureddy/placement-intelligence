@@ -13,10 +13,10 @@ export const catalogController = {
     sendData(response, { skills: await catalogRepository.listSkills() });
   },
 
-  /** PSMs the user may pick as a job owner: everyone (admin), their team (manager), themselves (PSM). */
+  /** Employees the user may assign: everyone (admin), workspace employees (manager), themselves (employee). */
   async owners(request: Request, response: Response): Promise<void> {
     const scope = await resolveDataScope(request.user!);
-    const owners = await catalogRepository.listActivePsms(scope.kind === "organization" ? undefined : scope.ownerIds);
+    const owners = await catalogRepository.listActiveEmployees(scope.kind === "organization" ? undefined : scope.ownerIds);
     sendData(response, { owners });
   },
 };

@@ -1,16 +1,13 @@
 import type { Permission } from "@placement/shared";
 import {
   Activity,
-  BarChart3,
   BriefcaseBusiness,
   Building2,
+  ChartNoAxesCombined,
   ClipboardCheck,
-  ClipboardList,
   FileSpreadsheet,
   GitBranch,
-  GraduationCap,
   LayoutDashboard,
-  Network,
   UploadCloud,
   UserRoundCheck,
   Users,
@@ -36,7 +33,8 @@ export const NAVIGATION: NavGroup[] = [
     label: "Workspace",
     items: [
       { label: "Overview", icon: LayoutDashboard, path: "/", permission: "dashboard:read" },
-      { label: "My workspace", icon: Activity, path: "/psm-workspace", permission: "dashboard:read", roles: ["PSM", "MANAGER"] },
+      { label: "My companies", icon: Activity, path: "/my-work", permission: "dashboard:read" },
+      { label: "Insights", icon: ChartNoAxesCombined, path: "/insights", permission: "report:read" },
     ],
   },
   {
@@ -51,23 +49,15 @@ export const NAVIGATION: NavGroup[] = [
     ],
   },
   {
-    label: "Operations",
+    label: "Data",
     items: [
-      { label: "PSM operations", icon: ClipboardList, path: "/psm-operations", permission: "job:write" },
-      { label: "RSA & homework", icon: GraduationCap, path: "/rsa", permission: "candidate:write" },
-    ],
-  },
-  {
-    label: "Data & reports",
-    items: [
-      { label: "Import centre", icon: UploadCloud, path: "/imports", permission: "import:run" },
+      { label: "Import Google Sheets", icon: UploadCloud, path: "/imports", permission: "import:run" },
       { label: "Sheet connections", icon: FileSpreadsheet, path: "/sheets", permission: "sheet:read" },
-      { label: "Reports", icon: BarChart3, path: "/reports", permission: "report:read" },
     ],
   },
   {
     label: "Administration",
-    items: [{ label: "Teams", icon: Network, path: "/teams", permission: "team:read" }],
+    items: [{ label: "User access", icon: Users, path: "/users", permission: "user:manage" }],
   },
 ];
 

@@ -1,6 +1,6 @@
-import { hasPermission, STAGE_LABELS, type InternalStage } from "@placement/shared";
+import { DECISION_STAGES, STAGE_LABELS, type DecisionStage, type InternalStage } from "@placement/shared";
 import { inTransaction, prisma } from "../../db.js";
-import type { Prisma } from "../../generated/prisma/client.js";
+import type { CandidatePoolType, Prisma } from "../../generated/prisma/client.js";
 import type { AuthenticatedUser } from "../../middleware/authenticate.js";
 import { loadJobForUser } from "../../services/job-access.service.js";
 import { protectContact } from "../../services/pii.js";
@@ -12,6 +12,7 @@ import { ensureInternalProcess, screeningRepository } from "./screening.reposito
 import type { AddToStageInput, DecisionInput, StageCandidatesQuery, UpdateStageInput } from "./screening.validators.js";
 
 const COMPLETE = new Set(["COMPLETED", "PARTIALLY_COMPLETED"]);
+const POOL_TYPES: CandidatePoolType[] = ["BUCKET", "TR", "COMPETENCY"];
 
 const candidateSearch = (search: string | undefined): Prisma.CandidateWhereInput | undefined =>
   search
@@ -33,10 +34,12 @@ async function processFor(jobRequestId: string) {
 export const screeningService = {
   async get(user: AuthenticatedUser, jobRequestId: string) {
     const { job } = await loadJobForUser(user, jobRequestId);
-    const [process, counts, totalApplications] = await Promise.all([
+    const [process, counts, totalApplications, productCounts, stageAnalytics] = await Promise.all([
       processFor(job.id),
       screeningRepository.outcomeCounts(job.id),
       screeningRepository.countApplications(job.id),
+      screeningRepository.productCounts(job.id),
+      screeningRepository.stageAnalytics(job.id),
     ]);
     const countsByStage = new Map<string, Record<string, number>>();
     for (const row of counts) {
@@ -45,11 +48,32 @@ export const screeningService = {
       countsByStage.set(row.stageId, entry);
     }
     const order = Object.keys(STAGE_LABELS);
+    const poolProgress = await Promise.all(POOL_TYPES.map(async (poolType) => {
+      const [applicants, outcomes] = await Promise.all([
+        screeningRepository.countPoolApplications(job.id, poolType),
+        screeningRepository.poolOutcomeCounts(job.id, poolType),
+      ]);
+      const countsByStageId = new Map<string, Record<string, number>>();
+      for (const row of outcomes) {
+        const entry = countsByStageId.get(row.stageId) ?? {};
+        entry[row.outcome] = row._count._all;
+        countsByStageId.set(row.stageId, entry);
+      }
+      const countsByStage = Object.fromEntries(DECISION_STAGES.map((stageName: DecisionStage) => {
+        const stage = process.stages.find((item) => item.stage === stageName);
+        const stageCounts = stage ? countsByStageId.get(stage.id) ?? {} : {};
+        return [stageName, { selected: stageCounts.SELECTED ?? 0, rejected: stageCounts.REJECTED ?? 0 }];
+      }));
+      return { poolType, applicants, stages: countsByStage };
+    }));
     return {
       id: process.id,
       shortlistingNotes: process.shortlistingNotes,
       totalApplications,
-      canEdit: hasPermission(user.roles, "screening:write"),
+      canEdit: false,
+      productCounts,
+      poolProgress,
+      stageAnalytics,
       stages: [...process.stages]
         .sort((a, b) => order.indexOf(a.stage) - order.indexOf(b.stage))
         .map((stage) => ({ ...stage, counts: stage.stage === "TOTAL_APPLICATIONS" ? { SELECTED: totalApplications } : countsByStage.get(stage.id) ?? {} })),
@@ -79,11 +103,19 @@ export const screeningService = {
     }
 
     const statusChanged = input.status !== undefined && input.status !== stage.status;
+    const nextStatus = input.status ?? stage.status;
+    if (stageName === "SCREENING_SHORTLIST" && statusChanged && nextStatus === "NOT_CONDUCTED") {
+      if (!input.skipReason) throw new ApiError(400, "SKIP_REASON_REQUIRED", "Choose why screening was not conducted.");
+      if (!input.statusRemarks?.trim()) throw new ApiError(400, "SKIP_NOTE_REQUIRED", "Add a note explaining why screening was not conducted.");
+    }
+    // The reason belongs to a skipped stage only; clear it when the stage is conducted after all.
+    const skipReason = nextStatus === "NOT_CONDUCTED" ? input.skipReason : statusChanged ? null : undefined;
     await inTransaction(async (transaction) => {
       await screeningRepository.updateStage(transaction, stage.id, definedOnly({
         status: input.status,
         ownerId: input.ownerId,
-        remarks: input.remarks,
+        remarks: input.remarks ?? (statusChanged && nextStatus === "NOT_CONDUCTED" ? input.statusRemarks : undefined),
+        skipReason,
         nextPlannedDate: input.nextPlannedDate === undefined ? undefined : input.nextPlannedDate ? new Date(`${input.nextPlannedDate}T00:00:00Z`) : null,
         completedAt: statusChanged ? (COMPLETE.has(input.status!) ? new Date() : null) : undefined,
       }));
@@ -94,7 +126,7 @@ export const screeningService = {
         action: statusChanged ? "STAGE_STATUS_CHANGED" : "STAGE_UPDATED",
         entityType: "JobRequest",
         entityId: job.id,
-        metadata: { stage: STAGE_LABELS[stageName].code, ...(statusChanged ? { from: stage.status, to: input.status } : {}), ...definedOnly({ remarks: input.statusRemarks }) },
+        metadata: { stage: STAGE_LABELS[stageName].code, ...(statusChanged ? { from: stage.status, to: input.status } : {}), ...definedOnly({ remarks: input.statusRemarks, skipReason: input.skipReason }) },
       });
     });
     return screeningService.get(user, job.id);
@@ -115,7 +147,10 @@ export const screeningService = {
     const stage = process.stages.find((entry) => entry.stage === stageName)!;
     const [rows, total] = await screeningRepository.listStageCandidates(
       stage.id,
-      { ...(query.outcome ? { outcome: query.outcome } : {}), ...(search ? { application: { candidate: search } } : {}) },
+      {
+        ...(query.outcome ? { outcome: query.outcome } : {}),
+        application: { status: { not: "WITHDRAWN" }, ...(search ? { candidate: search } : {}) },
+      },
       toPrismaPage(query),
     );
     return {

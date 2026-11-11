@@ -12,7 +12,7 @@ import { useDebouncedValue } from "../../hooks/use-debounced-value";
 import { usePermissions } from "../../hooks/use-permissions";
 import { jobRequestsApi } from "../../services/api";
 import type { JobRequestListItem } from "../../types/api";
-import { JobStatusBadge } from "./job-status-badge";
+import { ProcessBadge } from "../tracking/tracking-dialogs";
 
 const PAGE_SIZE = 20;
 const VIEWS = ["active", "closed", "all"] as const;
@@ -44,12 +44,12 @@ const columns: ColumnDef<JobRequestListItem>[] = [
   {
     accessorKey: "openings",
     header: ({ column }) => <SortableHeader column={column} title="Openings" />,
-    cell: ({ row }) => `${row.original.openings} · need ${row.original.requiredCandidateCount}`,
+    cell: ({ row }) => `${row.original.openings} · need ${row.original.requiredCandidateCount}${row.original.ctcLpa !== null ? ` · ${row.original.ctcLpa} LPA` : ""}`,
   },
   {
     id: "owner",
     accessorFn: (row) => row.psmOwner?.fullName ?? "",
-    header: ({ column }) => <SortableHeader column={column} title="PSM owner" />,
+    header: ({ column }) => <SortableHeader column={column} title="Employee owner" />,
     cell: ({ row }) => row.original.psmOwner?.fullName ?? <span className="text-slate-400">Unassigned</span>,
   },
   {
@@ -77,7 +77,11 @@ const columns: ColumnDef<JobRequestListItem>[] = [
       );
     },
   },
-  { accessorKey: "status", header: "Status", cell: ({ row }) => <JobStatusBadge status={row.original.status} /> },
+  {
+    id: "process",
+    header: "Hiring status",
+    cell: ({ row }) => <ProcessBadge phase={row.original.processPhase} label={row.original.processLabel} />,
+  },
 ];
 
 export function JobRequestsPage() {
@@ -108,7 +112,7 @@ export function JobRequestsPage() {
       <PageHeader
         eyebrow="Placements"
         title="Job requests"
-        description="Each request is identified by its HubSpot Job ID and owned by one PSM."
+        description="Each request is identified by its HubSpot Job ID and owned by one employee."
         actions={can("job:write") && (
           <Button asChild><Link to="/job-requests/new"><Plus size={16} /> New job request</Link></Button>
         )}

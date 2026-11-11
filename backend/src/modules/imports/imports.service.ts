@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  DECISION_STAGES,
   suggestInterviewOutcome,
   suggestPipelineStatus,
   suggestStageOutcome,
@@ -12,7 +13,7 @@ import type { AuthenticatedUser } from "../../middleware/authenticate.js";
 import { jobRequestScopeFilter, resolveDataScope } from "../../services/data-scope.service.js";
 import { loadJobForUser } from "../../services/job-access.service.js";
 import { ApiError } from "../../utils/api-error.js";
-import { normalizeEmail, normalizeMobile } from "../../utils/normalize.js";
+import { normalizeMobile } from "../../utils/normalize.js";
 import { buildPaginationMeta, toPrismaPage } from "../../utils/pagination.js";
 import { recordAudit, type AuditContext } from "../audit/audit.service.js";
 import { commitCompanyImport } from "./company-commit.js";
@@ -22,17 +23,27 @@ import { collectApplicationKeys, planInternalImport, type ExistingCandidate } fr
 import { importsRepository } from "./imports.repository.js";
 import {
   companyMappingSchema,
+  googleCompanySelectionSchema,
+  googleInternalSelectionSchema,
   internalMappingSchema,
   type CompanyMapping,
+  type GoogleCompanySelection,
+  type GoogleInternalSelection,
   type InternalMapping,
   type PreviewQuery,
   type RowsQuery,
   type UpdateRowInput,
   type ValuesQuery,
 } from "./imports.validators.js";
-import { readWorkbook, type Workbook } from "./workbook.js";
+import { detectHeaderRow, readWorkbook, restoreWorkbook, serializeWorkbook, type Workbook } from "./workbook.js";
+import { buildWorkbook, gridChecksum } from "./google-snapshot.js";
+import { inferGoogleMapping } from "./google-sheet-analysis.js";
+import { mappingMatchesTabs, parseBatchTabs, selectionFromTabs, tabsFromMapping } from "./batch-tabs.js";
+import { isRecruitmentTab, sheetsInMapping, suggestRecruitmentTab } from "./tab-names.js";
+import { extractSpreadsheetId, fetchSpreadsheetGrid, getGoogleServiceAccountEmail } from "../sheets/google-sheets.service.js";
 
 const MAX_BYTES = 20 * 1024 * 1024;
+const MAX_SNAPSHOT_BYTES = 80 * 1024 * 1024;
 
 async function loadBatch(user: AuthenticatedUser, batchId: string, write = false) {
   const batch = await importsRepository.findBatch(batchId);
@@ -47,9 +58,21 @@ function assertEditable(batch: { status: string }) {
 }
 
 async function openWorkbook(batch: { id: string; sourceFileName: string }): Promise<Workbook> {
-  const bytes = await importsRepository.findFile(batch.id);
-  if (!bytes) throw new ApiError(410, "IMPORT_FILE_MISSING", "The uploaded file is no longer available.");
-  return readWorkbook(bytes, batch.sourceFileName);
+  const stored = await importsRepository.findSnapshot(batch.id);
+  if (!stored?.sourceSnapshot) throw new ApiError(410, "IMPORT_SNAPSHOT_MISSING", "The source snapshot for this import is unavailable.");
+  return restoreWorkbook(stored.sourceSnapshot);
+}
+
+async function resolveRecruitmentBatchId(jobRequestId: string, requestedBatchId?: string): Promise<string> {
+  if (requestedBatchId) {
+    const selected = await prisma.recruitmentBatch.findFirst({ where: { id: requestedBatchId, jobRequestId }, select: { id: true, status: true } });
+    if (!selected) throw new ApiError(404, "RECRUITMENT_BATCH_NOT_FOUND", "The recruitment batch was not found for this job request.");
+    if (selected.status === "CLOSED") throw new ApiError(409, "RECRUITMENT_BATCH_CLOSED", "This recruitment batch is closed and cannot receive imports.");
+    return selected.id;
+  }
+  const defaultBatch = await prisma.recruitmentBatch.findFirst({ where: { jobRequestId, status: "ACTIVE" }, orderBy: { sequence: "asc" }, select: { id: true } });
+  if (!defaultBatch) throw new ApiError(409, "RECRUITMENT_BATCH_MISSING", "Create an active recruitment batch before importing a sheet.");
+  return defaultBatch.id;
 }
 
 /** Memoised sheet reader: each sheet/header-row pair is parsed once per request. */
@@ -62,9 +85,91 @@ function readerFor(workbook: Workbook) {
   };
 }
 
+function detectInternalHeaderRows(mapping: InternalMapping, workbook: Workbook): InternalMapping {
+  const stages = { ...mapping.stages };
+  for (const stageKey of DECISION_STAGES) {
+    const stage = stages[stageKey];
+    if (stage.mode === "SHEET") {
+      stages[stageKey] = { ...stage, headerRow: detectHeaderRow(workbook.top(stage.sheet, 10)) };
+    }
+  }
+  return {
+    ...mapping,
+    applications: {
+      ...mapping.applications,
+      headerRow: detectHeaderRow(workbook.top(mapping.applications.sheet, 10)),
+    },
+    profileLookups: mapping.profileLookups.map((lookup) => ({
+      ...lookup,
+      headerRow: detectHeaderRow(workbook.top(lookup.sheet, 10)),
+    })),
+    ...(mapping.productsLookup
+      ? { productsLookup: { ...mapping.productsLookup, headerRow: detectHeaderRow(workbook.top(mapping.productsLookup.sheet, 10)) } }
+      : {}),
+    stages,
+  };
+}
+
+function detectCompanyHeaderRows(mapping: CompanyMapping, workbook: Workbook): CompanyMapping {
+  return {
+    ...mapping,
+    tabs: mapping.tabs.map((tab) => ({ ...tab, headerRow: detectHeaderRow(workbook.top(tab.sheet, 10)) })),
+  };
+}
+
+function selectedSheetNames(selection: GoogleInternalSelection | GoogleCompanySelection): string[] {
+  if ("applications" in selection) {
+    return [
+      selection.applications.sheet,
+      ...(selection.productLookupSheet ? [selection.productLookupSheet] : []),
+      ...DECISION_STAGES.flatMap((stage) => {
+        const config = selection.stages[stage];
+        return config.mode === "SHEET" ? [config.sheet] : [];
+      }),
+    ];
+  }
+  return selection.tabs.map(({ sheet }) => sheet);
+}
+
+function assertSelectedGoogleSheetsExist(selection: GoogleInternalSelection | GoogleCompanySelection, workbook: Workbook): void {
+  const available = new Set(workbook.sheets.map(({ name }) => name));
+  const missing = selectedSheetNames(selection).find((sheet) => !available.has(sheet));
+  if (missing) {
+    throw new ApiError(400, "GOOGLE_SHEET_NOT_FOUND", `The selected tab “${missing}” is no longer in this spreadsheet. Choose a tab that still exists.`);
+  }
+}
+
+function assertGoogleInternalMapping(mapping: ReturnType<typeof inferGoogleMapping>, selection: GoogleInternalSelection): asserts mapping is ReturnType<typeof inferGoogleMapping> {
+  if (!("applications" in mapping)) {
+    throw new ApiError(422, "GOOGLE_SHEET_ANALYSIS_FAILED", "Could not analyze the selected internal workbook tabs.");
+  }
+  const application = mapping.applications.columns;
+  if (application.mobile === undefined) {
+    throw new ApiError(422, "GOOGLE_SHEET_ANALYSIS_FAILED", `Could not identify a mobile-number column in the selected applications tab “${selection.applications.sheet}”. Candidate UUID and email columns are ignored for identity matching.`);
+  }
+  if (selection.productLookupSheet && !mapping.productsLookup) {
+    throw new ApiError(422, "GOOGLE_SHEET_ANALYSIS_FAILED", `Could not identify a mobile-number column and a Product column in the selected product tab “${selection.productLookupSheet}”.`);
+  }
+  for (const stageKey of DECISION_STAGES) {
+    const selected = selection.stages[stageKey];
+    if (selected.mode !== "SHEET") continue;
+    const stage = mapping.stages[stageKey];
+    if (!stage || typeof stage !== "object" || !("mode" in stage) || stage.mode !== "SHEET") {
+      const needsReason = stageKey === "FINAL_SHORTLIST";
+      throw new ApiError(
+        422,
+        "GOOGLE_SHEET_ANALYSIS_FAILED",
+        needsReason
+          ? `Could not identify a mobile-number column in the selected SP tab “${selected.sheet}”.`
+          : `Could not identify a candidate ID, email, or mobile in the selected ${stageKey} tab “${selected.sheet}”.`,
+      );
+    }
+  }
+}
+
 // ── Internal sheet ──
 
-async function validateInternal(batchId: string, job: { id: string; jobId: string }, mapping: InternalMapping, workbook: Workbook) {
+async function validateInternal(batchId: string, job: { id: string; jobId: string }, recruitmentBatchId: string, mapping: InternalMapping, workbook: Workbook) {
   const read = readerFor(workbook);
   const keys = collectApplicationKeys(mapping, read);
 
@@ -74,18 +179,12 @@ async function validateInternal(batchId: string, job: { id: string; jobId: strin
   } as const;
   const [found, applications, outcomes, products, jobs] = await Promise.all([
     prisma.candidate.findMany({
-      where: {
-        OR: [
-          { candidateCode: { in: [...keys.codes, ...keys.codes.map((code) => code.toLowerCase())] } },
-          { email: { in: keys.emails } },
-          { mobile: { in: keys.mobiles } },
-        ],
-      },
+      where: { mobile: { in: keys.mobiles } },
       select: candidateSelect,
     }),
-    prisma.application.findMany({ where: { jobRequestId: job.id }, select: { candidateId: true, source: true, candidate: { select: candidateSelect } } }),
+    prisma.application.findMany({ where: { jobRequestId: job.id, recruitmentBatchId }, select: { candidateId: true, source: true, candidate: { select: candidateSelect } } }),
     prisma.internalStageCandidate.findMany({
-      where: { jobRequestId: job.id },
+      where: { jobRequestId: job.id, application: { recruitmentBatchId } },
       select: { outcome: true, source: true, priority: true, techScore: true, commScore: true, stage: { select: { stage: true } }, application: { select: { candidateId: true } } },
     }),
     prisma.product.findMany({ select: { id: true, code: true, name: true, category: true } }),
@@ -130,22 +229,19 @@ async function validateInternal(batchId: string, job: { id: string; jobId: strin
 
 // ── Company sheet ──
 
-async function validateCompany(batchId: string, job: { id: string }, mapping: CompanyMapping, workbook: Workbook) {
+async function validateCompany(batchId: string, job: { id: string }, recruitmentBatchId: string, mapping: CompanyMapping, workbook: Workbook) {
   const read = readerFor(workbook);
-  const emails = new Set<string>();
   const mobiles = new Set<string>();
   for (const tab of mapping.tabs) {
     for (const row of read(tab.sheet, tab.headerRow).rows) {
-      const email = tab.columns.email !== undefined ? normalizeEmail(row.cells[tab.columns.email]) : null;
       const mobile = tab.columns.mobile !== undefined ? normalizeMobile(row.cells[tab.columns.mobile]) : null;
-      if (email) emails.add(email);
       if (mobile) mobiles.add(mobile);
     }
   }
 
   const [applications, outsiders, rounds] = await Promise.all([
     prisma.application.findMany({
-      where: { jobRequestId: job.id },
+      where: { jobRequestId: job.id, recruitmentBatchId },
       select: {
         id: true,
         candidateId: true,
@@ -157,10 +253,10 @@ async function validateCompany(batchId: string, job: { id: string }, mapping: Co
       },
     }),
     prisma.candidate.findMany({
-      where: { OR: [{ email: { in: [...emails] } }, { mobile: { in: [...mobiles] } }], applications: { none: { jobRequestId: job.id } } },
+      where: { mobile: { in: [...mobiles] }, applications: { none: { jobRequestId: job.id, recruitmentBatchId } } },
       select: { fullName: true, email: true, mobile: true },
     }),
-    prisma.companyInterviewRound.findMany({ where: { jobRequestId: job.id }, select: { name: true } }),
+    prisma.companyInterviewRound.findMany({ where: { jobRequestId: job.id, recruitmentBatchId }, select: { name: true } }),
   ]);
 
   const applicants: JobApplicant[] = applications.map((application) => ({
@@ -184,40 +280,175 @@ async function validateCompany(batchId: string, job: { id: string }, mapping: Co
   await importsRepository.saveValidation(batchId, mapping as Prisma.InputJsonValue, plan.summary as unknown as Prisma.InputJsonValue, plan.rows, []);
 }
 
+type ImportTarget = "INTERNAL_SCREENING" | "COMPANY_PIPELINE";
+
+/**
+ * The batch's last approved mapping, adjusted to this workbook. TA is the
+ * total-applications tab by definition: when the earlier import read
+ * applicants from a non-TA tab (e.g. "Applied Users", which omits External
+ * applicants) and the workbook has a TA tab this batch can use, that TA tab
+ * becomes the applications tab and the student-detail lookups are re-detected
+ * so the old tab still enriches profiles. A batch already on a TA-style tab
+ * (e.g. "TA-1") keeps it. `usedSheets` are other batches' tabs.
+ */
+export function reusableMapping(previous: Prisma.JsonValue, workbook: Workbook, target: ImportTarget, usedSheets: ReadonlySet<string> = new Set()): Record<string, unknown> {
+  let mapping = previous as Record<string, unknown>;
+  if (target !== "INTERNAL_SCREENING") return mapping;
+  const inferred = () => inferGoogleMapping(workbook, "INTERNAL_SCREENING", undefined, usedSheets);
+  const taSheet = suggestRecruitmentTab(workbook.sheets, "TA", usedSheets)?.name;
+  const savedSheet = (mapping.applications as { sheet?: string } | undefined)?.sheet;
+  if (taSheet && !(savedSheet && isRecruitmentTab(savedSheet, "TA"))) {
+    mapping = { ...mapping, applications: inferred().applications, profileLookups: inferred().profileLookups };
+  }
+  // A product tab the PSM never confirmed was auto-detected: detect it again.
+  if (!mapping.productTabConfirmed) {
+    const { productsLookup, ...rest } = mapping;
+    void productsLookup;
+    const detected = inferred();
+    mapping = { ...rest, ...("productsLookup" in detected && detected.productsLookup ? { productsLookup: detected.productsLookup } : {}) };
+  }
+  return mapping;
+}
+
+/** Batch-level switches the PSM set on an earlier import, kept when the tabs change. */
+function copySettings(previous: Prisma.JsonValue): Record<string, unknown> {
+  const value = (previous ?? {}) as Record<string, unknown>;
+  return Object.fromEntries(["acceptOtherJobIds", "overwriteManualDecisions"].filter((key) => typeof value[key] === "boolean").map((key) => [key, value[key]]));
+}
+
+/** Creates a batch from source bytes, stores only the parsed snapshot, and reuses the job's last approved mapping. */
+async function createBatch(
+  user: AuthenticatedUser,
+  jobRequestId: string,
+  recruitmentBatchId: string,
+  target: ImportTarget,
+  audit: AuditContext,
+  source: {
+    bytes: Buffer;
+    fileName: string;
+    sourceType: "EXCEL" | "CSV" | "GOOGLE_SHEETS";
+    checksum: string;
+    spreadsheetId?: string;
+    url?: string | null;
+  },
+) {
+  const workbook = await readWorkbook(source.bytes, source.fileName);
+  if (workbook.sheets.length === 0) throw new ApiError(400, "EMPTY_FILE", "The file has no sheets with data.");
+  const sourceSnapshot = serializeWorkbook(workbook);
+  const snapshotSize = Buffer.byteLength(JSON.stringify(sourceSnapshot));
+  if (snapshotSize > MAX_SNAPSHOT_BYTES) throw new ApiError(413, "FILE_TOO_LARGE", "The spreadsheet is too large to store as an import snapshot.");
+  const previous = await importsRepository.findPreviousMapping(jobRequestId, recruitmentBatchId, target);
+  // Tabs other batches of this job import from (e.g. "TA" for batch 1), so this batch is offered its own ("TA-1").
+  const usedSheets = new Set((await importsRepository.otherBatchMappings(jobRequestId, recruitmentBatchId, target)).flatMap(sheetsInMapping));
+  // The tabs the PSM chose for this recruitment batch win over detection; the last
+  // approved mapping is kept only while it still reads exactly those tabs.
+  const batchTabs = target === "INTERNAL_SCREENING" && source.sourceType === "GOOGLE_SHEETS"
+    ? parseBatchTabs((await prisma.recruitmentBatch.findUnique({ where: { id: recruitmentBatchId }, select: { internalTabs: true } }))?.internalTabs)
+    : null;
+  const fromTabs = selectionFromTabs(batchTabs, workbook.sheets.map(({ name }) => name));
+  const keepPrevious = Boolean(previous?.mapping) && (!fromTabs || mappingMatchesTabs(previous!.mapping, batchTabs!));
+  const batch = await importsRepository.createBatch({
+    target,
+    sourceType: source.sourceType,
+    jobRequestId,
+    recruitmentBatchId,
+    sourceFileName: source.fileName.slice(0, 250),
+    sourceChecksum: source.checksum,
+    snapshotSize,
+    sourceSnapshot: sourceSnapshot as unknown as Prisma.InputJsonValue,
+    sheets: workbook.sheets as unknown as Prisma.InputJsonValue,
+    importedById: user.id,
+    sourceSpreadsheetId: source.spreadsheetId ?? null,
+    sourceUrl: source.url ?? null,
+    // Row-level choices (manual matches) are not carried over.
+    mapping: keepPrevious && previous?.mapping
+      ? ({ ...reusableMapping(previous.mapping, workbook, target, usedSheets), overrides: {} } as Prisma.InputJsonValue)
+      : fromTabs
+        ? ({
+          ...inferGoogleMapping(workbook, "INTERNAL_SCREENING", fromTabs.selection, usedSheets),
+          ...(previous?.mapping ? copySettings(previous.mapping) : {}),
+        } as Prisma.InputJsonValue)
+      : source.sourceType === "GOOGLE_SHEETS"
+        ? inferGoogleMapping(workbook, target, undefined, usedSheets) as Prisma.InputJsonValue
+        : null,
+  });
+  await recordAudit(prisma, audit, {
+    action: "IMPORT_UPLOADED",
+    entityType: "JobRequest",
+    entityId: jobRequestId,
+    metadata: { batchId: batch.id, batchCode: batch.batchCode, target, fileName: batch.sourceFileName, source: source.sourceType },
+  });
+  const duplicate = await importsRepository.findDuplicateUpload(jobRequestId, recruitmentBatchId, source.checksum);
+  return { batch, duplicateOf: duplicate };
+}
+
+/** The sheet a batch reads for this target: its own link, else the job request's. */
+async function linkedSheetUrl(jobRequestId: string, recruitmentBatchId: string, target: ImportTarget): Promise<string | null> {
+  const batch = await prisma.recruitmentBatch.findFirst({
+    where: { id: recruitmentBatchId, jobRequestId },
+    select: { internalSheetUrl: true, companySheetUrl: true, jobRequest: { select: { internalSheetUrl: true, companySheetUrl: true } } },
+  });
+  if (!batch) return null;
+  return target === "COMPANY_PIPELINE"
+    ? batch.companySheetUrl ?? batch.jobRequest.companySheetUrl
+    : batch.internalSheetUrl ?? batch.jobRequest.internalSheetUrl;
+}
+
+async function createGoogleBatch(user: AuthenticatedUser, jobRequestId: string, recruitmentBatchId: string, target: ImportTarget, spreadsheetId: string, url: string | null, audit: AuditContext) {
+  const grid = await fetchSpreadsheetGrid(spreadsheetId);
+  if (grid.sheets.every((sheet) => sheet.rows.length === 0)) throw new ApiError(400, "EMPTY_FILE", "The spreadsheet has no data.");
+  const bytes = await buildWorkbook(grid);
+  if (bytes.length > MAX_BYTES * 2) throw new ApiError(413, "FILE_TOO_LARGE", "The spreadsheet is too large to import in one go.");
+  return createBatch(user, jobRequestId, recruitmentBatchId, target, audit, {
+    bytes,
+    fileName: `${grid.title.replace(/[\\/:*?"<>|]/g, " ").trim().slice(0, 200) || "Google Sheet"}.xlsx`,
+    sourceType: "GOOGLE_SHEETS",
+    checksum: gridChecksum(grid),
+    spreadsheetId,
+    url: url ?? `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+  });
+}
+
 export const importsService = {
-  async upload(user: AuthenticatedUser, jobRequestId: string, target: "INTERNAL_SCREENING" | "COMPANY_PIPELINE", file: Express.Multer.File | undefined, audit: AuditContext) {
+  /** Reads a Google Sheet (read-only) into a snapshot and starts an import from it. */
+  async importFromGoogle(user: AuthenticatedUser, jobRequestId: string, target: ImportTarget, url: string, audit: AuditContext, requestedBatchId?: string) {
     const { job } = await loadJobForUser(user, jobRequestId, "import:run");
-    if (!file) throw new ApiError(400, "FILE_REQUIRED", "Choose an Excel (.xlsx) or CSV file.");
-    if (file.size > MAX_BYTES) throw new ApiError(413, "FILE_TOO_LARGE", "The file is larger than 20 MB.");
-    if (!/\.(xlsx|csv)$/i.test(file.originalname)) throw new ApiError(400, "UNSUPPORTED_FILE", "Upload an .xlsx or .csv file. Google Sheets: File → Download → Microsoft Excel.");
+    const recruitmentBatchId = await resolveRecruitmentBatchId(job.id, requestedBatchId);
+    const spreadsheetId = extractSpreadsheetId(url);
+    return createGoogleBatch(user, job.id, recruitmentBatchId, target, spreadsheetId, url, audit);
+  },
 
-    const workbook = await readWorkbook(file.buffer, file.originalname);
-    if (workbook.sheets.length === 0) throw new ApiError(400, "EMPTY_FILE", "The file has no sheets with data.");
-    const checksum = createHash("sha256").update(file.buffer).digest("hex");
-    const previous = await importsRepository.findPreviousMapping(job.id, target);
+  /**
+   * Re-reads the sheet this job was last imported from, applies the previous
+   * mapping and checks the file, so the PSM lands on the review step.
+   */
+  async refreshFromGoogle(user: AuthenticatedUser, jobRequestId: string, target: ImportTarget, audit: AuditContext, requestedBatchId?: string) {
+    const { job } = await loadJobForUser(user, jobRequestId, "import:run");
+    const recruitmentBatchId = await resolveRecruitmentBatchId(job.id, requestedBatchId);
+    // The sheet linked now (the batch's own, else the job request's) wins over the one
+    // last imported, so editing the job's sheet link takes effect on the next refresh.
+    const linked = await linkedSheetUrl(job.id, recruitmentBatchId, target);
+    const latest = linked ? null : await importsRepository.findLatestGoogleBatch(job.id, recruitmentBatchId, target);
+    if (!linked && !latest?.sourceSpreadsheetId) {
+      throw new ApiError(404, "NO_GOOGLE_SOURCE", "Add the sheet link on the job request, or import this job from a Google Sheets link first.");
+    }
+    const result = linked
+      ? await createGoogleBatch(user, job.id, recruitmentBatchId, target, extractSpreadsheetId(linked), linked, audit)
+      : await createGoogleBatch(user, job.id, recruitmentBatchId, target, latest!.sourceSpreadsheetId!, latest!.sourceUrl, audit);
+    let checked = false;
+    if (result.batch.mapping) {
+      try {
+        await importsService.validate(user, result.batch.id, result.batch.mapping, audit);
+        checked = true;
+      } catch {
+        // The sheet's layout changed (e.g. a tab was renamed): the PSM re-maps it.
+      }
+    }
+    return { batch: await importsService.get(user, result.batch.id), duplicateOf: result.duplicateOf, checked };
+  },
 
-    const batch = await importsRepository.createBatch({
-      target,
-      sourceType: /\.csv$/i.test(file.originalname) ? "CSV" : "EXCEL",
-      jobRequestId: job.id,
-      sourceFileName: file.originalname.slice(0, 250),
-      sourceChecksum: checksum,
-      fileSize: file.size,
-      sheets: workbook.sheets as unknown as Prisma.InputJsonValue,
-      importedById: user.id,
-      bytes: file.buffer,
-      contentType: file.mimetype || "application/octet-stream",
-      // Pre-fill from the last approved import of this job, minus row-level choices.
-      mapping: previous?.mapping ? ({ ...(previous.mapping as object), overrides: {} } as Prisma.InputJsonValue) : null,
-    });
-    await recordAudit(prisma, audit, {
-      action: "IMPORT_UPLOADED",
-      entityType: "JobRequest",
-      entityId: job.id,
-      metadata: { batchId: batch.id, batchCode: batch.batchCode, target, fileName: batch.sourceFileName },
-    });
-    const duplicate = await importsRepository.findDuplicateUpload(job.id, checksum);
-    return { batch, duplicateOf: duplicate };
+  googleInfo() {
+    return { serviceAccountEmail: getGoogleServiceAccountEmail() };
   },
 
   async get(user: AuthenticatedUser, batchId: string) {
@@ -229,7 +460,11 @@ export const importsService = {
   async preview(user: AuthenticatedUser, batchId: string, query: PreviewQuery) {
     const { batch } = await loadBatch(user, batchId);
     const workbook = await openWorkbook(batch);
-    return { rows: workbook.top(query.sheet, query.limit).map(({ rowNumber, cells }) => ({ rowNumber, cells })) };
+    const rows = workbook.top(query.sheet, query.limit);
+    return {
+      headerRow: detectHeaderRow(workbook.top(query.sheet, 10)),
+      rows: rows.map(({ rowNumber, cells }) => ({ rowNumber, cells })),
+    };
   },
 
   /** Distinct values in the chosen columns, with a suggested meaning for each. */
@@ -267,12 +502,42 @@ export const importsService = {
     assertEditable(batch);
     const workbook = await openWorkbook(batch);
     if (batch.target === "INTERNAL_SCREENING") {
-      await validateInternal(batch.id, job, internalMappingSchema.parse(body), workbook);
+      let parsed: InternalMapping;
+      if (batch.sourceType === "GOOGLE_SHEETS") {
+        const selection = googleInternalSelectionSchema.parse(body);
+        assertSelectedGoogleSheetsExist(selection, workbook);
+        const inferred = inferGoogleMapping(workbook, "INTERNAL_SCREENING", selection);
+        assertGoogleInternalMapping(inferred, selection);
+        parsed = {
+          ...internalMappingSchema.parse(inferred),
+          acceptOtherJobIds: selection.acceptOtherJobIds,
+          overwriteManualDecisions: selection.overwriteManualDecisions,
+          productTabConfirmed: selection.productTabConfirmed ?? false,
+        };
+      } else {
+        parsed = internalMappingSchema.parse(body);
+      }
+      const mapping = detectInternalHeaderRows(parsed, workbook);
+      await validateInternal(batch.id, job, batch.recruitmentBatchId, mapping, workbook);
     } else {
       // Keep manual matches made during review unless the request replaces them.
-      const parsed = companyMappingSchema.parse(body);
+      let parsed: CompanyMapping;
+      if (batch.sourceType === "GOOGLE_SHEETS") {
+        const selection = googleCompanySelectionSchema.parse(body);
+        assertSelectedGoogleSheetsExist(selection, workbook);
+        const inferred = inferGoogleMapping(workbook, "COMPANY_PIPELINE", selection);
+        const tabs = inferred.tabs;
+        const invalidTab = tabs.find((tab) => tab.columns.mobile === undefined);
+        if (invalidTab) {
+          throw new ApiError(422, "GOOGLE_SHEET_ANALYSIS_FAILED", `Could not identify a mobile-number column in the selected company tab “${invalidTab.sheet}”.`);
+        }
+        parsed = companyMappingSchema.parse(inferred);
+      } else {
+        parsed = companyMappingSchema.parse(body);
+      }
+      parsed = detectCompanyHeaderRows(parsed, workbook);
       const previous = (batch.mapping as { overrides?: Record<string, string> } | null)?.overrides ?? {};
-      await validateCompany(batch.id, job, { ...parsed, overrides: { ...previous, ...parsed.overrides } }, workbook);
+      await validateCompany(batch.id, job, batch.recruitmentBatchId, { ...parsed, overrides: { ...previous, ...parsed.overrides } }, workbook);
     }
     await recordAudit(prisma, audit, { action: "IMPORT_VALIDATED", entityType: "ImportBatch", entityId: batch.id });
     return importsService.get(user, batch.id);
@@ -310,7 +575,7 @@ export const importsService = {
       } else {
         delete overrides[key];
       }
-      await validateCompany(batch.id, job, { ...mapping, overrides }, await openWorkbook(batch));
+      await validateCompany(batch.id, job, batch.recruitmentBatchId, { ...mapping, overrides }, await openWorkbook(batch));
       await recordAudit(prisma, audit, { action: "IMPORT_ROW_MATCHED", entityType: "ImportBatch", entityId: batch.id, metadata: { row: key, applicationId: input.applicationId } });
       return importsService.get(user, batch.id);
     }
@@ -322,35 +587,45 @@ export const importsService = {
     return importsService.get(user, batch.id);
   },
 
-  async approve(user: AuthenticatedUser, batchId: string, notes: string | undefined, audit: AuditContext) {
+  async approve(user: AuthenticatedUser, batchId: string, notes: string | undefined, audit: AuditContext, recordApproval = true) {
     const { batch, job } = await loadBatch(user, batchId, true);
     assertEditable(batch);
     if (batch.status !== "VALIDATED") throw new ApiError(409, "IMPORT_NOT_VALIDATED", "Check the file before approving it.");
     const rows = await importsRepository.includedRows(batchId);
     if (rows.length === 0) throw new ApiError(400, "NOTHING_TO_IMPORT", "No rows are included.");
 
-    const jobSkills = await prisma.jobRequestSkill.findMany({ where: { jobRequestId: job.id }, select: { skillId: true } });
+    // loadJobForUser already selected these IDs; avoid another database trip on approval.
+    const jobSkills = batch.target === "COMPANY_PIPELINE" ? job.skills.map(({ skillId }) => skillId) : [];
     const counts = await inTransaction(async (transaction) => {
       const result = batch.target === "INTERNAL_SCREENING"
         ? await commitInternalImport(transaction, {
           batchId: batch.id,
           jobRequestId: job.id,
+          recruitmentBatchId: batch.recruitmentBatchId,
           userId: user.id,
           mapping: internalMappingSchema.parse(batch.mapping),
           rows,
         })
         : await commitCompanyImport(transaction, {
           jobRequestId: job.id,
+          recruitmentBatchId: batch.recruitmentBatchId,
           userId: user.id,
           rows,
-          jobSkillIds: jobSkills.map(({ skillId }) => skillId),
+          jobSkillIds: jobSkills,
           addJobSkills: companyMappingSchema.parse(batch.mapping).addJobSkills,
         });
       await transaction.importStagingRecord.updateMany({ where: { id: { in: rows.map(({ id }) => id) } }, data: { committedAt: new Date() } });
       await importsRepository.setStatus(transaction, batch.id, "COMMITTED", { committedAt: new Date() });
-      await transaction.importApproval.create({
-        data: { batchId: batch.id, decision: "APPROVED", decidedById: user.id, counts: result as unknown as Prisma.InputJsonValue, ...(notes ? { notes } : {}) },
-      });
+      // The batch shows the tabs it really imports: the ones the PSM confirmed here.
+      const confirmedTabs = batch.target === "INTERNAL_SCREENING" && batch.sourceType === "GOOGLE_SHEETS" ? tabsFromMapping(batch.mapping) : null;
+      if (confirmedTabs) {
+        await transaction.recruitmentBatch.update({ where: { id: batch.recruitmentBatchId }, data: { internalTabs: confirmedTabs } });
+      }
+      if (recordApproval) {
+        await transaction.importApproval.create({
+          data: { batchId: batch.id, decision: "APPROVED", decidedById: user.id, counts: result as unknown as Prisma.InputJsonValue, ...(notes ? { notes } : {}) },
+        });
+      }
       await recordAudit(transaction, audit, {
         action: batch.target === "INTERNAL_SCREENING" ? "INTERNAL_SHEET_IMPORTED" : "COMPANY_SHEET_IMPORTED",
         entityType: "JobRequest",
@@ -362,6 +637,16 @@ export const importsService = {
     return { batch: await importsService.get(user, batch.id), counts };
   },
 
+  async save(user: AuthenticatedUser, batchId: string, mapping: unknown, audit: AuditContext) {
+    const { batch } = await loadBatch(user, batchId, true);
+    if (batch.sourceType !== "GOOGLE_SHEETS" || batch.target !== "INTERNAL_SCREENING") {
+      throw new ApiError(400, "DIRECT_SAVE_NOT_SUPPORTED", "Direct save is only available for internal Google Sheets shortlists.");
+    }
+
+    await importsService.validate(user, batchId, mapping, audit);
+    return importsService.approve(user, batchId, undefined, audit, false);
+  },
+
   async cancel(user: AuthenticatedUser, batchId: string, audit: AuditContext) {
     const { batch } = await loadBatch(user, batchId, true);
     assertEditable(batch);
@@ -371,6 +656,38 @@ export const importsService = {
       await recordAudit(transaction, audit, { action: "IMPORT_CANCELLED", entityType: "ImportBatch", entityId: batch.id });
     });
     return importsService.get(user, batch.id);
+  },
+
+  async delete(user: AuthenticatedUser, batchId: string, audit: AuditContext) {
+    const { batch } = await loadBatch(user, batchId, true);
+    if (batch.status === "COMMITTED") {
+      throw new ApiError(
+        409,
+        "IMPORT_ROLLBACK_UNAVAILABLE",
+        "This import has saved data and cannot be deleted safely. Delete the job request to remove its imported application and pipeline data.",
+      );
+    }
+
+    await inTransaction(async (transaction) => {
+      const current = await transaction.importBatch.findUnique({ where: { id: batch.id }, select: { status: true } });
+      if (!current) throw new ApiError(404, "IMPORT_NOT_FOUND", "The import was not found.");
+      if (current.status === "COMMITTED") {
+        throw new ApiError(
+          409,
+          "IMPORT_ROLLBACK_UNAVAILABLE",
+          "This import has saved data and cannot be deleted safely. Delete the job request to remove its imported application and pipeline data.",
+        );
+      }
+      await transaction.importApproval.deleteMany({ where: { batchId: batch.id } });
+      await transaction.importBatch.delete({ where: { id: batch.id } });
+      await recordAudit(transaction, audit, {
+        action: "IMPORT_DELETED",
+        entityType: "ImportBatch",
+        entityId: batch.id,
+        metadata: { batchCode: batch.batchCode, fileName: batch.sourceFileName, status: batch.status },
+      });
+    }, { timeoutMs: 30_000 });
+    return { id: batch.id, batchCode: batch.batchCode };
   },
 
   async listForJob(user: AuthenticatedUser, jobRequestId: string) {

@@ -1,9 +1,9 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DECISION_STAGES, PIPELINE_STATUS_LABELS, STAGE_LABELS, STAGE_OUTCOME_LABELS, type PipelineStatus, type StageOutcome } from "@placement/shared";
 import { format } from "date-fns";
-import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, Info, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, ChevronLeft, ChevronRight, Info, Trash2, XCircle } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { PageHeader } from "../../components/page-header";
@@ -15,6 +15,7 @@ import { Checkbox } from "../../components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { importsApi, pipelineApi } from "../../services/workflow-api";
+import { usePermissions } from "../../hooks/use-permissions";
 import type { CompanySummary, ImportBatch, ImportIssue, ImportRow, InternalSummary } from "../../types/workflow";
 import { cn } from "../../utils/cn";
 import { CompanyMappingForm, initialCompanyMapping, toCompanyPayload, type CompanyMappingState } from "./company-mapping";
@@ -23,14 +24,15 @@ import { initialInternalMapping, InternalMappingForm, toInternalPayload, type In
 const STEPS = ["Map the sheet", "Review", "Saved"] as const;
 
 function Steps({ current }: { current: number }) {
+  const steps = STEPS;
   return (
     <ol className="flex flex-wrap items-center gap-2 text-xs font-medium">
-      {STEPS.map((step, index) => (
+      {steps.map((step, index) => (
         <li key={step} className="flex items-center gap-2">
           <span className={cn("flex h-6 items-center gap-1.5 rounded-full px-2.5", index === current ? "bg-indigo-600 text-white" : index < current ? "bg-indigo-50 text-indigo-700" : "bg-slate-100 text-slate-500")}>
             {index + 1}. {step}
           </span>
-          {index < STEPS.length - 1 && <span className="text-slate-300">→</span>}
+          {index < steps.length - 1 && <span className="text-slate-300">→</span>}
         </li>
       ))}
     </ol>
@@ -68,6 +70,11 @@ function InternalSummaryView({ summary }: { summary: InternalSummary }) {
         <Stat label="Unchanged" value={summary.applications.unchanged} />
         <Stat label="Rows with errors" value={summary.applications.errors} tone={summary.applications.errors ? "rose" : undefined} />
       </div>
+      {(summary.applications.duplicates ?? 0) > 0 && (
+        <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          {summary.applications.duplicates} applicant row(s) repeat a mobile number from an earlier row (the same person applied twice). Each person is counted once, from their first row; the repeats are listed under “Left out”. Nothing needs to be fixed in the sheet.
+        </p>
+      )}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {DECISION_STAGES.map((stage) => {
           const stats = summary.stages[stage];
@@ -75,10 +82,14 @@ function InternalSummaryView({ summary }: { summary: InternalSummary }) {
             <div key={stage} className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs">
               <p className="text-sm font-semibold text-slate-800">{STAGE_LABELS[stage].code} · {STAGE_LABELS[stage].label}</p>
               {!stats || stats.mode !== "SHEET" ? (
-                <p className="mt-1 text-slate-500">{stats?.mode === "NOT_CONDUCTED" ? "Will be marked not conducted" : stats?.mode === "MANUAL" ? "Select in the dashboard" : "Left as it is"}</p>
+                <p className="mt-1 text-slate-500">
+                  {stats?.mode === "NOT_CONDUCTED"
+                    ? <>Not conducted{stats.reason ? ` · ${stats.reason}` : ""}</>
+                    : stats?.mode === "MANUAL" ? "Select in the dashboard" : "Left as it is"}
+                </p>
               ) : (
                 <p className="mt-1 leading-5 text-slate-600">
-                  {stats.selected} selected · {stats.rejected} rejected · {stats.onHold} on hold · {stats.pending} pending
+                  {stats.selected} selected · {stats.rejected} rejected · {stats.onHold} on hold · {stats.noShow ?? 0} no-show · {stats.pending} pending
                   {stats.errors > 0 && <span className="block text-rose-600">{stats.errors} rows with errors</span>}
                   {stats.conflicts > 0 && <span className="block text-amber-700">{stats.conflicts} differ from decisions entered by hand</span>}
                 </p>
@@ -178,7 +189,11 @@ function ReviewStep({ batch, onEdit }: { batch: ImportBatch; onEdit: () => void 
     onSuccess: async ({ batch: next, counts }) => {
       setBatch(next);
       queryClient.setQueryData(["imports", batch.id, "counts"], counts);
-      await queryClient.invalidateQueries({ queryKey: ["job-requests"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["job-requests"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+        queryClient.invalidateQueries({ queryKey: ["companies"] }),
+      ]);
       toast.success("Import saved");
     },
   });
@@ -190,6 +205,11 @@ function ReviewStep({ batch, onEdit }: { batch: ImportBatch; onEdit: () => void 
     <div className="space-y-4">
       {summary && (isCompany ? <CompanySummaryView summary={summary as CompanySummary} /> : <InternalSummaryView summary={summary as InternalSummary} />)}
       {(batch.batchIssues ?? []).map((issue) => <IssueBox key={issue.message} issue={issue} />)}
+      {summary && summary.issues.ERROR > 0 && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          {summary.issues.ERROR} rows with errors are excluded from saving. Review the row notes, then use Change mapping to correct headers and check again, or save only the valid rows.
+        </p>
+      )}
 
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-4">
@@ -306,21 +326,100 @@ function ReviewStep({ batch, onEdit }: { batch: ImportBatch; onEdit: () => void 
 
 function MappingStep({ batch, onValidated }: { batch: ImportBatch; onValidated: (batch: ImportBatch) => void }) {
   const isCompany = batch.target === "COMPANY_PIPELINE";
+  const automatic = batch.sourceType === "GOOGLE_SHEETS";
   const [internal, setInternal] = useState<InternalMappingState>(() => initialInternalMapping(batch));
   const [company, setCompany] = useState<CompanyMappingState>(() => initialCompanyMapping(batch));
-  const { payload, missing } = useMemo(() => (isCompany ? toCompanyPayload(company) : toInternalPayload(internal)), [isCompany, company, internal]);
-  const validate = useMutation({ mutationFn: () => importsApi.validate(batch.id, payload), onSuccess: onValidated });
+  const detectedSheets = isCompany
+    ? company.tabs.map((tab) => ({ sheet: tab.sheet, purpose: "Company candidates and rounds" }))
+    : [
+      ...(internal.applications.sheet ? [{ sheet: internal.applications.sheet, purpose: "Applications and student details" }] : []),
+      ...(automatic && internal.productsLookup.sheet ? [{ sheet: internal.productsLookup.sheet, purpose: "Product lookup" }] : []),
+      ...(!automatic ? internal.profileLookups.map(({ sheet }) => ({ sheet, purpose: "Supplemental student details" })) : []),
+      ...DECISION_STAGES.flatMap((stage) => {
+        const config = internal.stages[stage];
+        return config.mode === "SHEET" && config.sheet
+          ? [{ sheet: config.sheet, purpose: `${STAGE_LABELS[stage].code} · ${STAGE_LABELS[stage].label}` }]
+          : [];
+      }),
+    ];
+  const detectedNames = new Set(detectedSheets.map(({ sheet }) => sheet));
+  const ignoredSheets = batch.sheets.filter(({ name }) => !detectedNames.has(name));
+  const { payload, missing } = useMemo(
+    () => (isCompany ? toCompanyPayload(company, automatic) : toInternalPayload(internal, automatic)),
+    [isCompany, automatic, company, internal],
+  );
+  const queryClient = useQueryClient();
+  const validate = useMutation({
+    mutationFn: () => importsApi.validate(batch.id, payload),
+    onSuccess: onValidated,
+  });
 
   return (
     <div className="space-y-4">
-      {isCompany ? <CompanyMappingForm batch={batch} state={company} onChange={setCompany} /> : <InternalMappingForm batch={batch} state={internal} onChange={setInternal} />}
+      {batch.sourceType === "GOOGLE_SHEETS" && (
+        <Card className="space-y-3 border-indigo-100 bg-indigo-50/50 p-4">
+          <div>
+            <p className="text-sm font-semibold text-slate-800">Google Sheets analysis</p>
+            <p className="mt-1 text-xs text-slate-600">
+              {isCompany
+                ? "Select only the company candidate and interview tabs to use; all other tabs are ignored."
+                : "TA, RS, SC, AS and SP use normalized mobile numbers as the candidate identity. Candidate UUIDs and emails are ignored for matching."}
+            </p>
+          </div>
+          {detectedSheets.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {detectedSheets.map(({ sheet, purpose }) => (
+                <Badge key={`${sheet}-${purpose}`} variant="outline" className="border-indigo-200 bg-white text-indigo-800">
+                  {sheet} · {purpose}
+                </Badge>
+              ))}
+            </div>
+          )}
+          {!isCompany && automatic && (
+            <label className="block max-w-lg space-y-1">
+              <span className="text-xs font-semibold text-slate-600">Product details tab (optional)</span>
+              <Select
+                value={internal.productsLookup.sheet ?? "__none__"}
+                onValueChange={(sheet) => setInternal({
+                  ...internal,
+                  productsLookup: { ...internal.productsLookup, sheet: sheet === "__none__" ? undefined : sheet },
+                })}
+              >
+                <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">No product lookup</SelectItem>
+                  {batch.sheets.map(({ name }) => <SelectItem key={name} value={name}>{name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <span className="block text-[11px] text-slate-400">
+                Choose the tab with candidate mobile numbers and product. Other detail tabs are checked automatically.
+              </span>
+            </label>
+          )}
+          {automatic && !isCompany && (
+            <p className="text-[11px] leading-5 text-slate-500">
+              TA and shortlist tabs use normalized mobile numbers. Other tabs are matched by mobile for candidate details.
+            </p>
+          )}
+          {ignoredSheets.length > 0 && !(automatic && !isCompany) && (
+            <p className="text-[11px] leading-5 text-slate-500">
+              Ignored: {ignoredSheets.map(({ name }) => name).join(", ")}
+            </p>
+          )}
+        </Card>
+      )}
+      {isCompany
+        ? <CompanyMappingForm batch={batch} state={company} onChange={setCompany} automatic={automatic} />
+        : <InternalMappingForm batch={batch} state={internal} onChange={setInternal} automatic={automatic} />}
       <Card className="sticky bottom-4 flex flex-wrap items-center justify-between gap-3 p-4 shadow-lg">
         <div className="text-xs">
           {missing.length ? missing.map((message) => <p key={message} className="text-rose-600">{message}</p>)
             : <p className="text-slate-500">Checking reads the whole file and shows what would change. Nothing is saved yet.</p>}
           {validate.error && <p className="text-rose-600">{validate.error.message}</p>}
         </div>
-        <Button disabled={missing.length > 0 || validate.isPending} onClick={() => validate.mutate()}>{validate.isPending ? "Checking the file…" : "Check the file"}</Button>
+        <Button disabled={missing.length > 0 || validate.isPending} onClick={() => validate.mutate()}>
+          {validate.isPending ? "Checking the file…" : "Check the file"}
+        </Button>
       </Card>
     </div>
   );
@@ -329,6 +428,7 @@ function MappingStep({ batch, onValidated }: { batch: ImportBatch; onValidated: 
 function DoneStep({ batch }: { batch: ImportBatch }) {
   const queryClient = useQueryClient();
   const counts = queryClient.getQueryData<Record<string, number>>(["imports", batch.id, "counts"]);
+  const internalSummary = batch.target === "INTERNAL_SCREENING" ? batch.summary as InternalSummary | null : null;
   const labels: Record<string, string> = {
     candidatesCreated: "Candidates added", candidatesUpdated: "Profiles filled in", applicationsCreated: "Applications added",
     decisionsWritten: "Stage decisions saved", stagesMarkedNotConducted: "Stages marked not conducted", roundsCreated: "Rounds added",
@@ -340,13 +440,19 @@ function DoneStep({ batch }: { batch: ImportBatch }) {
         <CheckCircle2 className="text-emerald-600" size={28} />
         <div>
           <p className="text-base font-semibold text-slate-800">Import saved</p>
-          <p className="text-xs text-slate-500">Approved {batch.committedAt ? format(new Date(batch.committedAt), "d MMM yyyy, HH:mm") : ""} · {batch.batchCode}</p>
+          <p className="text-xs text-slate-500">Saved {batch.committedAt ? format(new Date(batch.committedAt), "d MMM yyyy, HH:mm") : ""} · {batch.batchCode}</p>
         </div>
       </div>
       {counts && (
         <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
           {Object.entries(counts).map(([key, value]) => <Stat key={key} label={labels[key] ?? key} value={value} />)}
         </div>
+      )}
+      {internalSummary && <InternalSummaryView summary={internalSummary} />}
+      {internalSummary && internalSummary.issues.ERROR > 0 && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          {internalSummary.issues.ERROR} rows with errors were not imported. Correct them in the sheet and import again.
+        </p>
       )}
       <div className="flex gap-2">
         <Button asChild><Link to={`/job-requests/${batch.jobRequestId}?tab=${batch.target === "COMPANY_PIPELINE" ? "pipeline" : "screening"}`}>Open the job request</Link></Button>
@@ -358,9 +464,20 @@ function DoneStep({ batch }: { batch: ImportBatch }) {
 
 export function ImportBatchPage() {
   const { batchId = "" } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const batch = useQuery({ queryKey: ["imports", batchId], queryFn: () => importsApi.get(batchId) });
+  const { can } = usePermissions();
+  const deleteBatch = useMutation({
+    mutationFn: () => importsApi.delete(batchId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["imports"] });
+      toast.success("Import removed from history");
+      navigate("/imports");
+    },
+  });
 
   if (batch.isPending) return <Card><LoadingRows rows={6} /></Card>;
   if (batch.error) return <Card><ErrorState error={batch.error} onRetry={() => void batch.refetch()} /></Card>;
@@ -371,15 +488,30 @@ export function ImportBatchPage() {
   return (
     <div className="space-y-5">
       <Link to={`/job-requests/${data.jobRequestId}`} className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800">
-        <ArrowLeft size={15} /> {data.jobRequest.company.name} · {data.jobRequest.roleTitle}
+        <ArrowLeft size={15} /> {data.jobRequest.company.name} · {data.jobRequest.roleTitle}{data.recruitmentBatch ? ` · ${data.recruitmentBatch.name}` : ""}
       </Link>
       <PageHeader
         eyebrow={data.target === "COMPANY_PIPELINE" ? "Company sheet import" : "Internal sheet import"}
         title={data.sourceFileName}
-        description={`${data.batchCode} · uploaded by ${data.importedBy.fullName} on ${format(new Date(data.createdAt), "d MMM yyyy, HH:mm")}`}
-        actions={data.status !== "CANCELLED" && <Steps current={step} />}
+        description={(
+          <>
+            {data.batchCode} · {data.sourceType === "GOOGLE_SHEETS" ? "read from Google Sheets" : "uploaded"} by {data.importedBy.fullName} on {format(new Date(data.createdAt), "d MMM yyyy, HH:mm")}
+            {data.sourceUrl && <> · <a href={data.sourceUrl} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">open the sheet</a></>}
+          </>
+        )}
+        actions={(
+          <>
+            {data.status !== "CANCELLED" && <Steps current={step} />}
+            {can("import:run") && data.status !== "COMMITTED" && (
+              <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>
+                <Trash2 size={14} /> Delete import
+              </Button>
+            )}
+          </>
+        )}
       />
       {data.status === "CANCELLED" && <IssueBox issue={{ severity: "INFO", code: "CANCELLED", message: "This import was cancelled; nothing from it was saved." }} />}
+      {data.status === "COMMITTED" && <IssueBox issue={{ severity: "INFO", code: "ROLLBACK_UNAVAILABLE", message: "Saved imports cannot be deleted independently yet because they may have updated shared student or pipeline data. Delete the job request to remove all of its imported data." }} />}
       {mapping && (
         <MappingStep
           batch={data}
@@ -392,6 +524,15 @@ export function ImportBatchPage() {
       )}
       {!mapping && data.status === "VALIDATED" && <ReviewStep batch={data} onEdit={() => setEditing(true)} />}
       {data.status === "COMMITTED" && <DoneStep batch={data} />}
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title="Permanently delete this import?"
+        description="This removes the source snapshot and all staged rows for this import. Saved imports are not eligible because their changes cannot currently be rolled back safely. Audit history is retained."
+        confirmLabel="Delete import"
+        destructive
+        onConfirm={() => deleteBatch.mutateAsync()}
+      />
     </div>
   );
 }

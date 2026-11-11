@@ -3,9 +3,14 @@ import type {
   AuthUser,
   CatalogOption,
   CompanyDetail,
+  CompanyAnalytics,
+  PlacementKpis,
   CompanyInput,
   CompanyListItem,
+  CompanyJobCandidates,
+  InternalSheetTabs,
   JobRequestDetail,
+  RecruitmentBatchInput,
   JobRequestInput,
   JobRequestListItem,
   JobRequestStatus,
@@ -18,8 +23,7 @@ import type {
   SheetSetup,
   SheetTab,
   SheetTabMapping,
-  TeamRecord,
-  TeamUserOption,
+  UserAccessRecord,
 } from "../types/api";
 
 const API_BASE = import.meta.env.VITE_API_URL || "/api";
@@ -147,6 +151,32 @@ export async function request<T>(
   return (await response.json()) as T;
 }
 
+export async function requestBlob(path: string, retryAfterRefresh = true): Promise<Blob> {
+  const headers = new Headers();
+  if (accessToken) {
+    headers.set("Authorization", `Bearer ${accessToken}`);
+  }
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers,
+    credentials: "include",
+  });
+
+  if (response.status === 401 && retryAfterRefresh) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      return requestBlob(path, false);
+    }
+    onSessionExpired();
+  }
+
+  if (!response.ok) {
+    throw await readError(response);
+  }
+
+  return response.blob();
+}
+
 export const authApi = {
   async login(email: string, password: string): Promise<{ accessToken: string; user: AuthUser }> {
     const response = await request<{ data: { accessToken: string; user: AuthUser } }>(
@@ -199,6 +229,240 @@ export const dashboardApi = {
     const response = await request<{ data: DashboardSummary }>(`/dashboard/summary${toQueryString({ ...filters })}`);
     return response.data;
   },
+  async getPlacementKpis(range: { from?: string; to?: string } = {}): Promise<PlacementKpis> {
+    const response = await request<{ data: PlacementKpis }>(`/dashboard/placement-kpis${toQueryString(range)}`);
+    return response.data;
+  },
+  async getCompanyAnalytics(companyId: string): Promise<CompanyAnalytics> {
+    const response = await request<{ data: CompanyAnalytics }>(`/dashboard/companies/${companyId}/analytics`);
+    return response.data;
+  },
+  async getCompanyJobCandidates(
+    companyId: string,
+    jobId: string,
+    page: number,
+    pageSize = 25,
+    recruitmentBatchId?: string,
+    filters: { stage?: string; outcome?: string; q?: string } = {},
+  ): Promise<CompanyJobCandidates> {
+    const response = await request<{ data: CompanyJobCandidates }>(
+      `/dashboard/companies/${companyId}/jobs/${jobId}/candidates${toQueryString({
+        page: String(page),
+        pageSize: String(pageSize),
+        recruitmentBatchId,
+        stage: filters.stage,
+        outcome: filters.outcome,
+        q: filters.q,
+      })}`,
+    );
+    return response.data;
+  },
+};
+
+export interface AssessedPoolAnalytics {
+  total: number;
+  academyCandidates: number;
+  processTypes: { OLD: number; NEW: number; UNKNOWN: number };
+  buckets: { A: number; B: number; C: number; other: number };
+  tr: {
+    tr1Cleared: number;
+    tr2Cleared: number;
+    bothCleared: number;
+    tr1StatusCounts: { value: string; count: number }[];
+    tr2StatusCounts: { value: string; count: number }[];
+  };
+  competency: {
+    included: number;
+    statusCounts: { value: string; count: number }[];
+    levelCounts: { value: string; count: number }[];
+  };
+  competencies: {
+    code: string;
+    title: string;
+    assessedCount: number;
+    scoredCount: number;
+    averageScore: number | null;
+    verdictCounts: { value: string; count: number }[];
+    clearanceCounts: { value: string; count: number }[];
+    levelCounts: { value: string; count: number }[];
+  }[];
+  spReasons: { value: string; count: number }[];
+  spChecks: {
+    roleRankCounts: { value: string; count: number }[];
+    finalPoolCounts: { value: string; count: number }[];
+  };
+  availableFields: {
+    bucketTier: boolean;
+    tr1Status: boolean;
+    tr2Status: boolean;
+    competencyStatus: boolean;
+    competencyLevel: boolean;
+    spReason: boolean;
+    roleRankCheck: boolean;
+    finalPoolCheck: boolean;
+  };
+  latestImport: {
+    id: string;
+    sourceFileName: string;
+    sourceSheet: string;
+    rowCount: number;
+    importedCount: number;
+    updatedCount: number;
+    skippedCount: number;
+    mappedFields: string[];
+    createdAt: string;
+    importedBy: string;
+  } | null;
+}
+
+export interface AssessedPoolLookupResult {
+  status: "ASSESSED";
+  id: string;
+  userId: string | null;
+  name: string | null;
+  mobile: string | null;
+  processType: "OLD" | "NEW" | "UNKNOWN" | null;
+  category: "ACADEMY" | null;
+  bucketTier: string | null;
+  tr1Status: string | null;
+  tr2Status: string | null;
+  isCompetencyPoolMember: boolean;
+  competencyLevel: string | null;
+  competencyStatus: string | null;
+  spReason: string | null;
+  sourceData: Record<string, {
+    rowNumber?: number;
+    columns?: { column: number; header: string; value: string; link?: string }[];
+    competencies?: {
+      code: string;
+      title: string;
+      score: number | null;
+      verdictBand: string | null;
+      clearanceStatus: string | null;
+      level: string | null;
+    }[];
+    rows?: {
+      rowNumber: number;
+      columns: { column: number; header: string; value: string; link?: string }[];
+      competencies?: {
+        code: string;
+        title: string;
+        score: number | null;
+        verdictBand: string | null;
+        clearanceStatus: string | null;
+        level: string | null;
+      }[];
+    }[];
+  }> | null;
+}
+
+export interface AssessedPoolColumn {
+  column: number;
+  header: string;
+  sample: string;
+}
+
+export interface AssessedPoolWorkbookPreview {
+  fileName: string;
+  sheets: { name: string; rowCount: number; columnCount: number }[];
+  selectedSheet: string | null;
+  headerRow: number;
+  headers: AssessedPoolColumn[];
+}
+
+export interface AssessedPoolImportResult {
+  importId: string;
+  sourceFileName: string;
+  rowCount: number;
+  importedCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  skippedMissingMobile: number;
+  skippedInvalidMobile: number;
+  skippedDuplicateMobile: number;
+  mergedDuplicateMobile: number;
+}
+
+const poolFileQuery = (fileName: string, sheet?: string, mapping?: Record<string, number>) => {
+  const query = new URLSearchParams({ fileName });
+  if (sheet) query.set("sheet", sheet);
+  if (mapping) query.set("mapping", JSON.stringify(mapping));
+  return `?${query.toString()}`;
+};
+
+const poolFileHeaders = (file: File) => ({
+  "Content-Type": file.type || (/\.csv$/i.test(file.name) ? "text/csv" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+});
+
+export interface AssessedPoolSource {
+  id: string;
+  spreadsheetUrl: string;
+  spreadsheetTitle: string;
+  sheetTitles: string[];
+  lastSyncedAt: string | null;
+  mappedFields: string[];
+}
+
+export interface AssessedPoolSourcePreview extends Omit<AssessedPoolWorkbookPreview, "fileName"> {
+  spreadsheetTitle: string;
+}
+
+export interface AssessedPoolSourceSyncResult {
+  source: AssessedPoolSource;
+  import: AssessedPoolImportResult;
+}
+
+export const assessedPoolApi = {
+  async analytics(): Promise<AssessedPoolAnalytics> {
+    return (await request<{ data: AssessedPoolAnalytics }>("/assessed-pool/analytics")).data;
+  },
+  async lookup(search: string): Promise<{ results: AssessedPoolLookupResult[]; limit: number }> {
+    const query = new URLSearchParams({ search }).toString();
+    return (await request<{ data: { results: AssessedPoolLookupResult[]; limit: number } }>(`/assessed-pool/lookup?${query}`)).data;
+  },
+  async getSource(): Promise<AssessedPoolSource | null> {
+    return (await request<{ data: AssessedPoolSource | null }>("/assessed-pool/source")).data;
+  },
+  async previewSource(url: string, sheetTitle?: string): Promise<AssessedPoolSourcePreview> {
+    return (await request<{ data: AssessedPoolSourcePreview }>("/assessed-pool/source/preview", {
+      method: "POST",
+      body: JSON.stringify({ url, ...(sheetTitle ? { sheetTitle } : {}) }),
+    })).data;
+  },
+  async connectSource(url: string): Promise<AssessedPoolSourceSyncResult> {
+    return (await request<{ data: AssessedPoolSourceSyncResult }>("/assessed-pool/source", {
+      method: "PUT",
+      body: JSON.stringify({ url }),
+      idempotencyKey: newIdempotencyKey(),
+    })).data;
+  },
+  async syncSource(): Promise<AssessedPoolSourceSyncResult> {
+    return (await request<{ data: AssessedPoolSourceSyncResult }>("/assessed-pool/source/sync", {
+      method: "POST",
+      idempotencyKey: newIdempotencyKey(),
+    })).data;
+  },
+  async disconnectSource(): Promise<void> {
+    await request("/assessed-pool/source", { method: "DELETE" });
+  },
+  async deleteImport(importId: string): Promise<{ removedRecords: number }> {
+    return (await request<{ data: { removedRecords: number } }>(`/assessed-pool/imports/${importId}`, { method: "DELETE" })).data;
+  },
+  async clearAll(): Promise<{ removedRecords: number; removedImports: number }> {
+    return (await request<{ data: { removedRecords: number; removedImports: number } }>("/assessed-pool/records", { method: "DELETE" })).data;
+  },
+  async preview(file: File, sheet?: string): Promise<AssessedPoolWorkbookPreview> {
+    return (await request<{ data: AssessedPoolWorkbookPreview }>(
+      `/assessed-pool/preview${poolFileQuery(file.name, sheet)}`,
+      { method: "POST", body: file, headers: poolFileHeaders(file) },
+    )).data;
+  },
+  async importFile(file: File, sheet: string, mapping: Record<string, number>): Promise<AssessedPoolImportResult> {
+    return (await request<{ data: AssessedPoolImportResult }>(
+      `/assessed-pool/imports${poolFileQuery(file.name, sheet, mapping)}`,
+      { method: "POST", body: file, headers: poolFileHeaders(file), idempotencyKey: newIdempotencyKey() },
+    )).data;
+  },
 };
 
 export const catalogApi = {
@@ -218,52 +482,52 @@ export const catalogApi = {
   },
 };
 
-export const teamsApi = {
-  async list(): Promise<TeamRecord[]> {
-    const response = await request<{ data: { teams: TeamRecord[] } }>("/teams");
-    return response.data.teams;
-  },
+export type UserRoleCode = "ADMIN" | "MANAGER" | "STAKEHOLDER" | "EMPLOYEE";
 
-  async listUsers(): Promise<TeamUserOption[]> {
-    const response = await request<{ data: { users: TeamUserOption[] } }>("/teams/users");
+export const usersApi = {
+  async list(): Promise<UserAccessRecord[]> {
+    const response = await request<{ data: { users: UserAccessRecord[] } }>("/teams/users");
     return response.data.users;
-  },
-
-  async create(name: string, idempotencyKey = newIdempotencyKey()): Promise<TeamRecord> {
-    const response = await request<{ data: { team: TeamRecord } }>("/teams", {
-      method: "POST",
-      body: JSON.stringify({ name }),
-      idempotencyKey,
-    });
-    return response.data.team;
   },
 
   async createUser(input: {
     email: string;
     fullName: string;
     password: string;
-    role: "MANAGER" | "PSM";
-    teamId?: string;
+    role: "ADMIN" | "MANAGER" | "STAKEHOLDER" | "EMPLOYEE";
   }, idempotencyKey = newIdempotencyKey()): Promise<void> {
     await request("/teams/users", { method: "POST", body: JSON.stringify(input), idempotencyKey });
   },
 
-  async updateMembers(teamId: string, input: { teamLeadId: string | null; psmIds: string[] }): Promise<TeamRecord> {
-    const response = await request<{ data: { team: TeamRecord } }>(`/teams/${teamId}/members`, {
-      method: "PUT",
-      body: JSON.stringify(input),
+  async updateUser(userId: string, input: { email?: string; fullName?: string; role?: UserRoleCode }): Promise<void> {
+    await request(`/teams/users/${userId}`, { method: "PATCH", body: JSON.stringify(input), idempotencyKey: newIdempotencyKey() });
+  },
+
+  /** No idempotency key on purpose: the response holds the new password and must not be stored for replay. */
+  async resetPassword(userId: string, password?: string): Promise<{ password: string }> {
+    const response = await request<{ data: { password: string } }>(`/teams/users/${userId}/reset-password`, {
+      method: "POST",
+      body: JSON.stringify(password ? { password } : {}),
     });
-    return response.data.team;
+    return response.data;
+  },
+
+  async deleteUser(userId: string): Promise<void> {
+    await request(`/teams/users/${userId}`, { method: "DELETE", idempotencyKey: newIdempotencyKey() });
   },
 };
 
 export const sheetsApi = {
+  async remove(connectionId: string): Promise<void> {
+    await request(`/sheets/${connectionId}`, { method: "DELETE" });
+  },
+
   async list(): Promise<SheetSetup> {
     const response = await request<{ data: SheetSetup }>("/sheets");
     return response.data;
   },
 
-  async connect(input: { url: string; sourceType: string; teamId?: string }, idempotencyKey = newIdempotencyKey()): Promise<{
+  async connect(input: { url: string; sourceType: string }, idempotencyKey = newIdempotencyKey()): Promise<{
     connection: SheetConnection;
     tabs: SheetTab[];
   }> {
@@ -280,11 +544,11 @@ export const sheetsApi = {
     return response.data.tabs;
   },
 
-  async getHeaders(connectionId: string, sheetId: number, row: number): Promise<SheetHeader[]> {
-    const response = await request<{ data: { headers: SheetHeader[] } }>(
-      `/sheets/${connectionId}/tabs/${sheetId}/headers?row=${row}`,
+  async getHeaders(connectionId: string, sheetId: number): Promise<{ headerRow: number; headers: SheetHeader[] }> {
+    const response = await request<{ data: { headerRow: number; headers: SheetHeader[] } }>(
+      `/sheets/${connectionId}/tabs/${sheetId}/headers`,
     );
-    return response.data.headers;
+    return response.data;
   },
 
   async saveMapping(input: {
@@ -302,6 +566,17 @@ export const sheetsApi = {
     );
     return response.data.mapping;
   },
+
+  async syncAssessedPools(connectionId: string): Promise<{
+    counts: { BUCKET: number; TR: number; COMPETENCY: number };
+    matchedCandidates: number;
+  }> {
+    const response = await request<{ data: { counts: { BUCKET: number; TR: number; COMPETENCY: number }; matchedCandidates: number } }>(
+      `/sheets/${connectionId}/pools/sync`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+    return response.data;
+  },
 };
 
 export interface Page<T> {
@@ -317,6 +592,13 @@ export interface CompanyListParams {
 }
 
 export const companiesApi = {
+  async options(params: { search?: string; status?: "ACTIVE" | "INACTIVE" } = {}): Promise<{ id: string; name: string; location: string | null }[]> {
+    const response = await request<{ data: { companies: { id: string; name: string; location: string | null }[] } }>(
+      `/companies/options${toQueryString(params)}`,
+    );
+    return response.data.companies;
+  },
+
   async list(params: CompanyListParams = {}): Promise<Page<CompanyListItem>> {
     const response = await request<{ data: { companies: CompanyListItem[] }; meta: PaginationMeta }>(
       `/companies${toQueryString({ ...params, page: params.page?.toString(), pageSize: params.pageSize?.toString() })}`,
@@ -340,6 +622,10 @@ export const companiesApi = {
 
   async update(companyId: string, input: Partial<CompanyInput>): Promise<void> {
     await request(`/companies/${companyId}`, { method: "PATCH", body: JSON.stringify(input) });
+  },
+
+  async delete(companyId: string): Promise<void> {
+    await request(`/companies/${companyId}`, { method: "DELETE", idempotencyKey: newIdempotencyKey() });
   },
 };
 
@@ -365,6 +651,30 @@ export const jobRequestsApi = {
     return response.data.jobRequest;
   },
 
+  async createRecruitmentBatch(jobRequestId: string, input: RecruitmentBatchInput & { name: string }): Promise<{ id: string; name: string; sequence: number }> {
+    const response = await request<{ data: { recruitmentBatch: { id: string; name: string; sequence: number } } }>(`/job-requests/${jobRequestId}/recruitment-batches`, {
+      method: "POST",
+      body: JSON.stringify(input),
+      idempotencyKey: newIdempotencyKey(),
+    });
+    return response.data.recruitmentBatch;
+  },
+
+  async updateRecruitmentBatch(jobRequestId: string, batchId: string, input: RecruitmentBatchInput): Promise<{ id: string; name: string }> {
+    const response = await request<{ data: { recruitmentBatch: { id: string; name: string } } }>(`/job-requests/${jobRequestId}/recruitment-batches/${batchId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+      idempotencyKey: newIdempotencyKey(),
+    });
+    return response.data.recruitmentBatch;
+  },
+
+  /** Tabs of the internal sheet a batch reads (its own, else the job request's), with suggestions. */
+  async internalSheetTabs(jobRequestId: string, batchId?: string, url?: string): Promise<InternalSheetTabs> {
+    const response = await request<{ data: InternalSheetTabs }>(`/job-requests/${jobRequestId}/internal-sheet/tabs${toQueryString({ batchId, url })}`);
+    return response.data;
+  },
+
   async create(input: JobRequestInput, idempotencyKey = newIdempotencyKey()): Promise<{ id: string }> {
     const response = await request<{ data: { jobRequest: { id: string } } }>("/job-requests", {
       method: "POST",
@@ -380,6 +690,10 @@ export const jobRequestsApi = {
       body: JSON.stringify(input),
     });
     return response.data.jobRequest;
+  },
+
+  async delete(jobRequestId: string): Promise<void> {
+    await request(`/job-requests/${jobRequestId}`, { method: "DELETE", idempotencyKey: newIdempotencyKey() });
   },
 
   async changeStatus(jobRequestId: string, status: JobRequestStatus, reason?: string): Promise<JobRequestDetail> {
@@ -398,4 +712,3 @@ export const jobRequestsApi = {
     return response.data.jobRequest;
   },
 };
-

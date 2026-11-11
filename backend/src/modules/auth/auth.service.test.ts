@@ -68,7 +68,7 @@ const psm: UserRecord = {
   fullName: "Priya PSM",
   passwordHash: hashSync("correct horse battery", 4),
   isActive: true,
-  roles: [{ role: { code: "PSM" } }],
+  roles: [{ role: { code: "EMPLOYEE" } }],
 };
 
 const audit = { requestId: "req-1", ipAddress: "127.0.0.1" };
@@ -95,7 +95,7 @@ describe("auth service", () => {
 
     const { payload } = await jwtVerify(result.accessToken, new TextEncoder().encode(ACCESS_SECRET));
     assert.equal(payload.sub, psm.id);
-    assert.deepEqual(payload.roles, ["PSM"]);
+    assert.deepEqual(payload.roles, ["EMPLOYEE"]);
     assert.equal(fake.tokens.length, 1);
     assert.notEqual(fake.tokens[0]!.tokenHash, result.refreshToken);
     assert.deepEqual(fake.audits, [{ actorId: psm.id, requestId: "req-1" }]);

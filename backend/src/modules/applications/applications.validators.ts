@@ -3,6 +3,7 @@ import { z } from "zod";
 
 export const addApplicationSchema = z
   .object({
+    recruitmentBatchId: z.uuid().optional(),
     candidateId: z.uuid().optional(),
     candidate: z
       .object({
@@ -18,6 +19,7 @@ export const addApplicationSchema = z
 
 export const carryOverSchema = z.object({
   fromJobRequestId: z.uuid(),
+  recruitmentBatchId: z.uuid().optional(),
   applicationIds: z.array(z.uuid()).min(1).max(500),
 });
 

@@ -41,7 +41,9 @@ export const candidatesService = {
           : {},
         query.productId ? { products: { some: { productId: query.productId } } } : {},
         query.category ? { category: query.category } : {},
-        query.assessedPool ? { assessedPool: query.assessedPool } : {},
+        query.poolOnly || query.poolType
+          ? { poolMemberships: { some: query.poolType ? { poolType: query.poolType } : {} } }
+          : {},
         query.jobRequestId ? { applications: { some: { jobRequestId: query.jobRequestId } } } : {},
       ],
     };
@@ -57,7 +59,7 @@ export const candidatesService = {
           college: true,
           graduationYear: true,
           category: true,
-          assessedPool: true,
+          poolMemberships: { select: { poolType: true } },
           updatedAt: true,
           products: { select: { product: { select: { code: true, name: true } } } },
           _count: { select: { applications: true } },
@@ -86,6 +88,7 @@ export const candidatesService = {
         where: { id: candidate.id },
         select: {
           products: { select: { firstSeenAt: true, product: { select: { code: true, name: true, category: true } } } },
+          poolMemberships: { select: { poolType: true } },
           skills: { select: { skill: { select: { name: true } } } },
           applications: {
             where: { jobRequest: jobRequestScopeFilter(scope) },
@@ -123,6 +126,7 @@ export const candidatesService = {
       ...protectContact(user, candidate),
       academicScore: candidate.academicScore === null ? null : Number(candidate.academicScore),
       products: details.products,
+      poolMemberships: details.poolMemberships,
       skills: details.skills.map(({ skill }) => skill.name),
       applications: details.applications,
       history,
@@ -140,7 +144,7 @@ export const candidatesService = {
     await inTransaction(async (transaction) => {
       await transaction.candidate.update({ where: { id: candidate.id }, data });
       await recordAudit(transaction, audit, {
-        action: changes.category || changes.assessedPool ? "CANDIDATE_CLASSIFICATION_CHANGED" : "CANDIDATE_UPDATED",
+        action: changes.category ? "CANDIDATE_CLASSIFICATION_CHANGED" : "CANDIDATE_UPDATED",
         entityType: "Candidate",
         entityId: candidate.id,
         metadata: { changes, reason: reason ?? null },

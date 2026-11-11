@@ -1,5 +1,5 @@
 import { prisma, type Db } from "../../db.js";
-import type { Prisma } from "../../generated/prisma/client.js";
+import type { CandidatePoolType, Prisma } from "../../generated/prisma/client.js";
 import type { sourceTypes } from "./sheets.validators.js";
 
 const connectionInclude = {
@@ -29,13 +29,9 @@ export const sheetsRepository = {
     return user?.teamId ?? null;
   },
 
-  async findTeamIdLedBy(userId: string): Promise<string | null> {
-    const team = await prisma.team.findFirst({ where: { teamLeadId: userId }, select: { id: true } });
+  async findWorkspaceTeamId(): Promise<string | null> {
+    const team = await prisma.team.findFirst({ orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true } });
     return team?.id ?? null;
-  },
-
-  teamExists(teamId: string) {
-    return prisma.team.findUnique({ where: { id: teamId }, select: { id: true } }).then(Boolean);
   },
 
   createConnection(
@@ -62,5 +58,25 @@ export const sheetsRepository = {
       create: { connectionId, workflowStage, ...values },
       update: values,
     });
+  },
+
+  findCandidatesByCodes(candidateCodes: string[]) {
+    return prisma.candidate.findMany({
+      where: { candidateCode: { in: candidateCodes } },
+      select: { id: true, candidateCode: true },
+    });
+  },
+
+  async replacePoolMemberships(
+    db: Db,
+    sourceConnectionId: string,
+    entries: { candidateCode: string; candidateId: string | null; poolType: CandidatePoolType; sourceConnectionId: string }[],
+  ) {
+    await db.candidatePoolMembership.deleteMany({
+      where: { sourceConnectionId },
+    });
+    if (entries.length > 0) {
+      await db.candidatePoolMembership.createMany({ data: entries });
+    }
   },
 };

@@ -28,7 +28,7 @@ export interface CompanyRowData {
   applicationId: string | null;
   candidateId: string | null;
   candidateName: string | null;
-  matchedBy: "email" | "mobile" | "manual" | null;
+  matchedBy: "mobile" | "manual" | null;
   createNomination: boolean;
   rounds: { roundName: string; roundType: RoundType; outcome: InterviewOutcome }[];
   fromStatus: PipelineStatus | null;
@@ -49,6 +49,7 @@ export interface CompanySummary {
 type Reader = (sheet: string, headerRow: number) => { headers: string[]; rows: SheetRow[] };
 
 const cellOf = (row: SheetRow, column: number | undefined) => (column === undefined ? null : cleanText(row.cells[column] ?? null, 500));
+const UUID_VALUE = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i;
 
 export const overrideKey = (sheet: string, rowNumber: number) => `${sheet}#${rowNumber}`;
 
@@ -71,14 +72,13 @@ export function planCompanyImport(
   otherCandidates: { fullName: string; email: string | null; mobile: string | null }[],
   existingRounds: string[],
 ) {
-  const byEmail = new Map<string, JobApplicant[]>();
   const byMobile = new Map<string, JobApplicant[]>();
   const byId = new Map(applicants.map((applicant) => [applicant.applicationId, applicant]));
   for (const applicant of applicants) {
-    if (applicant.email) byEmail.set(applicant.email, [...(byEmail.get(applicant.email) ?? []), applicant]);
-    if (applicant.mobile) byMobile.set(applicant.mobile, [...(byMobile.get(applicant.mobile) ?? []), applicant]);
+    const normalizedMobile = normalizeMobile(applicant.mobile);
+    if (normalizedMobile) byMobile.set(normalizedMobile, [...(byMobile.get(normalizedMobile) ?? []), applicant]);
   }
-  const outsiders = new Set(otherCandidates.flatMap(({ email, mobile }) => [email, mobile].filter(Boolean) as string[]));
+  const outsiders = new Set(otherCandidates.map(({ mobile }) => normalizeMobile(mobile)).filter(Boolean) as string[]);
 
   const rows: StagedRow<CompanyRowData>[] = [];
   const usedApplications = new Map<string, string>();
@@ -91,9 +91,10 @@ export function planCompanyImport(
       const issues: PlanIssue[] = [];
       const name = cellOf(row, tab.columns.fullName);
       const email = normalizeEmail(cellOf(row, tab.columns.email));
-      const mobile = normalizeMobile(cellOf(row, tab.columns.mobile));
+      const rawMobile = cellOf(row, tab.columns.mobile);
+      const mobile = rawMobile && !UUID_VALUE.test(rawMobile) ? normalizeMobile(rawMobile) : null;
 
-      // Match: a manual choice wins; otherwise email, then mobile.
+      // Normalized mobile is the sole automatic identity key; manual row overrides remain explicit operator decisions.
       let applicant: JobApplicant | undefined;
       let matchedBy: CompanyRowData["matchedBy"] = null;
       const override = config.overrides[overrideKey(tab.sheet, row.rowNumber)];
@@ -102,20 +103,16 @@ export function planCompanyImport(
         matchedBy = "manual";
         if (!applicant) issues.push({ severity: "ERROR", code: "INVALID_MATCH", message: "The applicant chosen for this row is no longer on this job." });
       } else {
-        const viaEmail = email ? byEmail.get(email) ?? [] : [];
         const viaMobile = mobile ? byMobile.get(mobile) ?? [] : [];
-        if (viaEmail.length > 1 || viaMobile.length > 1 || (viaEmail[0] && viaMobile[0] && viaEmail[0].applicationId !== viaMobile[0].applicationId)) {
-          issues.push({ severity: "ERROR", code: "AMBIGUOUS_MATCH", message: "The email and mobile match different applicants. Choose the right one." });
-        } else if (viaEmail[0]) {
-          applicant = viaEmail[0];
-          matchedBy = "email";
+        if (viaMobile.length > 1) {
+          issues.push({ severity: "ERROR", code: "AMBIGUOUS_MATCH", message: `Mobile number “${mobile}” matches multiple applicants. Make the mobile number unique before importing.` });
         } else if (viaMobile[0]) {
           applicant = viaMobile[0];
           matchedBy = "mobile";
-        } else if ((email && outsiders.has(email)) || (mobile && outsiders.has(mobile))) {
+        } else if (mobile && outsiders.has(mobile)) {
           issues.push({ severity: "ERROR", code: "NOT_APPLIED", message: "This person is in the dashboard but has no application for this job. Add them to the job first, or choose the applicant." });
         } else {
-          issues.push({ severity: "ERROR", code: "NO_MATCH", message: "No applicant of this job has this email or mobile. Choose the applicant, or leave the row out." });
+          issues.push({ severity: "ERROR", code: "NO_MATCH", message: "No applicant of this job has this mobile number. Choose the applicant, or leave the row out." });
         }
       }
 

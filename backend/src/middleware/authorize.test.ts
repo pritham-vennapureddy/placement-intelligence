@@ -38,8 +38,9 @@ describe("requirePermission", () => {
   });
 
   test("requires every listed permission", async () => {
-    await request(appWithUser(["PSM"])).get("/pii").expect(200);
-    await request(appWithUser(["VIEWER"])).get("/pii").expect(403);
+    await request(appWithUser(["EMPLOYEE"])).get("/pii").expect(200);
+    await request(appWithUser(["STAKEHOLDER"])).get("/pii").expect(200);
+    await request(appWithUser(["SUPERUSER"])).get("/pii").expect(403);
   });
 });
 
@@ -50,22 +51,27 @@ describe("role permission map", () => {
     }
   });
 
-  test("viewers cannot see candidate PII or change anything", () => {
-    for (const permission of ROLE_PERMISSIONS.VIEWER) {
-      assert.match(permission, /:read$/);
+  test("only administrators manage users", () => {
+    for (const role of ["MANAGER", "EMPLOYEE", "STAKEHOLDER"]) {
+      assert.equal(hasPermission([role], "user:manage"), false, role);
     }
-    assert.equal(hasPermission(["VIEWER"], "candidate:pii:read"), false);
   });
 
-  test("only administrators manage users and teams", () => {
-    for (const role of ["MANAGER", "PSM", "VIEWER"]) {
-      assert.equal(hasPermission([role], "user:manage"), false, role);
-      assert.equal(hasPermission([role], "team:manage"), false, role);
+  test("employees, managers and stakeholders share every non-admin permission", () => {
+    for (const permission of PERMISSIONS) {
+      const adminOnly = permission === "user:manage" || permission === "integration:admin";
+      for (const role of ["EMPLOYEE", "MANAGER", "STAKEHOLDER"]) {
+        assert.equal(hasPermission([role], permission), !adminOnly, `${role} ${permission}`);
+      }
     }
+  });
+
+  test("employees can manage Google Sheet connections in the shared workspace", () => {
+    assert.equal(hasPermission(["EMPLOYEE"], "sheet:manage"), true);
   });
 
   test("unknown roles grant nothing, and multiple roles combine", () => {
     assert.equal(hasPermission(["SUPERUSER"], "dashboard:read"), false);
-    assert.ok(hasPermission(["VIEWER", "PSM"], "screening:write"));
+    assert.ok(hasPermission(["STAKEHOLDER", "EMPLOYEE"], "screening:write"));
   });
 });

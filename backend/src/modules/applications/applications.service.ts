@@ -17,6 +17,10 @@ export const applicationsService = {
     const { job } = await loadJobForUser(user, jobRequestId, "candidate:write");
 
     return inTransaction(async (transaction) => {
+      const recruitmentBatch = input.recruitmentBatchId
+        ? await transaction.recruitmentBatch.findFirst({ where: { id: input.recruitmentBatchId, jobRequestId: job.id, status: "ACTIVE" }, select: { id: true } })
+        : await transaction.recruitmentBatch.findFirst({ where: { jobRequestId: job.id, status: "ACTIVE" }, orderBy: { sequence: "asc" }, select: { id: true } });
+      if (!recruitmentBatch) throw new ApiError(404, "RECRUITMENT_BATCH_NOT_FOUND", "Choose an active batch for this job request.");
       let candidateId = input.candidateId;
       let productId: string | null = null;
       if (candidateId) {
@@ -49,10 +53,10 @@ export const applicationsService = {
         candidateId = created.id;
       }
 
-      const duplicate = await transaction.application.findUnique({ where: { candidateId_jobRequestId: { candidateId, jobRequestId: job.id } }, select: { id: true } });
-      if (duplicate) throw new ApiError(409, "ALREADY_APPLIED", "This candidate is already an applicant of this job.");
+      const duplicate = await transaction.application.findUnique({ where: { candidateId_jobRequestId_recruitmentBatchId: { candidateId, jobRequestId: job.id, recruitmentBatchId: recruitmentBatch.id } }, select: { id: true } });
+      if (duplicate) throw new ApiError(409, "ALREADY_APPLIED", "This candidate is already an applicant of this recruitment batch.");
       const application = await transaction.application.create({
-        data: { candidateId, jobRequestId: job.id, productId, source: "MANUAL" },
+        data: { candidateId, jobRequestId: job.id, recruitmentBatchId: recruitmentBatch.id, productId, source: "MANUAL" },
         select: { id: true },
       });
       await recordAudit(transaction, audit, { action: "APPLICATION_ADDED", entityType: "JobRequest", entityId: job.id, metadata: { applicationId: application.id, candidateId } });
@@ -121,10 +125,15 @@ export const applicationsService = {
       throw new ApiError(400, "INVALID_APPLICATION", "Some selected candidates are not applicants of the earlier job.");
     }
     return inTransaction(async (transaction) => {
+      const recruitmentBatch = input.recruitmentBatchId
+        ? await transaction.recruitmentBatch.findFirst({ where: { id: input.recruitmentBatchId, jobRequestId: job.id, status: "ACTIVE" }, select: { id: true } })
+        : await transaction.recruitmentBatch.findFirst({ where: { jobRequestId: job.id, status: "ACTIVE" }, orderBy: { sequence: "asc" }, select: { id: true } });
+      if (!recruitmentBatch) throw new ApiError(404, "RECRUITMENT_BATCH_NOT_FOUND", "Choose an active batch for this job request.");
       const result = await transaction.application.createMany({
         data: sources.map((source) => ({
           candidateId: source.candidateId,
           jobRequestId: job.id,
+          recruitmentBatchId: recruitmentBatch.id,
           productId: source.productId,
           source: "CARRIED_OVER" as const,
           sourceApplicationId: source.id,

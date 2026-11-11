@@ -23,6 +23,7 @@ import {
   columnOptions,
   Field,
   guessColumn,
+  guessColumnByValues,
   SheetPreview,
   unmappedValues,
   useSheetPreview,
@@ -61,9 +62,9 @@ export function guessRoundType(name: string): RoundType {
 
 export function initialCompanyMapping(batch: ImportBatch): CompanyMappingState {
   const saved = batch.mapping as (Omit<CompanyMappingState, "tabs"> & { tabs: CompanyTabState[] }) | null;
-  if (saved?.tabs?.length) {
+  if (saved?.tabs) {
     const tabs = saved.tabs.filter((tab) => batch.sheets.some((sheet) => sheet.name === tab.sheet)).map((tab) => ({ ...tab, guessed: true }));
-    if (tabs.length) return { tabs, roundValueMap: saved.roundValueMap ?? {}, finalValueMap: saved.finalValueMap ?? {}, addJobSkills: saved.addJobSkills ?? true };
+    return { tabs, roundValueMap: saved.roundValueMap ?? {}, finalValueMap: saved.finalValueMap ?? {}, addJobSkills: saved.addJobSkills ?? true };
   }
   const withRows = batch.sheets.filter((sheet) => sheet.rowCount > 1);
   return {
@@ -74,11 +75,20 @@ export function initialCompanyMapping(batch: ImportBatch): CompanyMappingState {
   };
 }
 
-export function toCompanyPayload(state: CompanyMappingState): { payload?: unknown; missing: string[] } {
+export function toCompanyPayload(state: CompanyMappingState, automatic = false): { payload?: unknown; missing: string[] } {
   const missing: string[] = [];
   if (state.tabs.length === 0) missing.push("Choose at least one tab that belongs to this job.");
+  if (automatic) {
+    return {
+      missing,
+      payload: missing.length ? undefined : {
+        tabs: state.tabs.map(({ sheet }) => ({ sheet })),
+        addJobSkills: state.addJobSkills,
+      },
+    };
+  }
   for (const tab of state.tabs) {
-    if (tab.columns.email === undefined && tab.columns.mobile === undefined) missing.push(`${tab.sheet}: choose the email or mobile column.`);
+    if (tab.columns.mobile === undefined) missing.push(`${tab.sheet}: choose the mobile-number column; mobile is required for matching.`);
     if (tab.rounds.some((round) => !round.roundName.trim())) missing.push(`${tab.sheet}: give every round a name.`);
   }
   return {
@@ -94,13 +104,23 @@ export function toCompanyPayload(state: CompanyMappingState): { payload?: unknow
 
 function TabSection({ batch, tab, onChange }: { batch: ImportBatch; tab: CompanyTabState; onChange: (tab: CompanyTabState) => void }) {
   const preview = useSheetPreview(batch.id, tab.sheet);
-  const options = useMemo(() => columnOptions(preview.data, tab.headerRow), [preview.data, tab.headerRow]);
+  const headerRow = preview.data?.headerRow ?? tab.headerRow;
+  const options = useMemo(() => columnOptions(preview.data?.rows, headerRow), [preview.data, headerRow]);
+
+  useEffect(() => {
+    if (preview.data && tab.headerRow !== preview.data.headerRow) onChange({ ...tab, headerRow: preview.data.headerRow });
+  }, [preview.data?.headerRow]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!preview.data || tab.guessed) return;
     const fullName = guessColumn(options, /name/i);
-    const email = guessColumn(options, /e-?mail/i);
-    const mobile = guessColumn(options, /mobile|phone/i);
+    const email = guessColumn(options, /e-?mail/i)
+      ?? guessColumnByValues(preview.data.rows, headerRow, (value) => /^\S+@\S+\.\S+$/.test(value));
+    const mobile = guessColumn(options, /mobile|phone/i)
+      ?? guessColumnByValues(preview.data.rows, headerRow, (value) => {
+        const digits = value.replace(/\D/g, "");
+        return /^[+\d\s().-]+$/.test(value) && digits.length >= 10 && digits.length <= 13;
+      });
     const finalStatusColumn = guessColumn(options, FINAL_PATTERN);
     const taken = [fullName, email, mobile, finalStatusColumn].filter((value): value is number => value !== undefined);
     const rounds = options
@@ -108,6 +128,7 @@ function TabSection({ batch, tab, onChange }: { batch: ImportBatch; tab: Company
       .map((option) => ({ column: option.index, roundName: option.header, roundType: guessRoundType(option.header) }));
     onChange({
       ...tab,
+      headerRow,
       guessed: true,
       columns: { ...(fullName !== undefined ? { fullName } : {}), ...(email !== undefined ? { email } : {}), ...(mobile !== undefined ? { mobile } : {}) },
       rounds,
@@ -127,11 +148,11 @@ function TabSection({ batch, tab, onChange }: { batch: ImportBatch; tab: Company
   return (
     <Card className="space-y-4 p-5">
       <h2 className="text-sm font-semibold text-slate-800">Tab “{tab.sheet}”</h2>
-      <SheetPreview rows={preview.data} isLoading={preview.isPending} headerRow={tab.headerRow} onHeaderRow={(headerRow) => onChange({ ...tab, headerRow, guessed: false })} />
+      <SheetPreview rows={preview.data?.rows} isLoading={preview.isPending} headerRow={headerRow} />
       <div className="grid gap-3 sm:grid-cols-3">
         <Field label="Full name"><ColumnSelect options={options} value={tab.columns.fullName} onChange={(fullName) => onChange({ ...tab, columns: { ...tab.columns, fullName } })} /></Field>
-        <Field label="Email" hint="Profiles are matched by email first…"><ColumnSelect options={options} value={tab.columns.email} onChange={(email) => onChange({ ...tab, columns: { ...tab.columns, email } })} /></Field>
-        <Field label="Mobile" hint="…then by mobile."><ColumnSelect options={options} value={tab.columns.mobile} onChange={(mobile) => onChange({ ...tab, columns: { ...tab.columns, mobile } })} /></Field>
+        <Field label="Email" hint="Source detail only; it is ignored for matching."><ColumnSelect options={options} value={tab.columns.email} onChange={(email) => onChange({ ...tab, columns: { ...tab.columns, email } })} /></Field>
+        <Field label="Mobile (required identity)" hint="Normalized mobile must uniquely identify the applicant."><ColumnSelect options={options} value={tab.columns.mobile} onChange={(mobile) => onChange({ ...tab, columns: { ...tab.columns, mobile } })} /></Field>
       </div>
       <div className="space-y-2">
         <p className="text-xs font-semibold text-slate-600">Which columns are company rounds?</p>
@@ -184,7 +205,7 @@ function useDistinctValues(batch: ImportBatch, tabs: CompanyTabState[], columnsO
   }, [queries]);
 }
 
-export function CompanyMappingForm({ batch, state, onChange }: { batch: ImportBatch; state: CompanyMappingState; onChange: (state: CompanyMappingState) => void }) {
+export function CompanyMappingForm({ batch, state, onChange, automatic = false }: { batch: ImportBatch; state: CompanyMappingState; onChange: (state: CompanyMappingState) => void; automatic?: boolean }) {
   const roundValues = useDistinctValues(batch, state.tabs, (tab) => tab.rounds.map((round) => round.column));
   const finalValues = useDistinctValues(batch, state.tabs, (tab) => (tab.finalStatusColumn === undefined ? [] : [tab.finalStatusColumn]));
 
@@ -215,10 +236,22 @@ export function CompanyMappingForm({ batch, state, onChange }: { batch: ImportBa
           ))}
         </div>
       </Card>
-      {state.tabs.map((tab) => (
+      {automatic && state.tabs.length > 0 && (
+        <Card className="space-y-3 p-5">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-800">Automatic sheet analysis</h2>
+            <p className="text-xs text-slate-500">The selected tabs are analyzed for student identity, interview rounds, and final status. You can verify every detected change before saving.</p>
+          </div>
+          <label className="flex items-start gap-2 text-sm text-slate-700">
+            <Checkbox checked={state.addJobSkills} onCheckedChange={(checked) => onChange({ ...state, addJobSkills: checked === true })} />
+            <span>Add this job's tech stack to matched candidates' skills</span>
+          </label>
+        </Card>
+      )}
+      {!automatic && state.tabs.map((tab) => (
         <TabSection key={tab.sheet} batch={batch} tab={tab} onChange={(next) => onChange({ ...state, tabs: state.tabs.map((entry) => (entry.sheet === tab.sheet ? next : entry)) })} />
       ))}
-      {state.tabs.length > 0 && (
+      {!automatic && state.tabs.length > 0 && (
         <Card className="space-y-4 p-5">
           <div>
             <h2 className="text-sm font-semibold text-slate-800">2 · What do the values mean?</h2>

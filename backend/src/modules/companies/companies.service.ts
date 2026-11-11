@@ -1,14 +1,14 @@
-import { hasPermission, hubspotRecordUrl } from "@placement/shared";
+import { companyProcessLabel, hasPermission, hubspotRecordUrl } from "@placement/shared";
 import { env } from "../../config/env.js";
 import { inTransaction, prisma } from "../../db.js";
 import type { AuthenticatedUser } from "../../middleware/authenticate.js";
-import { jobRequestScopeFilter, resolveDataScope } from "../../services/data-scope.service.js";
 import { ApiError } from "../../utils/api-error.js";
 import { definedOnly } from "../../utils/object.js";
 import { buildPaginationMeta, toPrismaPage } from "../../utils/pagination.js";
 import { diffFields, listAuditHistory, recordAudit, type AuditContext } from "../audit/audit.service.js";
-import { companiesRepository } from "./companies.repository.js";
-import type { CreateCompanyInput, ListCompaniesQuery, UpdateCompanyInput } from "./companies.validators.js";
+import { deleteJobRequestData } from "../job-requests/delete-job-request-data.js";
+import { companiesRepository, OPEN_STATUSES } from "./companies.repository.js";
+import type { CompanyOptionsQuery, CreateCompanyInput, ListCompaniesQuery, UpdateCompanyInput } from "./companies.validators.js";
 
 export function companyHubspotUrl(hubspotCompanyId: string | null): string | null {
   return hubspotCompanyId && env.HUBSPOT_PORTAL_ID
@@ -36,9 +36,22 @@ async function assertCanEdit(user: AuthenticatedUser, company: { id: string; cre
 }
 
 export const companiesService = {
-  /** The company directory is visible to everyone; job counts follow the user's data scope. */
+  /** Lightweight company search for selectors; avoids counts and job/owner joins. */
+  options(_user: AuthenticatedUser, query: CompanyOptionsQuery) {
+    return companiesRepository.options({
+      archivedAt: null,
+      status: query.status,
+      ...(query.search ? { OR: [
+        { name: { contains: query.search, mode: "insensitive" } },
+        { hubspotCompanyId: query.search },
+        { industry: { contains: query.search, mode: "insensitive" } },
+        { location: { contains: query.search, mode: "insensitive" } },
+      ] } : {}),
+    });
+  },
+
+  /** Company information and job summaries are visible to every signed-in role. */
   async list(user: AuthenticatedUser, query: ListCompaniesQuery) {
-    const scope = await resolveDataScope(user);
     const { rows, total } = await companiesRepository.list(
       {
         archivedAt: null,
@@ -54,31 +67,42 @@ export const companiesService = {
           }
           : {}),
       },
-      jobRequestScopeFilter(scope),
+      {},
       toPrismaPage(query),
     );
 
-    const companies = rows.map(({ jobRequests, ...company }) => ({
-      ...company,
-      hubspotUrl: companyHubspotUrl(company.hubspotCompanyId),
-      openJobRequests: jobRequests.length,
-      openPositions: jobRequests.reduce((sum, job) => sum + job.openings, 0),
-      psmOwners: [...new Map(jobRequests.flatMap(({ psmOwner }) => (psmOwner ? [[psmOwner.id, psmOwner]] : []))).values()],
-    }));
+    const companies = rows.map(({ jobRequests, ...company }) => {
+      const openJobs = jobRequests.filter((job) => OPEN_STATUSES.includes(job.status));
+      return {
+        ...company,
+        hubspotUrl: companyHubspotUrl(company.hubspotCompanyId),
+        openJobRequests: openJobs.length,
+        openPositions: openJobs.reduce((sum, job) => sum + job.openings, 0),
+        psmOwners: [...new Map(openJobs.flatMap(({ psmOwner }) => (psmOwner ? [[psmOwner.id, psmOwner]] : []))).values()],
+        // Where the company's hiring stands for each job, most recently updated first.
+        processes: jobRequests.map((job) => ({
+          jobRequestId: job.id,
+          roleTitle: job.roleTitle,
+          phase: job.processPhase,
+          label: companyProcessLabel(job.processPhase, job.processRound?.name),
+        })),
+      };
+    });
     return { companies, meta: buildPaginationMeta(query, total) };
   },
 
   async get(user: AuthenticatedUser, companyId: string) {
-    const scope = await resolveDataScope(user);
-    const company = await companiesRepository.findById(companyId, jobRequestScopeFilter(scope));
+    const company = await companiesRepository.findById(companyId, {});
     if (!company || company.archivedAt) {
       throw new ApiError(404, "COMPANY_NOT_FOUND", "The company was not found.");
     }
     const history = await listAuditHistory(prisma, "Company", [company.id]);
     return {
       ...company,
+      jobRequests: company.jobRequests.map((job) => ({ ...job, processLabel: companyProcessLabel(job.processPhase, job.processRound?.name) })),
       hubspotUrl: companyHubspotUrl(company.hubspotCompanyId),
       canEdit: await companiesService.canEdit(user, company),
+      canDelete: hasPermission(user.roles, "job:assign"),
       history,
     };
   },
@@ -140,5 +164,39 @@ export const companiesService = {
       });
       return updated;
     });
+  },
+
+  async delete(user: AuthenticatedUser, companyId: string, audit: AuditContext) {
+    if (!hasPermission(user.roles, "job:assign")) {
+      throw new ApiError(403, "FORBIDDEN", "Only managers can permanently delete a company.");
+    }
+    const company = await companiesRepository.findPlain(companyId);
+    if (!company || company.archivedAt) {
+      throw new ApiError(404, "COMPANY_NOT_FOUND", "The company was not found.");
+    }
+
+    return inTransaction(async (transaction) => {
+      const jobs = await transaction.jobRequest.findMany({
+        where: { companyId: company.id },
+        select: { id: true, jobId: true, roleTitle: true },
+      });
+      for (const job of jobs) {
+        await deleteJobRequestData(transaction, job.id);
+        await recordAudit(transaction, audit, {
+          action: "JOB_REQUEST_DELETED",
+          entityType: "JobRequest",
+          entityId: job.id,
+          metadata: { jobId: job.jobId, roleTitle: job.roleTitle, companyId: company.id },
+        });
+      }
+      await transaction.company.delete({ where: { id: company.id } });
+      await recordAudit(transaction, audit, {
+        action: "COMPANY_DELETED",
+        entityType: "Company",
+        entityId: company.id,
+        metadata: { name: company.name, deletedJobCount: jobs.length },
+      });
+      return { id: company.id };
+    }, { timeoutMs: 120_000 });
   },
 };

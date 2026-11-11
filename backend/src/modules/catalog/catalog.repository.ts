@@ -16,12 +16,12 @@ export const catalogRepository = {
     });
   },
 
-  /** Active PSMs, limited to `ids` when given. */
-  listActivePsms(ids?: string[]) {
+  /** Active employees, limited to `ids` when given. */
+  listActiveEmployees(ids?: string[]) {
     return prisma.user.findMany({
       where: {
         isActive: true,
-        roles: { some: { role: { code: "PSM" } } },
+        roles: { some: { role: { code: "EMPLOYEE" } } },
         ...(ids ? { id: { in: ids } } : {}),
       },
       select: { id: true, fullName: true, team: { select: { name: true } } },

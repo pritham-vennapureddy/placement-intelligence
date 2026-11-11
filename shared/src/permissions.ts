@@ -2,14 +2,12 @@
 // lives here so the API and the UI agree. Data scope (organisation / team /
 // own job requests) is applied separately on the server.
 
-export const ROLES = ["ADMIN", "MANAGER", "PSM", "VIEWER"] as const;
+export const ROLES = ["ADMIN", "MANAGER", "STAKEHOLDER", "EMPLOYEE"] as const;
 export type RoleCode = (typeof ROLES)[number];
 
 export const PERMISSIONS = [
   "dashboard:read",
   "user:manage",
-  "team:manage",
-  "team:read",
   "sheet:read",
   "sheet:manage",
   "company:read",
@@ -32,45 +30,17 @@ export type Permission = (typeof PERMISSIONS)[number];
 
 const allPermissions: readonly Permission[] = PERMISSIONS;
 
+/** Admin-only: creating user accounts and the infrastructure status check. */
+const ADMIN_ONLY: readonly Permission[] = ["user:manage", "integration:admin"];
+
+/** Placement work is shared, so every non-admin role can do everything except administration. */
+const teamPermissions: readonly Permission[] = PERMISSIONS.filter((permission) => !ADMIN_ONLY.includes(permission));
+
 export const ROLE_PERMISSIONS: Record<RoleCode, readonly Permission[]> = {
   ADMIN: allPermissions,
-  MANAGER: [
-    "dashboard:read",
-    "team:read",
-    "sheet:read",
-    "sheet:manage",
-    "company:read",
-    "company:write",
-    "job:read",
-    "job:write",
-    "job:assign",
-    "candidate:read",
-    "candidate:write",
-    "candidate:pii:read",
-    "screening:write",
-    "pipeline:write",
-    "import:run",
-    "report:read",
-    "report:export",
-    "audit:read",
-  ],
-  PSM: [
-    "dashboard:read",
-    "sheet:read",
-    "company:read",
-    "company:write",
-    "job:read",
-    "job:write",
-    "candidate:read",
-    "candidate:write",
-    "candidate:pii:read",
-    "screening:write",
-    "pipeline:write",
-    "import:run",
-    "report:read",
-    "report:export",
-  ],
-  VIEWER: ["dashboard:read", "sheet:read", "company:read", "job:read", "candidate:read", "report:read"],
+  MANAGER: teamPermissions,
+  EMPLOYEE: teamPermissions,
+  STAKEHOLDER: teamPermissions,
 };
 
 function isRoleCode(value: string): value is RoleCode {

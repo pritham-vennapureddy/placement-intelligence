@@ -1,8 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { differenceInCalendarDays, format } from "date-fns";
-import { ArrowLeft, ExternalLink, Pencil, RefreshCw, UserRoundCog } from "lucide-react";
+import { ArrowLeft, ExternalLink, Pencil, RefreshCw, Trash2, UserRoundCog } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { toast } from "sonner";
+import { ConfirmDialog } from "../../components/confirm-dialog";
 import { HistoryList } from "../../components/history-list";
 import { PageHeader } from "../../components/page-header";
 import { EmptyState, ErrorState, LoadingRows } from "../../components/states";
@@ -64,8 +66,11 @@ function JobImports({ jobRequestId }: { jobRequestId: string }) {
 
 export function JobRequestDetailPage() {
   const { jobRequestId = "" } = useParams();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [changingStatus, setChangingStatus] = useState(false);
   const [reassigning, setReassigning] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [params, setParams] = useSearchParams();
   const tab = params.get("tab") ?? "overview";
   const setTab = (value: string) => setParams((current) => {
@@ -74,6 +79,18 @@ export function JobRequestDetailPage() {
     return next;
   }, { replace: true });
   const job = useQuery({ queryKey: ["job-requests", jobRequestId], queryFn: () => jobRequestsApi.get(jobRequestId) });
+  const deleteJob = useMutation({
+    mutationFn: () => jobRequestsApi.delete(jobRequestId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["job-requests"] }),
+        queryClient.invalidateQueries({ queryKey: ["companies"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+      ]);
+      toast.success("Job request permanently deleted");
+      navigate("/job-requests");
+    },
+  });
 
   if (job.isPending) return <Card><LoadingRows rows={6} /></Card>;
   if (job.error) return <Card><ErrorState error={job.error} onRetry={() => void job.refetch()} /></Card>;
@@ -102,14 +119,19 @@ export function JobRequestDetailPage() {
             {data.canEdit && (
               <Button size="sm" asChild><Link to={`/job-requests/${data.id}/edit`}><Pencil size={14} /> Edit</Link></Button>
             )}
+            {data.canDelete && (
+              <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>
+                <Trash2 size={14} /> Delete
+              </Button>
+            )}
           </>
         )}
       />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          ["PSM owner", data.psmOwner?.fullName ?? "Unassigned"],
-          ["Openings", `${data.openings} · ${data.requiredCandidateCount} profiles required`],
+          ["Employee owner", data.psmOwner?.fullName ?? "Unassigned"],
+          ["Openings", `${data.openings} · ${data.requiredCandidateCount} profiles required${data.ctcLpa !== null ? ` · ${data.ctcLpa} LPA` : ""}`],
           ["Requested", day(data.requestDate)],
           [
             "Deadline",
@@ -164,7 +186,7 @@ export function JobRequestDetailPage() {
         </TabsContent>
 
         <TabsContent value="screening"><ScreeningTab jobRequestId={data.id} /></TabsContent>
-        <TabsContent value="pipeline"><PipelineTab jobRequestId={data.id} /></TabsContent>
+        <TabsContent value="pipeline"><PipelineTab jobRequestId={data.id} roleTitle={data.roleTitle} companyName={data.company.name} /></TabsContent>
         <TabsContent value="imports"><JobImports jobRequestId={data.id} /></TabsContent>
 
         <TabsContent value="ownership">
@@ -200,6 +222,15 @@ export function JobRequestDetailPage() {
 
       <ChangeStatusDialog job={data} open={changingStatus} onOpenChange={setChangingStatus} />
       <ReassignOwnerDialog job={data} open={reassigning} onOpenChange={setReassigning} />
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title="Permanently delete this job request?"
+        description={<>This permanently deletes <strong>{data.roleTitle}</strong>, its applications, shortlist decisions, pipeline data, and import files. Student profiles are not deleted. Audit history is retained. This cannot be undone.</>}
+        confirmLabel="Delete job request"
+        destructive
+        onConfirm={() => deleteJob.mutateAsync()}
+      />
     </div>
   );
 }

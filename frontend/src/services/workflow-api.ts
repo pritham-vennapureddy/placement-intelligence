@@ -15,7 +15,7 @@ import type {
   StageCandidateRow,
   ValueSuggestion,
 } from "../types/workflow";
-import { newIdempotencyKey, request, toQueryString } from "./api";
+import { newIdempotencyKey, request, requestBlob, toQueryString } from "./api";
 
 type Data<T> = { data: T };
 type PagedBody<K extends string, T> = { data: Record<K, T[]>; meta: PaginationMeta };
@@ -127,6 +127,9 @@ export const pipelineApi = {
 };
 
 export const importsApi = {
+  internalTemplate(): Promise<Blob> {
+    return requestBlob("/imports/templates/internal-standard.xlsx");
+  },
   async upload(jobRequestId: string, target: ImportTarget, file: File): Promise<{ batch: ImportBatch; duplicateOf: { batchCode: string; committedAt: string } | null }> {
     const body = new FormData();
     body.append("file", file);
@@ -134,6 +137,22 @@ export const importsApi = {
       `/job-requests/${jobRequestId}/imports?target=${target}`,
       { method: "POST", body, idempotencyKey: newIdempotencyKey() },
     )).data;
+  },
+  async fromGoogle(jobRequestId: string, target: ImportTarget, url: string, recruitmentBatchId?: string): Promise<{ batch: ImportBatch; duplicateOf: { batchCode: string; committedAt: string } | null }> {
+    return (await request<Data<{ batch: ImportBatch; duplicateOf: { batchCode: string; committedAt: string } | null }>>(
+      `/job-requests/${jobRequestId}/imports/google`,
+      json("POST", { target, url, ...(recruitmentBatchId ? { recruitmentBatchId } : {}) }, newIdempotencyKey()),
+    )).data;
+  },
+  /** Re-reads the last Google Sheet used for this job; `checked` means it was mapped and checked automatically. */
+  async refreshFromGoogle(jobRequestId: string, target: ImportTarget, recruitmentBatchId?: string): Promise<{ batch: ImportBatch; duplicateOf: { batchCode: string; committedAt: string } | null; checked: boolean }> {
+    return (await request<Data<{ batch: ImportBatch; duplicateOf: { batchCode: string; committedAt: string } | null; checked: boolean }>>(
+      `/job-requests/${jobRequestId}/imports/google/refresh`,
+      json("POST", { target, ...(recruitmentBatchId ? { recruitmentBatchId } : {}) }, newIdempotencyKey()),
+    )).data;
+  },
+  async googleInfo(): Promise<{ serviceAccountEmail: string | null }> {
+    return (await request<Data<{ serviceAccountEmail: string | null }>>("/imports/google-info")).data;
   },
   async listForJob(jobRequestId: string): Promise<ImportBatch[]> {
     return (await request<Data<{ batches: ImportBatch[] }>>(`/job-requests/${jobRequestId}/imports`)).data.batches;
@@ -145,8 +164,8 @@ export const importsApi = {
   async get(batchId: string): Promise<ImportBatch> {
     return (await request<Data<{ batch: ImportBatch }>>(`/imports/${batchId}`)).data.batch;
   },
-  async preview(batchId: string, sheet: string, limit = 12): Promise<{ rowNumber: number; cells: string[] }[]> {
-    return (await request<Data<{ rows: { rowNumber: number; cells: string[] }[] }>>(`/imports/${batchId}/preview${toQueryString({ sheet, limit: String(limit) })}`)).data.rows;
+  async preview(batchId: string, sheet: string, limit = 12): Promise<{ headerRow: number; rows: { rowNumber: number; cells: string[] }[] }> {
+    return (await request<Data<{ headerRow: number; rows: { rowNumber: number; cells: string[] }[] }>>(`/imports/${batchId}/preview${toQueryString({ sheet, limit: String(limit) })}`)).data;
   },
   async values(batchId: string, sheet: string, headerRow: number, columns: number[]): Promise<ValueSuggestion[]> {
     if (columns.length === 0) return [];
@@ -156,6 +175,12 @@ export const importsApi = {
   },
   async validate(batchId: string, mapping: unknown): Promise<ImportBatch> {
     return (await request<Data<{ batch: ImportBatch }>>(`/imports/${batchId}/validate`, json("POST", mapping))).data.batch;
+  },
+  async save(batchId: string, mapping: unknown): Promise<{ batch: ImportBatch; counts: Record<string, number> }> {
+    return (await request<Data<{ batch: ImportBatch; counts: Record<string, number> }>>(
+      `/imports/${batchId}/save`,
+      json("POST", mapping, newIdempotencyKey()),
+    )).data;
   },
   async rows(batchId: string, params: { page?: number; filter?: string; role?: string }): Promise<Paged<ImportRow>> {
     const response = await request<PagedBody<"rows", ImportRow>>(`/imports/${batchId}/rows${toQueryString({ ...params, page: num(params.page), pageSize: "50" })}`);
@@ -170,17 +195,25 @@ export const importsApi = {
   async cancel(batchId: string): Promise<ImportBatch> {
     return (await request<Data<{ batch: ImportBatch }>>(`/imports/${batchId}/cancel`, json("POST", {}))).data.batch;
   },
+  async delete(batchId: string): Promise<void> {
+    await request(`/imports/${batchId}`, { method: "DELETE", idempotencyKey: newIdempotencyKey() });
+  },
 };
 
 export const candidatesApi = {
-  async list(params: { page?: number; search?: string; category?: string; assessedPool?: string; productId?: string }): Promise<Paged<CandidateListItem>> {
-    const response = await request<PagedBody<"candidates", CandidateListItem>>(`/candidates${toQueryString({ ...params, page: num(params.page), pageSize: "25" })}`);
+  async list(params: { page?: number; search?: string; category?: string; poolType?: string; poolOnly?: boolean; productId?: string; jobRequestId?: string }): Promise<Paged<CandidateListItem>> {
+    const response = await request<PagedBody<"candidates", CandidateListItem>>(`/candidates${toQueryString({
+      ...params,
+      poolOnly: params.poolOnly ? "true" : undefined,
+      page: num(params.page),
+      pageSize: "25",
+    })}`);
     return { items: response.data.candidates, meta: response.meta };
   },
   async get(candidateId: string): Promise<CandidateDetail> {
     return (await request<Data<{ candidate: CandidateDetail }>>(`/candidates/${candidateId}`)).data.candidate;
   },
-  async update(candidateId: string, input: { assessedPool?: string; category?: string | null; reason?: string }): Promise<CandidateDetail> {
+  async update(candidateId: string, input: { category?: string | null; reason?: string }): Promise<CandidateDetail> {
     return (await request<Data<{ candidate: CandidateDetail }>>(`/candidates/${candidateId}`, json("PATCH", input))).data.candidate;
   },
 };

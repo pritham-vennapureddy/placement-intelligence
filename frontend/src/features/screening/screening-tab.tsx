@@ -1,34 +1,30 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
+  DECISION_STAGES,
   INTERNAL_STAGES,
+  SCREENING_SKIP_REASON_LABELS,
   STAGE_LABELS,
   STAGE_OUTCOME_LABELS,
   STAGE_OUTCOMES,
-  STAGE_STATUS_LABELS,
-  STAGE_STATUSES,
-  type DecisionStage,
   type InternalStage,
   type StageOutcome,
-  type StageStatus,
 } from "@placement/shared";
 import { format } from "date-fns";
-import { ChevronLeft, ChevronRight, History, Pencil, Plus, Search, UploadCloud, UserPlus, Users } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight, Search, UploadCloud, Users } from "lucide-react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { toast } from "sonner";
-import { FormField } from "../../components/form-field";
 import { EmptyState, ErrorState, LoadingRows } from "../../components/states";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
-import { Textarea } from "../../components/ui/textarea";
 import { usePermissions } from "../../hooks/use-permissions";
 import { screeningApi } from "../../services/workflow-api";
-import type { ScreeningProcess, StageCandidateRow, StageView } from "../../types/workflow";
+import type { ScreeningProcess, StageView } from "../../types/workflow";
 import { cn } from "../../utils/cn";
 import { CATEGORY_LABELS, OutcomeBadge, StageStatusBadge } from "./badges";
-import { AddCandidateDialog, AddToStageDialog, CarryOverDialog, DecisionDialog } from "./screening-dialogs";
+import { RefreshFromGoogleButton } from "../imports/refresh-button";
+import { RecruitmentBatchesPanel } from "./recruitment-batches";
 
 const ALL = "__all__";
 
@@ -52,85 +48,22 @@ function StageCard({ stage, total, active, onClick }: { stage: StageView; total:
   );
 }
 
-function StageSettings({ jobRequestId, stage, canEdit }: { jobRequestId: string; stage: StageView; canEdit: boolean }) {
-  const queryClient = useQueryClient();
-  const [status, setStatus] = useState<StageStatus>(stage.status);
-  const [statusRemarks, setStatusRemarks] = useState("");
-  const [nextPlannedDate, setNextPlannedDate] = useState(stage.nextPlannedDate?.slice(0, 10) ?? "");
-  const [remarks, setRemarks] = useState(stage.remarks ?? "");
-  const [showLog, setShowLog] = useState(false);
-  useEffect(() => {
-    setStatus(stage.status);
-    setStatusRemarks("");
-    setNextPlannedDate(stage.nextPlannedDate?.slice(0, 10) ?? "");
-    setRemarks(stage.remarks ?? "");
-  }, [stage]);
-  const dirty = status !== stage.status || nextPlannedDate !== (stage.nextPlannedDate?.slice(0, 10) ?? "") || remarks !== (stage.remarks ?? "");
-  const save = useMutation({
-    mutationFn: () => screeningApi.updateStage(jobRequestId, stage.stage, {
-      ...(status !== stage.status ? { status, ...(statusRemarks.trim() ? { statusRemarks: statusRemarks.trim() } : {}) } : {}),
-      nextPlannedDate: nextPlannedDate || null,
-      remarks: remarks.trim() || null,
-    }),
-    onSuccess: (process) => {
-      queryClient.setQueryData(["screening", jobRequestId], process);
-      toast.success("Stage updated");
-    },
-  });
-
+function StageTrackingSummary({ stage }: { stage: StageView }) {
   return (
-    <div className="space-y-3 border-b border-slate-100 p-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <FormField id="stage-status" label="Stage status" hint="Set by you; never changed automatically.">
-          <Select value={status} onValueChange={(value) => setStatus(value as StageStatus)} disabled={!canEdit}>
-            <SelectTrigger id="stage-status" className="h-9 w-full"><SelectValue /></SelectTrigger>
-            <SelectContent>{STAGE_STATUSES.map((value) => <SelectItem key={value} value={value}>{STAGE_STATUS_LABELS[value]}</SelectItem>)}</SelectContent>
-          </Select>
-        </FormField>
-        {status !== stage.status && (
-          <FormField id="stage-status-note" label="Why (optional)">
-            <Input id="stage-status-note" className="h-9" value={statusRemarks} onChange={(event) => setStatusRemarks(event.target.value)} />
-          </FormField>
-        )}
-        <FormField id="stage-next" label="Next planned date">
-          <Input id="stage-next" type="date" className="h-9" value={nextPlannedDate} onChange={(event) => setNextPlannedDate(event.target.value)} disabled={!canEdit} />
-        </FormField>
-        <FormField id="stage-remarks" label="Remarks" className={status !== stage.status ? "" : "lg:col-span-2"}>
-          <Input id="stage-remarks" className="h-9" value={remarks} onChange={(event) => setRemarks(event.target.value)} disabled={!canEdit} />
-        </FormField>
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
-        <span>
-          {stage.completedAt && `Completed ${format(new Date(stage.completedAt), "d MMM yyyy")} · `}
-          {stage.completionLog.length > 0 && (
-            <button type="button" className="inline-flex items-center gap-1 text-indigo-600 hover:underline" onClick={() => setShowLog(!showLog)}>
-              <History size={12} /> {showLog ? "Hide" : "Show"} status history ({stage.completionLog.length})
-            </button>
-          )}
-        </span>
-        {canEdit && <Button size="sm" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>{save.isPending ? "Saving…" : "Save stage"}</Button>}
-      </div>
-      {save.error && <p className="text-xs text-rose-600">{save.error.message}</p>}
-      {showLog && (
-        <ul className="space-y-1 rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
-          {stage.completionLog.map((entry) => (
-            <li key={entry.recordedAt}>
-              {format(new Date(entry.recordedAt), "d MMM yyyy, HH:mm")} · {STAGE_STATUS_LABELS[entry.fromStatus]} → {STAGE_STATUS_LABELS[entry.toStatus]}
-              {entry.recordedBy && ` · ${entry.recordedBy.fullName}`}{entry.remarks && ` · “${entry.remarks}”`}
-            </li>
-          ))}
-        </ul>
-      )}
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-slate-100 px-4 py-3 text-xs text-slate-500">
+      <StageStatusBadge status={stage.status} />
+      {stage.completedAt && <span>Updated {format(new Date(stage.completedAt), "d MMM yyyy")}</span>}
+      {stage.status === "NOT_CONDUCTED" && stage.skipReason && <span className="font-medium text-violet-700">Skipped: {SCREENING_SKIP_REASON_LABELS[stage.skipReason]}</span>}
+      {stage.remarks && <span>{stage.remarks}</span>}
+      {stage.nextPlannedDate && <span>Next: {format(new Date(stage.nextPlannedDate), "d MMM yyyy")}</span>}
     </div>
   );
 }
 
-function StageCandidates({ jobRequestId, stage, canEdit }: { jobRequestId: string; stage: InternalStage; canEdit: boolean }) {
+function StageCandidates({ jobRequestId, stage }: { jobRequestId: string; stage: InternalStage }) {
   const [page, setPage] = useState(1);
   const [outcome, setOutcome] = useState<StageOutcome | typeof ALL>(ALL);
   const [search, setSearch] = useState("");
-  const [editing, setEditing] = useState<StageCandidateRow | null>(null);
-  const [adding, setAdding] = useState(false);
   useEffect(() => { setPage(1); setOutcome(ALL); }, [stage]);
   const isTotal = stage === "TOTAL_APPLICATIONS";
   const rows = useQuery({
@@ -156,18 +89,17 @@ function StageCandidates({ jobRequestId, stage, canEdit }: { jobRequestId: strin
             </SelectContent>
           </Select>
         )}
-        {!isTotal && canEdit && <Button size="sm" variant="outline" className="ml-auto" onClick={() => setAdding(true)}><Plus size={14} /> Add candidates to this stage</Button>}
       </div>
       {rows.isPending ? <LoadingRows /> : rows.error ? <ErrorState error={rows.error} onRetry={() => void rows.refetch()} /> : rows.data.items.length === 0 ? (
         <EmptyState icon={Users} title={isTotal ? "No applicants yet" : "Nobody at this stage yet"}
-          description={isTotal ? "Import the internal sheet, add candidates from an earlier drive, or add one by hand." : "Import a sheet for this stage or add candidates by hand."} />
+          description="Import or refresh the job's Google Sheet to update its applicants and stage results." />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50/60 text-left text-xs text-slate-500">
               <tr>
                 <th className="px-4 py-2">Candidate</th><th className="px-4 py-2">Product</th>
-                {isTotal ? <th className="px-4 py-2">Applied</th> : <><th className="px-4 py-2">Outcome</th><th className="px-4 py-2">Priority</th><th className="px-4 py-2">Scores</th><th className="px-4 py-2">Reason / remarks</th></>}
+                {isTotal ? <th className="px-4 py-2">Applied</th> : <><th className="px-4 py-2">Outcome</th><th className="px-4 py-2">Priority</th><th className="px-4 py-2">Scores</th><th className="px-4 py-2">{stage === "FINAL_SHORTLIST" ? "Selection basis / remarks" : "Reason / remarks"}</th></>}
                 <th className="px-4 py-2" />
               </tr>
             </thead>
@@ -177,6 +109,11 @@ function StageCandidates({ jobRequestId, stage, canEdit }: { jobRequestId: strin
                   <td className="px-4 py-2.5">
                     <Link to={`/candidates/${row.application.candidate.id}`} className="font-medium text-slate-800 hover:text-indigo-700">{row.application.candidate.fullName}</Link>
                     <p className="text-xs text-slate-400">{[row.application.candidate.mobile, row.application.candidate.email].filter(Boolean).join(" · ")}</p>
+                    {!!row.application.candidate.poolMemberships?.length && (
+                      <p className="mt-1 text-[10px] text-indigo-600">
+                        {row.application.candidate.poolMemberships.map(({ poolType }) => poolType).join(" · ")} pool
+                      </p>
+                    )}
                   </td>
                   <td className="px-4 py-2.5 text-xs text-slate-600">
                     {row.application.product?.name ?? "—"}
@@ -192,12 +129,14 @@ function StageCandidates({ jobRequestId, stage, canEdit }: { jobRequestId: strin
                       <td className="px-4 py-2.5">{row.outcome && <OutcomeBadge outcome={row.outcome} />}<p className="mt-1 text-[11px] text-slate-400">{row.source === "IMPORT" ? "from sheet" : row.decidedBy ? `by ${row.decidedBy.fullName}` : ""}</p></td>
                       <td className="px-4 py-2.5 text-xs">{row.priority ?? "—"}</td>
                       <td className="px-4 py-2.5 text-xs text-slate-600">{row.techScore !== null && row.techScore !== undefined ? `Tech ${row.techScore}` : ""}{row.commScore !== null && row.commScore !== undefined ? ` · Comm ${row.commScore}` : ""}</td>
-                      <td className="max-w-64 px-4 py-2.5 text-xs text-slate-600">{[row.rejectionReason, row.remarks].filter(Boolean).join(" · ")}</td>
+                      <td className="max-w-64 px-4 py-2.5 text-xs text-slate-600">
+                        {row.selectionBasis && <p className="font-medium text-slate-700">{row.selectionBasis}</p>}
+                        {/* Remarks already shown as the selection basis are not repeated. */}
+                        {[row.rejectionReason, row.remarks !== row.selectionBasis ? row.remarks : null].filter(Boolean).join(" · ")}
+                      </td>
                     </>
                   )}
-                  <td className="px-4 py-2.5 text-right">
-                    {!isTotal && canEdit && <Button size="icon-sm" variant="ghost" aria-label="Edit decision" onClick={() => setEditing(row)}><Pencil size={14} /></Button>}
-                  </td>
+                  <td className="px-4 py-2.5 text-right" />
                 </tr>
               ))}
             </tbody>
@@ -213,80 +152,186 @@ function StageCandidates({ jobRequestId, stage, canEdit }: { jobRequestId: strin
           </div>
         </div>
       )}
-      {!isTotal && (
-        <>
-          <DecisionDialog jobRequestId={jobRequestId} stage={stage as DecisionStage} row={editing} onOpenChange={(open) => !open && setEditing(null)} />
-          <AddToStageDialog jobRequestId={jobRequestId} stage={stage as DecisionStage} open={adding} onOpenChange={setAdding} />
-        </>
-      )}
     </div>
   );
 }
 
-function ShortlistingNotes({ jobRequestId, process, canEdit }: { jobRequestId: string; process: ScreeningProcess; canEdit: boolean }) {
-  const queryClient = useQueryClient();
-  const [notes, setNotes] = useState(process.shortlistingNotes ?? "");
-  useEffect(() => setNotes(process.shortlistingNotes ?? ""), [process.shortlistingNotes]);
-  const save = useMutation({
-    mutationFn: () => screeningApi.updateNotes(jobRequestId, notes.trim() || null),
-    onSuccess: (next) => {
-      queryClient.setQueryData(["screening", jobRequestId], next);
-      toast.success("Shortlisting method saved");
-    },
-  });
+const ANALYTICS_STAGES = ["TOTAL_APPLICATIONS", "RESUME_SHORTLIST", "SCREENING_SHORTLIST", "ASSIGNMENT_SHORTLIST", "FINAL_SHORTLIST"] as const;
+type AnalyticsStage = (typeof ANALYTICS_STAGES)[number];
+type StageCell = (count: number, base: number) => ReactNode;
+
+function share(count: number, of: number) {
+  return of > 0 && count > 0 ? `${Math.round((count / of) * 1000) / 10}%` : "";
+}
+
+function SheetAnalytics({ process }: { process: ScreeningProcess }) {
+  const analytics = process.stageAnalytics;
+  const stageHeaders = ANALYTICS_STAGES.map((stage) => ({ stage, code: STAGE_LABELS[stage].code }));
+  const categories = (["ACADEMY", "ACADEMY_INTENSIVE", "EXTERNAL", null] as const).map((category) => {
+    const products = analytics.byProduct.filter((product) => product.category === category);
+    const totals = Object.fromEntries(ANALYTICS_STAGES.map((stage) => [stage, products.reduce((sum, product) => sum + product.stages[stage], 0)])) as Record<AnalyticsStage, number>;
+    return { category, label: category ? CATEGORY_LABELS[category] : "Product unknown", products, totals };
+  }).filter(({ products }) => products.length > 0);
+  const grandTotal = Object.fromEntries(ANALYTICS_STAGES.map((stage) => [stage, categories.reduce((sum, group) => sum + group.totals[stage], 0)])) as Record<AnalyticsStage, number>;
+  const pool = analytics.assessedPool;
+  const poolLabels = { BUCKET: "Bucket pool", TR: "TR pool", COMPETENCY: "Competency pool" } as const;
+  const syncedPool = process.poolProgress.some(({ applicants }) => applicants > 0);
+
+  const cell: StageCell = (count, base) => (
+    <td className="px-2 py-2 text-right tabular-nums">
+      {count}
+      {base > 0 && count > 0 && <span className="ml-1 text-[10px] text-slate-400">{share(count, base)}</span>}
+    </td>
+  );
+
   return (
-    <Card className="space-y-2 p-4">
-      <p className="text-sm font-semibold text-slate-800">Shortlisting method followed</p>
-      <p className="text-xs text-slate-400">How candidates were shortlisted for this company: criteria, tests, who screened.</p>
-      <Textarea rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} disabled={!canEdit} placeholder="e.g. Resume screen on projects and GitHub, then a 20-minute technical call." />
-      {canEdit && notes !== (process.shortlistingNotes ?? "") && (
-        <div className="flex justify-end"><Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>Save</Button></div>
-      )}
-    </Card>
+    <div className="space-y-4">
+      <Card className="p-4">
+        <h2 className="text-sm font-semibold text-slate-800">Applicants by product at each stage</h2>
+        <p className="mt-1 text-xs text-slate-500">TA counts every applicant; RS, SC, AS and SP count the candidates selected at that stage. Percentages are of the row's TA.</p>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[560px] text-left text-xs">
+            <thead className="text-slate-400">
+              <tr>
+                <th className="py-2 pr-2 font-medium">Product</th>
+                {stageHeaders.map(({ stage, code }) => <th key={stage} className="px-2 py-2 text-right font-medium">{code}</th>)}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {categories.map((group) => <CategoryRows key={group.label} group={group} cell={cell} />)}
+              <tr className="font-semibold text-slate-900">
+                <td className="py-2 pr-2">Total</td>
+                {ANALYTICS_STAGES.map((stage) => <Fragment key={stage}>{cell(grandTotal[stage], stage === "TOTAL_APPLICATIONS" ? 0 : grandTotal.TOTAL_APPLICATIONS)}</Fragment>)}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <h2 className="text-sm font-semibold text-slate-800">Assessed-pool applicants</h2>
+        {pool.poolSize === 0 ? (
+          <p className="mt-3 rounded-lg bg-slate-50 p-3 text-xs text-slate-500">No assessed-pool data is loaded yet. Upload it under Candidates → Assessed pool to see how pool students progress here.</p>
+        ) : (
+          <>
+            <p className="mt-1 text-xs text-slate-500">
+              {pool.stages.TOTAL_APPLICATIONS.inPool} of {grandTotal.TOTAL_APPLICATIONS} applicants are in the assessed pool ({pool.poolSize} assessed students), matched by mobile number. Each row counts the pool students who reached that stage.
+            </p>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[640px] text-left text-xs">
+                <thead className="text-slate-400">
+                  <tr>
+                    <th className="py-2 pr-2 font-medium">Stage</th>
+                    <th className="px-2 py-2 text-right font-medium">All applicants</th>
+                    <th className="px-2 py-2 text-right font-medium">From pool</th>
+                    {(["A", "B", "C", "D"] as const).map((tier) => <th key={tier} className="px-2 py-2 text-right font-medium">Bucket {tier}</th>)}
+                    <th className="px-2 py-2 text-right font-medium">No bucket</th>
+                    <th className="px-2 py-2 text-right font-medium">TR cleared</th>
+                    <th className="px-2 py-2 text-right font-medium">Competency pool</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {stageHeaders.map(({ stage, code }) => {
+                    const counts = pool.stages[stage];
+                    return (
+                      <tr key={stage}>
+                        <td className="py-2 pr-2 font-medium text-slate-700">{code} · {STAGE_LABELS[stage].label}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{grandTotal[stage]}</td>
+                        {cell(counts.inPool, grandTotal[stage])}
+                        {(["A", "B", "C", "D"] as const).map((tier) => <td key={tier} className="px-2 py-2 text-right tabular-nums">{counts.buckets[tier]}</td>)}
+                        <td className="px-2 py-2 text-right tabular-nums">{counts.buckets.other}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{counts.trCleared}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{counts.competencyPool}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        {syncedPool && (
+          <div className="mt-4 overflow-x-auto">
+            <p className="text-xs font-medium text-slate-600">Synced pool tabs (Bucket, TR, Competency UID)</p>
+            <table className="mt-2 w-full min-w-[480px] text-left text-xs">
+              <thead className="text-slate-400">
+                <tr>
+                  <th className="py-2 pr-2 font-medium">Pool</th>
+                  <th className="px-2 py-2 font-medium">Applied</th>
+                  {DECISION_STAGES.map((stage) => <th key={stage} className="px-2 py-2 font-medium">{STAGE_LABELS[stage].code} S/R</th>)}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {process.poolProgress.map((entry) => (
+                  <tr key={entry.poolType}>
+                    <td className="py-2 pr-2 font-medium text-slate-700">{poolLabels[entry.poolType]}</td>
+                    <td className="px-2 py-2">{entry.applicants}</td>
+                    {DECISION_STAGES.map((stage) => <td key={stage} className="px-2 py-2">{entry.stages[stage]?.selected ?? 0} / {entry.stages[stage]?.rejected ?? 0}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function CategoryRows({ group, cell }: {
+  group: { label: string; products: ScreeningProcess["stageAnalytics"]["byProduct"]; totals: Record<AnalyticsStage, number> };
+  cell: StageCell;
+}) {
+  // A category with one product of the same name (e.g. External) needs no sub-row.
+  const single = group.products.length === 1 && group.products[0]!.name === group.label;
+  return (
+    <>
+      <tr className="bg-slate-50/70 font-semibold text-slate-800">
+        <td className="py-2 pr-2">{group.label}</td>
+        {ANALYTICS_STAGES.map((stage) => <Fragment key={stage}>{cell(group.totals[stage], stage === "TOTAL_APPLICATIONS" ? 0 : group.totals.TOTAL_APPLICATIONS)}</Fragment>)}
+      </tr>
+      {!single && group.products.map((product) => (
+        <tr key={product.productId ?? "unknown"} className="text-slate-600">
+          <td className="py-2 pl-4 pr-2">{product.name}</td>
+          {ANALYTICS_STAGES.map((stage) => <Fragment key={stage}>{cell(product.stages[stage], stage === "TOTAL_APPLICATIONS" ? 0 : product.stages.TOTAL_APPLICATIONS)}</Fragment>)}
+        </tr>
+      ))}
+    </>
   );
 }
 
 export function ScreeningTab({ jobRequestId }: { jobRequestId: string }) {
   const { can } = usePermissions();
   const [stage, setStage] = useState<InternalStage>("TOTAL_APPLICATIONS");
-  const [carryOver, setCarryOver] = useState(false);
-  const [addingCandidate, setAddingCandidate] = useState(false);
   const process = useQuery({ queryKey: ["screening", jobRequestId], queryFn: () => screeningApi.get(jobRequestId) });
 
   if (process.isPending) return <Card><LoadingRows rows={5} /></Card>;
   if (process.error) return <Card><ErrorState error={process.error} onRetry={() => void process.refetch()} /></Card>;
   const data = process.data;
   const current = data.stages.find((entry) => entry.stage === stage)!;
-  const canEdit = data.canEdit;
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-end gap-2">
+        <RefreshFromGoogleButton jobRequestId={jobRequestId} target="INTERNAL_SCREENING" />
         {can("import:run") && (
-          <Button size="sm" asChild><Link to={`/job-requests/${jobRequestId}/imports/new?target=INTERNAL_SCREENING`}><UploadCloud size={14} /> Import internal sheet</Link></Button>
-        )}
-        {can("candidate:write") && (
-          <>
-            <Button size="sm" variant="outline" onClick={() => setCarryOver(true)}><Users size={14} /> Add from an earlier drive</Button>
-            <Button size="sm" variant="outline" onClick={() => setAddingCandidate(true)}><UserPlus size={14} /> Add a candidate</Button>
-          </>
+          <Button size="sm" asChild><Link to={`/job-requests/${jobRequestId}/imports/new?target=INTERNAL_SCREENING`}><UploadCloud size={14} /> Read internal Google Sheet</Link></Button>
         )}
       </div>
+      <RecruitmentBatchesPanel jobRequestId={jobRequestId} />
+      <SheetAnalytics process={data} />
       <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {INTERNAL_STAGES.map((key) => (
           <StageCard key={key} stage={data.stages.find((entry) => entry.stage === key)!} total={data.totalApplications} active={key === stage} onClick={() => setStage(key)} />
         ))}
       </div>
-      <ShortlistingNotes jobRequestId={jobRequestId} process={data} canEdit={canEdit} />
       <Card className="overflow-hidden">
         <div className="border-b border-slate-100 px-4 pt-4">
           <p className="text-sm font-semibold text-slate-800">{STAGE_LABELS[stage].code} · {STAGE_LABELS[stage].label}</p>
         </div>
-        <StageSettings jobRequestId={jobRequestId} stage={current} canEdit={canEdit} />
-        <StageCandidates jobRequestId={jobRequestId} stage={stage} canEdit={canEdit} />
+        <StageTrackingSummary stage={current} />
+        <StageCandidates jobRequestId={jobRequestId} stage={stage} />
       </Card>
-      <CarryOverDialog jobRequestId={jobRequestId} open={carryOver} onOpenChange={setCarryOver} />
-      <AddCandidateDialog jobRequestId={jobRequestId} open={addingCandidate} onOpenChange={setAddingCandidate} />
     </div>
   );
 }

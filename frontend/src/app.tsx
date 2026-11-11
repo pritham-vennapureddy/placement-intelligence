@@ -13,15 +13,18 @@ import { CompaniesPage } from "./features/companies/companies-page";
 import { CompanyDetailPage } from "./features/companies/company-detail-page";
 import { JobRequestDetailPage } from "./features/job-requests/job-request-detail-page";
 import { JobRequestFormPage } from "./features/job-requests/job-request-form-page";
+import { AssessedPoolPage } from "./features/candidates/assessed-pool-page";
 import { ImportBatchPage } from "./features/imports/import-batch-page";
 import { ImportUploadPage } from "./features/imports/import-upload-page";
 import { JobRequestsPage } from "./features/job-requests/job-requests-page";
 import { ImportCentrePage, PipelineOverviewPage, ScreeningOverviewPage } from "./features/pipeline/progress-pages";
 import { DashboardPage } from "./pages/dashboard-page";
+import { GuidancePage } from "./features/tracking/guidance-page";
+import { InsightsPage } from "./features/tracking/insights-page";
+import { MyWorkPage } from "./features/tracking/my-work-page";
 import { LoginPage } from "./pages/login-page";
-import { MODULE_OUTLINES, ModulePlaceholderPage } from "./pages/module-placeholder-page";
 import { SheetsPage } from "./pages/sheets-page";
-import { TeamsPage } from "./pages/teams-page";
+import { UserAccessPage } from "./pages/user-access-page";
 import { NAV_ITEMS } from "./routes/navigation";
 import { RequirePermission } from "./routes/require-permission";
 
@@ -29,6 +32,7 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
+      staleTime: 15_000,
       refetchOnWindowFocus: false,
     },
   },
@@ -36,25 +40,24 @@ const queryClient = new QueryClient({
 
 const pages: Record<string, ReactNode> = {
   "/": <DashboardPage />,
-  "/psm-workspace": <DashboardPage />,
+  "/my-work": <MyWorkPage />,
+  "/insights": <InsightsPage />,
   "/companies": <CompaniesPage />,
   "/job-requests": <JobRequestsPage />,
   "/candidates": <CandidatesPage />,
-  "/assessed-pool": <CandidatesPage assessedOnly />,
+  "/assessed-pool": <AssessedPoolPage />,
   "/screening": <ScreeningOverviewPage />,
   "/pipeline": <PipelineOverviewPage />,
-  "/psm-operations": <ModulePlaceholderPage module={MODULE_OUTLINES.psmOperations} />,
-  "/rsa": <ModulePlaceholderPage module={MODULE_OUTLINES.rsa} />,
   "/imports": <ImportCentrePage />,
   "/sheets": <SheetsPage />,
-  "/reports": <ModulePlaceholderPage module={MODULE_OUTLINES.reports} />,
-  "/teams": <TeamsPage />,
+  "/users": <UserAccessPage />,
 };
 
 const DETAIL_ROUTES: { path: string; permission: Permission; element: ReactNode }[] = [
   { path: "/companies/:companyId", permission: "company:read", element: <CompanyDetailPage /> },
   { path: "/candidates/:candidateId", permission: "candidate:read", element: <CandidateDetailPage /> },
   { path: "/imports/:batchId", permission: "job:read", element: <ImportBatchPage /> },
+  { path: "/guidance/:jobRequestId", permission: "pipeline:write", element: <GuidancePage /> },
   { path: "/job-requests/:jobRequestId/imports/new", permission: "import:run", element: <ImportUploadPage /> },
   { path: "/job-requests/new", permission: "job:write", element: <JobRequestFormPage /> },
   { path: "/job-requests/:jobRequestId", permission: "job:read", element: <JobRequestDetailPage /> },

@@ -28,12 +28,15 @@ import { Textarea } from "../../components/ui/textarea";
 import { usePermissions } from "../../hooks/use-permissions";
 import { pipelineApi } from "../../services/workflow-api";
 import type { Nomination, Round } from "../../types/workflow";
+import { RefreshFromGoogleButton } from "../imports/refresh-button";
+import { JobTrackingPanel } from "../tracking/job-tracking-panel";
 import { InterviewBadge, PipelineBadge } from "../screening/badges";
 
 function useRefresh(jobRequestId: string) {
   const queryClient = useQueryClient();
   return () => Promise.all([
     queryClient.invalidateQueries({ queryKey: ["pipeline", jobRequestId] }),
+    queryClient.invalidateQueries({ queryKey: ["tracking", jobRequestId] }),
     queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
   ]);
 }
@@ -255,7 +258,7 @@ function WithdrawDialog({ jobRequestId, nomination, onClose }: { jobRequestId: s
   );
 }
 
-export function PipelineTab({ jobRequestId }: { jobRequestId: string }) {
+export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: { jobRequestId: string; roleTitle?: string; companyName?: string }) {
   const { can } = usePermissions();
   const [nominating, setNominating] = useState(false);
   const [interview, setInterview] = useState<{ nomination: Nomination; round: Round } | null>(null);
@@ -273,9 +276,11 @@ export function PipelineTab({ jobRequestId }: { jobRequestId: string }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-end gap-2">
+        <RefreshFromGoogleButton jobRequestId={jobRequestId} target="COMPANY_PIPELINE" />
         {can("import:run") && <Button size="sm" asChild><Link to={`/job-requests/${jobRequestId}/imports/new?target=COMPANY_PIPELINE`}><UploadCloud size={14} /> Import company sheet</Link></Button>}
         {canEdit && <Button size="sm" variant="outline" onClick={() => setNominating(true)} disabled={eligibleToNominate === 0}><Send size={14} /> Nominate candidates ({eligibleToNominate} eligible)</Button>}
       </div>
+      <JobTrackingPanel jobRequestId={jobRequestId} roleTitle={roleTitle} companyName={companyName} rounds={rounds.map(({ id, name }) => ({ id, name }))} />
       <RoundsCard jobRequestId={jobRequestId} rounds={rounds} canEdit={canEdit} />
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">

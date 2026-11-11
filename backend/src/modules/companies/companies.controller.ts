@@ -2,9 +2,13 @@ import type { Request, Response } from "express";
 import { sendCreated, sendData } from "../../utils/http.js";
 import { auditContextFrom } from "../audit/audit.service.js";
 import { companiesService } from "./companies.service.js";
-import type { CreateCompanyInput, ListCompaniesQuery, UpdateCompanyInput } from "./companies.validators.js";
+import type { CompanyOptionsQuery, CreateCompanyInput, ListCompaniesQuery, UpdateCompanyInput } from "./companies.validators.js";
 
 export const companiesController = {
+  async options(request: Request, response: Response): Promise<void> {
+    sendData(response, { companies: await companiesService.options(request.user!, request.query as unknown as CompanyOptionsQuery) });
+  },
+
   async list(request: Request, response: Response): Promise<void> {
     const { companies, meta } = await companiesService.list(request.user!, request.query as unknown as ListCompaniesQuery);
     sendData(response, { companies }, 200, meta);
@@ -27,5 +31,15 @@ export const companiesController = {
       auditContextFrom(request),
     );
     sendData(response, { company });
+  },
+
+  async delete(request: Request, response: Response): Promise<void> {
+    sendData(response, {
+      company: await companiesService.delete(
+        request.user!,
+        request.params.companyId as string,
+        auditContextFrom(request),
+      ),
+    });
   },
 };

@@ -46,6 +46,8 @@ const jobFields = {
   techStack: z.array(z.string().trim().min(1).max(80)).min(1, "Add at least one skill.").max(30),
   openings: z.number().int().min(1).max(10000),
   requiredCandidateCount: z.number().int().min(1).max(100000),
+  /** Offered CTC in LPA; the upper bound when the company gives a range. */
+  ctcLpa: z.number().positive().max(500).nullable().optional(),
   description: z.string().trim().max(10000),
   requestDate: isoDate,
   deadline: isoDate.nullable().optional(),
@@ -88,8 +90,45 @@ export const reassignOwnerSchema = z.object({
   notes: z.string().trim().max(1000).optional(),
 });
 
+const tabName = z.string().trim().max(200).transform((value) => value || null).nullable().optional();
+
+/** Which tab of the internal sheet is TA / RS / SC / AS / SP for this batch. */
+export const internalTabsSchema = z
+  .object({ TA: tabName, RS: tabName, SC: tabName, AS: tabName, SP: tabName })
+  .refine((tabs) => {
+    const names = Object.values(tabs).filter((name): name is string => Boolean(name)).map((name) => name.toLowerCase());
+    return new Set(names).size === names.length;
+  }, { message: "Each tab can be used for only one stage." })
+  .nullable()
+  .optional();
+
+const recruitmentBatchFields = {
+  name: z.string().trim().min(2).max(100),
+  openings: z.number().int().min(1).max(10000).nullable().optional(),
+  startsAt: isoDate.nullable().optional(),
+  endsAt: isoDate.nullable().optional(),
+  /** Only when this batch lives in a different workbook; otherwise the job request's sheet is used. */
+  internalSheetUrl: optionalUrl,
+  companySheetUrl: optionalUrl,
+  internalTabs: internalTabsSchema,
+};
+const datesInOrder = (value: { startsAt?: string | null | undefined; endsAt?: string | null | undefined }) => !value.startsAt || !value.endsAt || value.endsAt >= value.startsAt;
+const datesMessage = { message: "The end date cannot be before the batch start date.", path: ["endsAt"] };
+
+export const createRecruitmentBatchSchema = z.object(recruitmentBatchFields).refine(datesInOrder, datesMessage);
+
+export const updateRecruitmentBatchSchema = z
+  .object({ ...recruitmentBatchFields, name: recruitmentBatchFields.name.optional(), status: z.enum(["ACTIVE", "CLOSED"]).optional() })
+  .refine(datesInOrder, datesMessage)
+  .refine((value) => Object.values(value).some((field) => field !== undefined), { message: "Nothing to update." });
+
+export const recruitmentBatchParamsSchema = z.object({ jobRequestId: z.uuid(), batchId: z.uuid() });
+export const internalSheetTabsQuerySchema = z.object({ batchId: z.uuid().optional(), url: z.url().max(500).optional() });
+
 export type ListJobRequestsQuery = z.infer<typeof listJobRequestsQuerySchema>;
 export type CreateJobRequestInput = z.infer<typeof createJobRequestSchema>;
 export type UpdateJobRequestInput = z.infer<typeof updateJobRequestSchema>;
 export type ChangeStatusInput = z.infer<typeof changeStatusSchema>;
 export type ReassignOwnerInput = z.infer<typeof reassignOwnerSchema>;
+export type CreateRecruitmentBatchInput = z.infer<typeof createRecruitmentBatchSchema>;
+export type UpdateRecruitmentBatchInput = z.infer<typeof updateRecruitmentBatchSchema>;

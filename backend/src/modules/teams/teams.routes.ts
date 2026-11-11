@@ -4,25 +4,19 @@ import { requirePermission } from "../../middleware/authorize.js";
 import { idempotency } from "../../middleware/idempotency.js";
 import { validateBody, validateParams } from "../../middleware/validate.js";
 import { teamsController } from "./teams.controller.js";
-import {
-  createTeamSchema,
-  createUserSchema,
-  teamIdParamsSchema,
-  teamMembersSchema,
-} from "./teams.validators.js";
+import { createUserSchema, resetPasswordSchema, updateUserSchema, userParamsSchema } from "./teams.validators.js";
 
 export const teamsRouter = Router();
 
-teamsRouter.use(authenticate, idempotency);
+// No router-wide idempotency: replayed responses are stored, and the reset-password
+// response carries a plaintext password that must never be persisted.
+teamsRouter.use(authenticate);
 
-teamsRouter.get("/", teamsController.list);
-teamsRouter.get("/users", requirePermission("user:manage"), teamsController.listUsers);
-teamsRouter.post("/", requirePermission("team:manage"), validateBody(createTeamSchema), teamsController.create);
-teamsRouter.post("/users", requirePermission("user:manage"), validateBody(createUserSchema), teamsController.createUser);
-teamsRouter.put(
-  "/:teamId/members",
-  requirePermission("team:manage"),
-  validateParams(teamIdParamsSchema),
-  validateBody(teamMembersSchema),
-  teamsController.updateMembers,
-);
+const manage = requirePermission("user:manage");
+const withUser = validateParams(userParamsSchema);
+
+teamsRouter.get("/users", manage, teamsController.listUsers);
+teamsRouter.post("/users", manage, idempotency, validateBody(createUserSchema), teamsController.createUser);
+teamsRouter.patch("/users/:userId", manage, idempotency, withUser, validateBody(updateUserSchema), teamsController.updateUser);
+teamsRouter.post("/users/:userId/reset-password", manage, withUser, validateBody(resetPasswordSchema), teamsController.resetPassword);
+teamsRouter.delete("/users/:userId", manage, idempotency, withUser, teamsController.deleteUser);

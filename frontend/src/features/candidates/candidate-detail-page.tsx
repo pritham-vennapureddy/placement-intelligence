@@ -14,7 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/ta
 import { usePermissions } from "../../hooks/use-permissions";
 import { candidatesApi } from "../../services/workflow-api";
 import type { CandidateDetail } from "../../types/workflow";
-import { ASSESSED_LABELS, CATEGORY_LABELS, InterviewBadge, OutcomeBadge, PipelineBadge } from "../screening/badges";
+import { CATEGORY_LABELS, InterviewBadge, OutcomeBadge, PipelineBadge } from "../screening/badges";
 
 function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -87,7 +87,7 @@ export function CandidateDetailPage() {
   const queryClient = useQueryClient();
   const candidate = useQuery({ queryKey: ["candidates", candidateId], queryFn: () => candidatesApi.get(candidateId) });
   const update = useMutation({
-    mutationFn: (input: { assessedPool?: string; category?: string | null }) => candidatesApi.update(candidateId, input),
+    mutationFn: (input: { category?: string | null }) => candidatesApi.update(candidateId, input),
     onSuccess: (next) => {
       queryClient.setQueryData(["candidates", candidateId], next);
       toast.success("Candidate updated");
@@ -137,14 +137,7 @@ export function CandidateDetailPage() {
                   </Select>
                 ) : data.category ? CATEGORY_LABELS[data.category] : null}
               </Detail>
-              <Detail label="Assessed pool">
-                {canEdit ? (
-                  <Select value={data.assessedPool} onValueChange={(value) => update.mutate({ assessedPool: value })}>
-                    <SelectTrigger className="h-9 w-40"><SelectValue /></SelectTrigger>
-                    <SelectContent>{Object.entries(ASSESSED_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
-                  </Select>
-                ) : ASSESSED_LABELS[data.assessedPool]}
-              </Detail>
+              <Detail label="Assessed pools">{data.poolMemberships?.map(({ poolType }) => poolType).join(", ") || "—"}</Detail>
             </dl>
           </Card>
         </TabsContent>

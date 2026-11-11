@@ -6,11 +6,15 @@ import { validateBody, validateParams, validateQuery } from "../../middleware/va
 import { jobRequestsController } from "./job-requests.controller.js";
 import {
   changeStatusSchema,
+  createRecruitmentBatchSchema,
   createJobRequestSchema,
+  internalSheetTabsQuerySchema,
   jobRequestIdParamsSchema,
   listJobRequestsQuerySchema,
   reassignOwnerSchema,
+  recruitmentBatchParamsSchema,
   updateJobRequestSchema,
+  updateRecruitmentBatchSchema,
 } from "./job-requests.validators.js";
 
 export const jobRequestsRouter = Router();
@@ -23,6 +27,20 @@ jobRequestsRouter.get("/", validateQuery(listJobRequestsQuerySchema), jobRequest
 jobRequestsRouter.get("/progress", jobRequestsController.progress);
 jobRequestsRouter.post("/", requirePermission("job:write"), validateBody(createJobRequestSchema), jobRequestsController.create);
 jobRequestsRouter.get("/:jobRequestId", withId, jobRequestsController.get);
+jobRequestsRouter.post("/:jobRequestId/recruitment-batches", requirePermission("job:write"), withId, validateBody(createRecruitmentBatchSchema), jobRequestsController.createRecruitmentBatch);
+jobRequestsRouter.patch(
+  "/:jobRequestId/recruitment-batches/:batchId",
+  requirePermission("job:write"),
+  validateParams(recruitmentBatchParamsSchema),
+  validateBody(updateRecruitmentBatchSchema),
+  jobRequestsController.updateRecruitmentBatch,
+);
+jobRequestsRouter.get(
+  "/:jobRequestId/internal-sheet/tabs",
+  withId,
+  validateQuery(internalSheetTabsQuerySchema),
+  jobRequestsController.internalSheetTabs,
+);
 jobRequestsRouter.patch(
   "/:jobRequestId",
   requirePermission("job:write"),
@@ -30,6 +48,7 @@ jobRequestsRouter.patch(
   validateBody(updateJobRequestSchema),
   jobRequestsController.update,
 );
+jobRequestsRouter.delete("/:jobRequestId", requirePermission("job:assign"), withId, jobRequestsController.delete);
 jobRequestsRouter.post(
   "/:jobRequestId/status",
   requirePermission("job:write"),

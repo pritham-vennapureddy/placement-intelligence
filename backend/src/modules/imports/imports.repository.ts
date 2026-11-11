@@ -18,8 +18,11 @@ export const batchSummarySelect = {
   sourceType: true,
   status: true,
   jobRequestId: true,
+  recruitmentBatchId: true,
   sourceFileName: true,
-  fileSize: true,
+  sourceSpreadsheetId: true,
+  sourceUrl: true,
+  snapshotSize: true,
   sheets: true,
   mapping: true,
   summary: true,
@@ -27,30 +30,32 @@ export const batchSummarySelect = {
   committedAt: true,
   importedBy: { select: { id: true, fullName: true } },
   jobRequest: { select: { id: true, jobId: true, roleTitle: true, company: { select: { id: true, name: true } } } },
+  recruitmentBatch: { select: { id: true, name: true, sequence: true } },
 } satisfies Prisma.ImportBatchSelect;
 
 export const importsRepository = {
   createBatch(data: {
     target: ImportTarget;
-    sourceType: "EXCEL" | "CSV";
+    sourceType: "EXCEL" | "CSV" | "GOOGLE_SHEETS";
+    sourceSpreadsheetId?: string | null;
+    sourceUrl?: string | null;
     jobRequestId: string;
+    recruitmentBatchId: string;
     sourceFileName: string;
     sourceChecksum: string;
-    fileSize: number;
+    snapshotSize: number;
+    sourceSnapshot: Prisma.InputJsonValue;
     sheets: Prisma.InputJsonValue;
     importedById: string;
-    bytes: Buffer;
-    contentType: string;
     mapping: Prisma.InputJsonValue | null;
   }) {
     const batchCode = `IMP-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${randomUUID().slice(0, 6).toUpperCase()}`;
-    const { bytes, contentType, mapping, ...rest } = data;
+    const { mapping, ...rest } = data;
     return prisma.importBatch.create({
       data: {
         ...rest,
         batchCode,
         ...(mapping ? { mapping } : {}),
-        file: { create: { bytes: new Uint8Array(bytes), contentType } },
       },
       select: batchSummarySelect,
     });
@@ -60,29 +65,63 @@ export const importsRepository = {
     return prisma.importBatch.findUnique({ where: { id }, select: batchSummarySelect });
   },
 
-  async findFile(batchId: string) {
-    const file = await prisma.importFile.findUnique({ where: { batchId }, select: { bytes: true } });
-    return file ? Buffer.from(file.bytes) : null;
+  findSnapshot(batchId: string) {
+    return prisma.importBatch.findUnique({ where: { id: batchId }, select: { sourceSnapshot: true } });
   },
 
   /** Most recent committed mapping for this job and target, to pre-fill the wizard. */
-  findPreviousMapping(jobRequestId: string, target: ImportTarget) {
+  findPreviousMapping(jobRequestId: string, recruitmentBatchId: string, target: ImportTarget) {
     return prisma.importBatch.findFirst({
-      where: { jobRequestId, target, status: "COMMITTED", NOT: { mapping: { equals: Prisma.AnyNull } } },
+      where: { jobRequestId, recruitmentBatchId, target, status: "COMMITTED", NOT: { mapping: { equals: Prisma.AnyNull } } },
       select: { mapping: true, sourceFileName: true, committedAt: true },
       orderBy: { committedAt: "desc" },
     });
   },
 
-  findDuplicateUpload(jobRequestId: string, checksum: string) {
+  /** The latest approved mapping of each other batch of this job, to tell which tabs they use. */
+  async otherBatchMappings(jobRequestId: string, recruitmentBatchId: string, target: ImportTarget) {
+    const batches = await prisma.importBatch.findMany({
+      where: { jobRequestId, target, status: "COMMITTED", recruitmentBatchId: { not: recruitmentBatchId }, NOT: { mapping: { equals: Prisma.AnyNull } } },
+      select: { recruitmentBatchId: true, mapping: true },
+      orderBy: { committedAt: "desc" },
+    });
+    const latest = new Map<string, Prisma.JsonValue>();
+    for (const batch of batches) if (!latest.has(batch.recruitmentBatchId)) latest.set(batch.recruitmentBatchId, batch.mapping);
+    return [...latest.values()];
+  },
+
+  /** Recruitment batch id → its latest approved mapping, for every batch of this job. */
+  async latestMappingByBatch(jobRequestId: string, target: ImportTarget) {
+    const batches = await prisma.importBatch.findMany({
+      where: { jobRequestId, target, status: "COMMITTED", NOT: { mapping: { equals: Prisma.AnyNull } } },
+      select: { recruitmentBatchId: true, mapping: true },
+      orderBy: { committedAt: "desc" },
+    });
+    const latest = new Map<string, Prisma.JsonValue>();
+    for (const batch of batches) if (!latest.has(batch.recruitmentBatchId)) latest.set(batch.recruitmentBatchId, batch.mapping);
+    return latest;
+  },
+
+  /**
+   * The Google Sheet to refresh this batch from: its own latest Google import,
+   * else the job's (later batches usually live in the same sheet as new tabs).
+   */
+  async findLatestGoogleBatch(jobRequestId: string, recruitmentBatchId: string, target: ImportTarget) {
+    const where = { jobRequestId, target, sourceType: "GOOGLE_SHEETS" as const, sourceSpreadsheetId: { not: null } };
+    const select = { sourceSpreadsheetId: true, sourceUrl: true };
+    return await prisma.importBatch.findFirst({ where: { ...where, recruitmentBatchId }, select, orderBy: { createdAt: "desc" } })
+      ?? prisma.importBatch.findFirst({ where, select, orderBy: { createdAt: "desc" } });
+  },
+
+  findDuplicateUpload(jobRequestId: string, recruitmentBatchId: string, checksum: string) {
     return prisma.importBatch.findFirst({
-      where: { jobRequestId, sourceChecksum: checksum, status: "COMMITTED" },
+      where: { jobRequestId, recruitmentBatchId, sourceChecksum: checksum, status: "COMMITTED" },
       select: { batchCode: true, committedAt: true },
     });
   },
 
   listForJob(jobRequestId: string) {
-    return prisma.importBatch.findMany({ where: { jobRequestId }, select: batchSummarySelect, orderBy: { createdAt: "desc" }, take: 50 });
+    return prisma.importBatch.findMany({ where: { jobRequestId }, select: batchSummarySelect, orderBy: { createdAt: "desc" }, take: 100 });
   },
 
   list(where: Prisma.ImportBatchWhereInput, page: { skip: number; take: number }) {

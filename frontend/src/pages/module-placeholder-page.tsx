@@ -41,7 +41,7 @@ export const MODULE_OUTLINES = {
 
   psmOperations: {
     eyebrow: "Operations",
-    title: "PSM operations",
+    title: "Employee operations",
     description: "Ownership, tasks, follow-ups and company coordination.",
     phase: 6,
     capabilities: [
@@ -71,7 +71,7 @@ export const MODULE_OUTLINES = {
     phase: 6,
     capabilities: [
       "Internal screening and company hiring funnels",
-      "PSM, company, product and tech-stack performance",
+      "Employee, company, product and tech-stack performance",
       "Assessed-pool analytics",
       "Monthly reports with Excel/CSV export",
     ],

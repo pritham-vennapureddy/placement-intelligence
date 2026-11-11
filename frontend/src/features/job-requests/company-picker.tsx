@@ -26,7 +26,8 @@ export function CompanyPicker({
   const debounced = useDebouncedValue(search, 250);
   const results = useQuery({
     queryKey: ["companies", "picker", debounced],
-    queryFn: () => companiesApi.list({ pageSize: 20, status: "ACTIVE", ...(debounced ? { search: debounced } : {}) }),
+    queryFn: () => companiesApi.options({ status: "ACTIVE", ...(debounced ? { search: debounced } : {}) }),
+    staleTime: 5 * 60_000,
     enabled: open,
   });
 
@@ -61,8 +62,8 @@ export function CompanyPicker({
         </label>
         <div className="max-h-64 overflow-y-auto p-1">
           {results.isPending && <p className="px-3 py-2 text-xs text-slate-400">Searching…</p>}
-          {results.data?.items.length === 0 && <p className="px-3 py-2 text-xs text-slate-400">No active company matches.</p>}
-          {results.data?.items.map((company) => (
+          {results.data?.length === 0 && <p className="px-3 py-2 text-xs text-slate-400">No active company matches.</p>}
+          {results.data?.map((company) => (
             <button
               key={company.id}
               type="button"

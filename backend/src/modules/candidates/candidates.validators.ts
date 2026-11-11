@@ -5,7 +5,8 @@ export const listCandidatesQuerySchema = paginationQuerySchema.extend({
   search: z.string().trim().max(120).optional(),
   productId: z.uuid().optional(),
   category: z.enum(["ACADEMY", "ACADEMY_INTENSIVE", "EXTERNAL"]).optional(),
-  assessedPool: z.enum(["YES", "NO", "UNKNOWN"]).optional(),
+  poolType: z.enum(["BUCKET", "TR", "COMPETENCY"]).optional(),
+  poolOnly: z.coerce.boolean().optional(),
   jobRequestId: z.uuid().optional(),
 });
 
@@ -19,8 +20,6 @@ export const updateCandidateSchema = z
     graduationYear: z.number().int().min(1980).max(2100).nullable().optional(),
     resumeUrl: z.url().max(1000).nullable().optional(),
     category: z.enum(["ACADEMY", "ACADEMY_INTENSIVE", "EXTERNAL"]).nullable().optional(),
-    // UNKNOWN is a real answer, not "no".
-    assessedPool: z.enum(["YES", "NO", "UNKNOWN"]).optional(),
     reason: z.string().trim().max(500).optional(),
   })
   .refine((value) => Object.entries(value).some(([key, entry]) => key !== "reason" && entry !== undefined), { message: "Nothing to change." });

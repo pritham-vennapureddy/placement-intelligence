@@ -16,6 +16,7 @@ export async function commitCompanyImport(
   db: Db,
   input: {
     jobRequestId: string;
+    recruitmentBatchId: string;
     userId: string;
     rows: { normalizedData: unknown }[];
     jobSkillIds: string[];
@@ -26,19 +27,22 @@ export async function commitCompanyImport(
   const now = new Date();
 
   // 1. Rounds, in the order they first appear; existing ones are kept as they are.
-  const existing = await db.companyInterviewRound.findMany({ where: { jobRequestId: input.jobRequestId }, select: { id: true, name: true, sequence: true } });
+  const existing = await db.companyInterviewRound.findMany({ where: { jobRequestId: input.jobRequestId, recruitmentBatchId: input.recruitmentBatchId }, select: { id: true, name: true, sequence: true } });
   const roundIds = new Map(existing.map((round) => [round.name, round.id]));
   let sequence = Math.max(0, ...existing.map((round) => round.sequence));
-  let roundsCreated = 0;
+  const missingRounds = new Map<string, { jobRequestId: string; recruitmentBatchId: string; name: string; roundType: CompanyRowData["rounds"][number]["roundType"]; sequence: number }>();
   for (const round of rows.flatMap((row) => row.rounds)) {
-    if (roundIds.has(round.roundName)) continue;
-    const created = await db.companyInterviewRound.create({
-      data: { jobRequestId: input.jobRequestId, name: round.roundName, roundType: round.roundType, sequence: ++sequence },
-      select: { id: true },
-    });
-    roundIds.set(round.roundName, created.id);
-    roundsCreated++;
+    if (roundIds.has(round.roundName) || missingRounds.has(round.roundName)) continue;
+    missingRounds.set(round.roundName, { jobRequestId: input.jobRequestId, recruitmentBatchId: input.recruitmentBatchId, name: round.roundName, roundType: round.roundType, sequence: ++sequence });
   }
+  if (missingRounds.size > 0) {
+    await db.companyInterviewRound.createMany({ data: [...missingRounds.values()], skipDuplicates: true });
+  }
+  const allRounds = missingRounds.size > 0
+    ? await db.companyInterviewRound.findMany({ where: { jobRequestId: input.jobRequestId, recruitmentBatchId: input.recruitmentBatchId }, select: { id: true, name: true } })
+    : existing;
+  const allRoundIds = new Map(allRounds.map((round) => [round.name, round.id]));
+  const roundsCreated = missingRounds.size;
 
   // 2. Nominations for profiles the company has but the PSM had not nominated yet.
   const toNominate = rows.filter((row) => row.createNomination).map((row) => row.applicationId!);
@@ -65,7 +69,10 @@ export async function commitCompanyImport(
   const outcomes = rows.flatMap((row) => {
     const nomination = nominationByApplication.get(row.applicationId!);
     return nomination
-      ? row.rounds.map((round) => ({ nominationId: nomination.id, roundId: roundIds.get(round.roundName)!, outcome: round.outcome }))
+      ? row.rounds.flatMap((round) => {
+        const roundId = allRoundIds.get(round.roundName);
+        return roundId ? [{ nominationId: nomination.id, roundId, outcome: round.outcome }] : [];
+      })
       : [];
   });
   let outcomesWritten = 0;

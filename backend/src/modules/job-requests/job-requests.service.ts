@@ -1,5 +1,6 @@
 import {
   canTransitionJob,
+  companyProcessLabel,
   hasPermission,
   hubspotRecordUrl,
   jobTransitionNeedsReason,
@@ -8,7 +9,7 @@ import {
 } from "@placement/shared";
 import { env } from "../../config/env.js";
 import { inTransaction, prisma } from "../../db.js";
-import type { Prisma } from "../../generated/prisma/client.js";
+import { Prisma } from "../../generated/prisma/client.js";
 import type { AuthenticatedUser } from "../../middleware/authenticate.js";
 import {
   isJobOwnerInScope,
@@ -22,13 +23,21 @@ import { buildPaginationMeta, toPrismaPage } from "../../utils/pagination.js";
 import { splitSkills } from "../../utils/skills.js";
 import { diffFields, listAuditHistory, recordAudit, type AuditContext } from "../audit/audit.service.js";
 import { companyHubspotUrl } from "../companies/companies.service.js";
+import { BATCH_TAB_CODES, parseBatchTabs, tabNames, tabsFromMapping, type BatchTabs } from "../imports/batch-tabs.js";
+import { importsRepository } from "../imports/imports.repository.js";
+import { suggestRecruitmentTab } from "../imports/tab-names.js";
+import { extractSpreadsheetId, inspectSpreadsheet } from "../sheets/google-sheets.service.js";
+import { deleteJobRequestData } from "./delete-job-request-data.js";
+import { resolveJobRequestOwner } from "./owner-policy.js";
 import { jobProgress, jobRequestsRepository, type JobRequestDetail } from "./job-requests.repository.js";
 import type {
   ChangeStatusInput,
+  CreateRecruitmentBatchInput,
   CreateJobRequestInput,
   ListJobRequestsQuery,
   ReassignOwnerInput,
   UpdateJobRequestInput,
+  UpdateRecruitmentBatchInput,
 } from "./job-requests.validators.js";
 
 const VIEW_STATUSES = {
@@ -53,11 +62,64 @@ async function loadVisible(user: AuthenticatedUser, jobRequestId: string): Promi
   return { job, scope };
 }
 
-/** The new owner must be an active PSM inside the assigner's scope. */
+/** True when both links open the same Google spreadsheet (tab and query parts ignored). */
+function sameSheet(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return !a && !b;
+  try {
+    return extractSpreadsheetId(a) === extractSpreadsheetId(b);
+  } catch {
+    return a.trim() === b.trim();
+  }
+}
+
+/** A batch keeps its own sheet link only when it differs from the job request's; otherwise it follows the job. */
+function ownSheet(url: string | null | undefined, jobUrl: string | null): string | null {
+  if (!url) return null;
+  return jobUrl && sameSheet(url, jobUrl) ? null : url;
+}
+
+function assertBatchNameFree(job: JobRequestDetail, name: string, exceptId?: string) {
+  const key = name.trim().toLowerCase();
+  if (job.recruitmentBatches.some((batch) => batch.id !== exceptId && batch.name.trim().toLowerCase() === key)) {
+    throw new ApiError(409, "RECRUITMENT_BATCH_NAME_TAKEN", `This job request already has a batch called “${name.trim()}”.`);
+  }
+}
+
+/**
+ * Tab name → batch name, for the other batches of this job that read the same
+ * workbook. A batch's chosen tabs count; a batch without chosen tabs counts the
+ * tabs of its last approved import.
+ */
+async function tabsUsedByOtherBatches(job: JobRequestDetail, exceptId: string | null, ownUrl: string | null): Promise<Record<string, string>> {
+  const effective = ownUrl ?? job.internalSheetUrl;
+  const mappings = await importsRepository.latestMappingByBatch(job.id, "INTERNAL_SCREENING");
+  const usedBy: Record<string, string> = {};
+  for (const other of job.recruitmentBatches) {
+    if (other.id === exceptId) continue;
+    if (!sameSheet(other.internalSheetUrl ?? job.internalSheetUrl, effective)) continue;
+    const tabs = parseBatchTabs(other.internalTabs) ?? tabsFromMapping(mappings.get(other.id));
+    for (const name of tabNames(tabs)) usedBy[name] ??= other.name;
+  }
+  return usedBy;
+}
+
+/** One tab belongs to one batch: reusing it would import the same rows into two batches. */
+async function assertTabsFree(job: JobRequestDetail, exceptId: string | null, ownUrl: string | null, tabs: BatchTabs | null) {
+  if (!tabs) return;
+  const usedBy = await tabsUsedByOtherBatches(job, exceptId, ownUrl);
+  const byKey = new Map(Object.entries(usedBy).map(([name, batch]) => [name.toLowerCase(), batch]));
+  const clash = tabNames(tabs).find((name) => byKey.has(name.toLowerCase()));
+  if (clash) {
+    const owner = byKey.get(clash.toLowerCase());
+    throw new ApiError(409, "TAB_IN_USE", `The tab “${clash}” already belongs to ${owner}. Pick another tab, or change ${owner} first.`);
+  }
+}
+
+/** The new owner must be an active employee inside the assigner's scope. */
 async function assertAssignableOwner(scope: DataScope, userId: string) {
   const owner = await jobRequestsRepository.findAssignablePsm(userId);
   if (!owner || !isJobOwnerInScope(scope, owner.id)) {
-    throw new ApiError(400, "INVALID_PSM_OWNER", "Choose an active PSM from your team as the owner.");
+    throw new ApiError(400, "INVALID_EMPLOYEE_OWNER", "Choose an active employee from the shared workspace as the owner.");
   }
   return owner;
 }
@@ -94,6 +156,7 @@ function present(job: JobRequestDetail, user: AuthenticatedUser, scope: DataScop
     allowedTransitions: canEdit ? JOB_STATUS_TRANSITIONS[job.status] : [],
     canEdit,
     canReassign: canEdit && hasPermission(user.roles, "job:assign"),
+    canDelete: hasPermission(user.roles, "job:assign"),
   };
 }
 
@@ -121,8 +184,9 @@ export const jobRequestsService = {
         : {}),
     };
     const { rows, total } = await jobRequestsRepository.list(where, toPrismaPage(query));
-    const jobRequests = rows.map(({ skills, eligibleProducts, ...job }) => ({
+    const jobRequests = rows.map(({ skills, eligibleProducts, processRound, ...job }) => ({
       ...job,
+      processLabel: companyProcessLabel(job.processPhase, processRound?.name),
       techStack: skills.map(({ skill }) => skill.name),
       eligibleProducts: eligibleProducts.map(({ product }) => product),
     }));
@@ -135,23 +199,115 @@ export const jobRequestsService = {
     return { ...present(job, user, scope), history };
   },
 
+  async createRecruitmentBatch(user: AuthenticatedUser, jobRequestId: string, input: CreateRecruitmentBatchInput, audit: AuditContext) {
+    const { job, scope } = await loadVisible(user, jobRequestId);
+    if (!hasPermission(user.roles, "job:write") || !isJobOwnerInScope(scope, job.psmOwnerId)) {
+      throw new ApiError(403, "FORBIDDEN", "You cannot add a recruitment batch to this job request.");
+    }
+    assertBatchNameFree(job, input.name);
+    const internalSheetUrl = ownSheet(input.internalSheetUrl, job.internalSheetUrl);
+    const internalTabs = parseBatchTabs(input.internalTabs);
+    await assertTabsFree(job, null, internalSheetUrl, internalTabs);
+    const last = await prisma.recruitmentBatch.aggregate({ where: { jobRequestId: job.id }, _max: { sequence: true } });
+    const sequence = (last._max.sequence ?? 0) + 1;
+    const batch = await prisma.recruitmentBatch.create({
+      data: {
+        jobRequestId: job.id,
+        name: input.name,
+        sequence,
+        openings: input.openings ?? null,
+        startsAt: input.startsAt ? toDate(input.startsAt) : null,
+        endsAt: input.endsAt ? toDate(input.endsAt) : null,
+        internalSheetUrl,
+        companySheetUrl: ownSheet(input.companySheetUrl, job.companySheetUrl),
+        internalTabs: internalTabs ?? Prisma.DbNull,
+      },
+    });
+    await recordAudit(prisma, audit, {
+      action: "RECRUITMENT_BATCH_CREATED", entityType: "JobRequest", entityId: job.id,
+      metadata: { recruitmentBatchId: batch.id, name: batch.name, sequence, ...(internalTabs ? { tabs: internalTabs } : {}) },
+    });
+    return batch;
+  },
+
+  /** Renames a batch, changes its openings, dates or status, or which tabs (or workbook) it reads. */
+  async updateRecruitmentBatch(user: AuthenticatedUser, jobRequestId: string, batchId: string, input: UpdateRecruitmentBatchInput, audit: AuditContext) {
+    const { job, scope } = await loadVisible(user, jobRequestId);
+    if (!hasPermission(user.roles, "job:write") || !isJobOwnerInScope(scope, job.psmOwnerId)) {
+      throw new ApiError(403, "FORBIDDEN", "You cannot change recruitment batches of this job request.");
+    }
+    const current = job.recruitmentBatches.find((batch) => batch.id === batchId);
+    if (!current) throw new ApiError(404, "RECRUITMENT_BATCH_NOT_FOUND", "The recruitment batch was not found on this job request.");
+    if (input.name !== undefined) assertBatchNameFree(job, input.name, batchId);
+
+    const internalSheetUrl = input.internalSheetUrl === undefined ? current.internalSheetUrl : ownSheet(input.internalSheetUrl, job.internalSheetUrl);
+    const internalTabs = input.internalTabs === undefined ? parseBatchTabs(current.internalTabs) : parseBatchTabs(input.internalTabs);
+    if (input.internalTabs !== undefined || input.internalSheetUrl !== undefined) {
+      await assertTabsFree(job, batchId, internalSheetUrl, internalTabs);
+    }
+    const startsAt = input.startsAt === undefined ? current.startsAt : input.startsAt ? toDate(input.startsAt) : null;
+    const endsAt = input.endsAt === undefined ? current.endsAt : input.endsAt ? toDate(input.endsAt) : null;
+    if (startsAt && endsAt && endsAt < startsAt) {
+      throw new ApiError(400, "VALIDATION_ERROR", "The end date cannot be before the batch start date.");
+    }
+
+    const data = definedOnly({
+      name: input.name,
+      openings: input.openings,
+      status: input.status,
+      startsAt: input.startsAt === undefined ? undefined : startsAt,
+      endsAt: input.endsAt === undefined ? undefined : endsAt,
+      internalSheetUrl: input.internalSheetUrl === undefined ? undefined : internalSheetUrl,
+      companySheetUrl: input.companySheetUrl === undefined ? undefined : ownSheet(input.companySheetUrl, job.companySheetUrl),
+    });
+    const changes: Record<string, unknown> = diffFields(current, data);
+    if (input.internalTabs !== undefined && JSON.stringify(parseBatchTabs(current.internalTabs)) !== JSON.stringify(internalTabs)) {
+      changes.internalTabs = { from: parseBatchTabs(current.internalTabs), to: internalTabs };
+    }
+    const batch = await prisma.recruitmentBatch.update({
+      where: { id: batchId },
+      data: { ...data, ...(input.internalTabs !== undefined ? { internalTabs: internalTabs ?? Prisma.DbNull } : {}) },
+    });
+    if (Object.keys(changes).length > 0) {
+      await recordAudit(prisma, audit, {
+        action: "RECRUITMENT_BATCH_UPDATED", entityType: "JobRequest", entityId: job.id,
+        metadata: { recruitmentBatchId: batch.id, name: batch.name, changes },
+      });
+    }
+    return batch;
+  },
+
+  /**
+   * The tabs of the internal sheet a batch reads (its own workbook, else the
+   * job's), with a suggested TA / RS / SC / AS / SP choice and which tabs other
+   * batches already use.
+   */
+  async internalSheetTabs(user: AuthenticatedUser, jobRequestId: string, batchId?: string, otherUrl?: string) {
+    const { job } = await loadVisible(user, jobRequestId);
+    const batch = batchId ? job.recruitmentBatches.find(({ id }) => id === batchId) : undefined;
+    if (batchId && !batch) throw new ApiError(404, "RECRUITMENT_BATCH_NOT_FOUND", "The recruitment batch was not found on this job request.");
+    // `otherUrl`: a different workbook the PSM is typing for this batch, not saved yet.
+    const ownUrl = otherUrl ? ownSheet(otherUrl, job.internalSheetUrl) : batch?.internalSheetUrl ?? null;
+    const url = ownUrl ?? job.internalSheetUrl;
+    if (!url) {
+      throw new ApiError(400, "NO_INTERNAL_SHEET", "Add the internal sheet link on the job request first (Edit job request → Internal sheet).");
+    }
+    const spreadsheet = await inspectSpreadsheet(extractSpreadsheetId(url));
+    const tabs = [...spreadsheet.tabs].sort((a, b) => a.index - b.index).map(({ title }) => title);
+    const usedBy = await tabsUsedByOtherBatches(job, batchId ?? null, ownUrl);
+    const used = new Set(Object.keys(usedBy));
+    const suggested: BatchTabs = {};
+    for (const code of BATCH_TAB_CODES) {
+      const tab = suggestRecruitmentTab(tabs.map((name) => ({ name })), code, used);
+      if (tab) suggested[code] = tab.name;
+    }
+    return { url, title: spreadsheet.title, tabs, suggested, current: parseBatchTabs(batch?.internalTabs), usedBy };
+  },
+
   async create(user: AuthenticatedUser, input: CreateJobRequestInput, audit: AuditContext) {
     const scope = await resolveDataScope(user);
-    const canAssign = hasPermission(user.roles, "job:assign");
-
-    let ownerId: string;
-    if (canAssign) {
-      if (!input.psmOwnerId && !user.roles.includes("PSM")) {
-        throw new ApiError(400, "PSM_OWNER_REQUIRED", "Choose the PSM who owns this job request.");
-      }
-      ownerId = input.psmOwnerId ?? user.id;
-    } else {
-      if (input.psmOwnerId && input.psmOwnerId !== user.id) {
-        throw new ApiError(403, "FORBIDDEN", "Only managers can assign a job request to someone else.");
-      }
-      ownerId = user.id;
-    }
-    await assertAssignableOwner(scope, ownerId);
+    const { ownerId, adminSelfAssignment } = resolveJobRequestOwner(user, input.psmOwnerId);
+    if (!adminSelfAssignment) await assertAssignableOwner(scope, ownerId);
 
     const company = await jobRequestsRepository.findActiveCompany(input.companyId);
     if (!company) {
@@ -174,6 +330,7 @@ export const jobRequestsService = {
           roleTitle: input.roleTitle,
           openings: input.openings,
           requiredCandidateCount: input.requiredCandidateCount,
+          ctcLpa: input.ctcLpa ?? null,
           description: input.description,
           requestDate: toDate(input.requestDate),
           deadline: input.deadline ? toDate(input.deadline) : null,
@@ -255,6 +412,23 @@ export const jobRequestsService = {
     return present(updated!, user, scope);
   },
 
+  async delete(user: AuthenticatedUser, jobRequestId: string, audit: AuditContext) {
+    if (!hasPermission(user.roles, "job:assign")) {
+      throw new ApiError(403, "FORBIDDEN", "Only managers can permanently delete a job request.");
+    }
+    const { job } = await loadVisible(user, jobRequestId);
+    await inTransaction(async (transaction) => {
+      await deleteJobRequestData(transaction, job.id);
+      await recordAudit(transaction, audit, {
+        action: "JOB_REQUEST_DELETED",
+        entityType: "JobRequest",
+        entityId: job.id,
+        metadata: { jobId: job.jobId, roleTitle: job.roleTitle, companyId: job.companyId },
+      });
+    }, { timeoutMs: 120_000 });
+    return { id: job.id };
+  },
+
   async changeStatus(user: AuthenticatedUser, jobRequestId: string, input: ChangeStatusInput, audit: AuditContext) {
     const { job, scope } = await loadVisible(user, jobRequestId);
     if (!present(job, user, scope).canEdit) {
@@ -289,7 +463,7 @@ export const jobRequestsService = {
       throw new ApiError(403, "FORBIDDEN", "Only managers can reassign job requests.");
     }
     if (job.psmOwnerId === input.psmOwnerId) {
-      throw new ApiError(400, "SAME_OWNER", "This PSM already owns the job request.");
+      throw new ApiError(400, "SAME_OWNER", "This employee already owns the job request.");
     }
     const owner = await assertAssignableOwner(scope, input.psmOwnerId);
 

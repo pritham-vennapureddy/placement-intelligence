@@ -24,8 +24,8 @@ async function main(): Promise<void> {
   const roles = [
     { code: "ADMIN", name: "Administrator" },
     { code: "MANAGER", name: "Manager" },
-    { code: "PSM", name: "Placement Success Manager" },
-    { code: "VIEWER", name: "Read-only Viewer" },
+    { code: "EMPLOYEE", name: "Employee" },
+    { code: "STAKEHOLDER", name: "Stakeholder" },
   ];
 
   for (const role of roles) {
@@ -75,6 +75,18 @@ async function main(): Promise<void> {
     create: { userId: admin.id, roleId: adminRole.id },
     update: {},
   });
+
+  let workspace = await prisma.team.findFirst({
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true },
+  });
+  if (!workspace) {
+    workspace = await prisma.team.create({
+      data: { name: "Placement Team", createdById: admin.id },
+      select: { id: true },
+    });
+  }
+  await prisma.user.update({ where: { id: admin.id }, data: { teamId: workspace.id } });
 }
 
 main()

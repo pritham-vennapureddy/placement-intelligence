@@ -2,10 +2,10 @@ import { prisma } from "../db.js";
 import type { AuthenticatedUser } from "../middleware/authenticate.js";
 
 /**
- * Which records a user may see:
- * - organization: administrators see everything
- * - team: managers see job requests owned by the PSMs of the team they lead
- * - self: everyone else sees job requests they own
+ * Which records a user may see. Placement work is shared: every signed-in role
+ * sees every company, job request and candidate ("organization"). What a role
+ * may *change* is still decided by its permissions (shared/src/permissions.ts).
+ * The narrower "team" and "self" scopes are kept so they can be reintroduced.
  */
 export type DataScope =
   | { kind: "organization"; teamName: null }
@@ -13,23 +13,28 @@ export type DataScope =
   | { kind: "self"; teamName: string | null; ownerIds: string[] };
 
 export interface DataScopeRepository {
-  findLedTeam(userId: string): Promise<{ name: string; psmIds: string[] } | null>;
+  findManagerWorkspace(userId: string): Promise<{ name: string; employeeIds: string[] } | null>;
   findMemberTeamName(userId: string): Promise<string | null>;
 }
 
 export const dataScopeRepository: DataScopeRepository = {
-  async findLedTeam(userId) {
-    const team = await prisma.team.findFirst({
-      where: { teamLeadId: userId },
+  async findManagerWorkspace(userId) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
       select: {
-        name: true,
-        members: {
-          where: { isActive: true, roles: { some: { role: { code: "PSM" } } } },
-          select: { id: true },
+        team: {
+          select: {
+            name: true,
+            members: {
+              where: { isActive: true, roles: { some: { role: { code: "EMPLOYEE" } } } },
+              select: { id: true },
+            },
+          },
         },
       },
     });
-    return team ? { name: team.name, psmIds: team.members.map(({ id }) => id) } : null;
+    const team = user?.team;
+    return team ? { name: team.name, employeeIds: team.members.map(({ id }) => id) } : null;
   },
 
   async findMemberTeamName(userId) {
@@ -42,19 +47,10 @@ export const dataScopeRepository: DataScopeRepository = {
 };
 
 export async function resolveDataScope(
-  user: AuthenticatedUser,
-  repository: DataScopeRepository = dataScopeRepository,
+  _user: AuthenticatedUser,
+  _repository: DataScopeRepository = dataScopeRepository,
 ): Promise<DataScope> {
-  if (user.roles.includes("ADMIN")) {
-    return { kind: "organization", teamName: null };
-  }
-
-  if (user.roles.includes("MANAGER")) {
-    const team = await repository.findLedTeam(user.id);
-    return { kind: "team", teamName: team?.name ?? null, ownerIds: team?.psmIds ?? [] };
-  }
-
-  return { kind: "self", teamName: await repository.findMemberTeamName(user.id), ownerIds: [user.id] };
+  return { kind: "organization", teamName: null };
 }
 
 /** Prisma `where` fragment for job requests visible in the given scope. */

@@ -3,9 +3,18 @@ import type { Prisma } from "../../generated/prisma/client.js";
 
 type JobFilter = Prisma.JobRequestWhereInput;
 
-const OPEN_STATUSES = ["DRAFT", "OPEN", "ON_HOLD"] as const;
+export const OPEN_STATUSES: readonly string[] = ["DRAFT", "OPEN", "ON_HOLD"];
 
 export const companiesRepository = {
+  options(where: Prisma.CompanyWhereInput, take = 20) {
+    return prisma.company.findMany({
+      where,
+      select: { id: true, name: true, location: true },
+      orderBy: { name: "asc" },
+      take,
+    });
+  },
+
   async list(where: Prisma.CompanyWhereInput, jobFilter: JobFilter, page: { skip: number; take: number }) {
     const [rows, total] = await Promise.all([
       prisma.company.findMany({
@@ -19,8 +28,17 @@ export const companiesRepository = {
           status: true,
           updatedAt: true,
           jobRequests: {
-            where: { ...jobFilter, status: { in: [...OPEN_STATUSES] }, archivedAt: null },
-            select: { openings: true, psmOwner: { select: { id: true, fullName: true } } },
+            where: { ...jobFilter, archivedAt: null },
+            select: {
+              id: true,
+              roleTitle: true,
+              status: true,
+              openings: true,
+              processPhase: true,
+              processRound: { select: { name: true } },
+              psmOwner: { select: { id: true, fullName: true } },
+            },
+            orderBy: { updatedAt: "desc" },
           },
         },
         orderBy: { name: "asc" },
@@ -46,6 +64,9 @@ export const companiesRepository = {
             status: true,
             requestDate: true,
             deadline: true,
+            processPhase: true,
+            processPhaseAt: true,
+            processRound: { select: { id: true, name: true } },
             psmOwner: { select: { id: true, fullName: true } },
           },
           orderBy: { requestDate: "desc" },

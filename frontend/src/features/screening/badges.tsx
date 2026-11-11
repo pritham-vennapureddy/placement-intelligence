@@ -74,4 +74,3 @@ export const InterviewBadge = ({ outcome }: { outcome: InterviewOutcome }) => (
 );
 
 export const CATEGORY_LABELS = { ACADEMY: "Academy", ACADEMY_INTENSIVE: "Academy Intensive", EXTERNAL: "External" } as const;
-export const ASSESSED_LABELS = { YES: "Yes", NO: "No", UNKNOWN: "Unknown" } as const;

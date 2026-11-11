@@ -30,6 +30,11 @@ export const listCompaniesQuerySchema = paginationQuerySchema.extend({
   status: z.enum(["ACTIVE", "INACTIVE"]).optional(),
 });
 
+export const companyOptionsQuerySchema = z.object({
+  search: z.string().trim().max(120).optional(),
+  status: z.enum(["ACTIVE", "INACTIVE"]).default("ACTIVE"),
+});
+
 export const createCompanySchema = z.object({
   name: z.string().trim().min(2).max(160),
   hubspotCompany,
@@ -44,5 +49,6 @@ export const updateCompanySchema = createCompanySchema.partial().extend({
 });
 
 export type ListCompaniesQuery = z.infer<typeof listCompaniesQuerySchema>;
+export type CompanyOptionsQuery = z.infer<typeof companyOptionsQuerySchema>;
 export type CreateCompanyInput = z.infer<typeof createCompanySchema>;
 export type UpdateCompanyInput = z.infer<typeof updateCompanySchema>;

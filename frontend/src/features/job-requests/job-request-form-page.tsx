@@ -37,6 +37,7 @@ const schema = z
     techStack: z.array(z.string()).min(1, "Add at least one skill."),
     openings: z.coerce.number().int().min(1, "At least 1."),
     requiredCandidateCount: z.coerce.number().int().min(1, "At least 1."),
+    ctcLpa: z.string().trim().refine((value) => !value || (Number(value) > 0 && Number(value) <= 500), "Enter the CTC in LPA, e.g. 4.5."),
     requestDate: z.string().min(1, "Choose the request date."),
     deadline: z.string(),
     timeline: z.string().trim().max(80),
@@ -70,6 +71,7 @@ function defaultsFrom(job: JobRequestDetail | undefined, company: { id: string; 
     techStack: job?.skills.map(({ skill }) => skill.name) ?? [],
     openings: job?.openings ?? 1,
     requiredCandidateCount: job?.requiredCandidateCount ?? 5,
+    ctcLpa: job?.ctcLpa?.toString() ?? "",
     requestDate: job?.requestDate.slice(0, 10) ?? format(new Date(), "yyyy-MM-dd"),
     deadline: job?.deadline?.slice(0, 10) ?? "",
     timeline: job?.timeline ?? "",
@@ -131,6 +133,7 @@ export function JobRequestFormPage() {
         techStack: values.techStack,
         openings: values.openings,
         requiredCandidateCount: values.requiredCandidateCount,
+        ctcLpa: values.ctcLpa ? Number(values.ctcLpa) : null,
         description: values.description,
         requestDate: values.requestDate,
         deadline: nullIfBlank(values.deadline),
@@ -168,7 +171,8 @@ export function JobRequestFormPage() {
     label,
     items: products.data?.filter((product) => product.category === category) ?? [],
   }));
-  const ownerIsRequired = canAssign && !user?.roles.includes("PSM");
+  const isAdmin = Boolean(user?.roles.includes("ADMIN"));
+  const ownerIsRequired = canAssign && !user?.roles.includes("EMPLOYEE") && !isAdmin;
 
   return (
     <form className="mx-auto max-w-4xl space-y-6" onSubmit={form.handleSubmit((values) => save.mutate(values))} noValidate>
@@ -228,6 +232,9 @@ export function JobRequestFormPage() {
         <FormField id="requiredCandidateCount" label="Profiles required" required error={errors.requiredCandidateCount?.message} hint="How many profiles the company wants to see.">
           <Input id="requiredCandidateCount" type="number" min={1} {...form.register("requiredCandidateCount")} />
         </FormField>
+        <FormField id="ctcLpa" label="CTC (LPA)" error={errors.ctcLpa?.message} hint="Offered CTC in lakhs per year; use the upper figure for a range. Decides the < 8 LPA KPIs.">
+          <Input id="ctcLpa" type="number" inputMode="decimal" min={0} step="0.1" placeholder="e.g. 4.5" {...form.register("ctcLpa")} />
+        </FormField>
         <FormField id="description" label="Job description" error={errors.description?.message} className="sm:col-span-2">
           <Textarea id="description" rows={4} {...form.register("description")} />
         </FormField>
@@ -285,7 +292,7 @@ export function JobRequestFormPage() {
         />
       </Card>
 
-      <Section title="Working sheets" description="Optional links. Uploading and mapping sheets comes in the next phase.">
+      <Section title="Source-of-truth sheets" description="The Internal sheet supplies student and internal-stage details. The Company sheet is used for company-side pipeline updates.">
         <FormField id="internalSheetUrl" label="Internal sheet" error={errors.internalSheetUrl?.message}>
           <Input id="internalSheetUrl" placeholder="https://docs.google.com/spreadsheets/…" {...form.register("internalSheetUrl")} />
         </FormField>
@@ -297,13 +304,19 @@ export function JobRequestFormPage() {
       {!editing && (
         <Section title="Ownership and status">
           {canAssign ? (
-            <FormField id="psmOwnerId" label="PSM owner" required={ownerIsRequired} error={errors.psmOwnerId?.message} hint={ownerIsRequired ? undefined : "Leave empty to own it yourself."}>
+            <FormField
+              id="psmOwnerId"
+              label="Employee owner"
+              required={ownerIsRequired}
+              error={errors.psmOwnerId?.message}
+              hint={isAdmin ? "Leave empty to own this job yourself, or choose an employee." : ownerIsRequired ? undefined : "Leave empty to own it yourself."}
+            >
               <Controller
                 control={form.control}
                 name="psmOwnerId"
                 render={({ field }) => (
                   <Select value={field.value || undefined} onValueChange={field.onChange}>
-                    <SelectTrigger id="psmOwnerId" className="h-10 w-full"><SelectValue placeholder="Choose a PSM" /></SelectTrigger>
+                    <SelectTrigger id="psmOwnerId" className="h-10 w-full"><SelectValue placeholder="Choose an employee" /></SelectTrigger>
                     <SelectContent>
                       {owners.data?.map((owner) => (
                         <SelectItem key={owner.id} value={owner.id}>{owner.fullName}{owner.team ? ` · ${owner.team.name}` : ""}</SelectItem>
@@ -314,7 +327,7 @@ export function JobRequestFormPage() {
               />
             </FormField>
           ) : (
-            <FormField id="owner" label="PSM owner" hint="You will own this job request.">
+            <FormField id="owner" label="Employee owner" hint="You will own this job request.">
               <Input id="owner" value={user?.fullName ?? ""} disabled />
             </FormField>
           )}

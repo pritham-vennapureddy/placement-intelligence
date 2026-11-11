@@ -62,7 +62,7 @@ export const PIPELINE_STATUSES = [
 export type PipelineStatus = (typeof PIPELINE_STATUSES)[number];
 
 export const PIPELINE_STATUS_LABELS: Record<PipelineStatus, string> = {
-  NOT_SUBMITTED: "Not sent to company",
+  NOT_SUBMITTED: "Not shared with company",
   IN_PROCESS: "In company process",
   ON_HOLD: "On hold",
   REJECTED: "Rejected by company",
@@ -132,7 +132,7 @@ export function suggestStageOutcome(value: string): StageOutcome | null {
   if (/^(c|consider|considered|selected|select|shortlisted|shortlist|yes|y|cleared|pass|passed|go)$/.test(v)) return "SELECTED";
   if (/^(r|reject|rejected|not selected|no|n|fail|failed|not shortlisted|drop|dropped)$/.test(v)) return "REJECTED";
   if (/^(h|hold|on hold|maybe|waitlist|waitlisted)$/.test(v)) return "ON_HOLD";
-  if (/^(no show|absent|ns|not attended|did not attend)$/.test(v)) return "NO_SHOW";
+  if (/^(no show|noshow|absent|ns|na|n a|not available|not attended|did not attend|not joined|didn t join)$/.test(v)) return "NO_SHOW";
   if (/^(withdrawn|withdraw|not interested)$/.test(v)) return "WITHDRAWN";
   if (/^(pending|in progress|scheduled|tbd)$/.test(v)) return "PENDING";
   return null;

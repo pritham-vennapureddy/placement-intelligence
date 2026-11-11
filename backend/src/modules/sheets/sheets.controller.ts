@@ -1,8 +1,8 @@
 import type { Request, Response } from "express";
-import { sendCreated, sendData } from "../../utils/http.js";
+import { sendCreated, sendData, sendNoContent } from "../../utils/http.js";
 import { auditContextFrom } from "../audit/audit.service.js";
 import { sheetsService } from "./sheets.service.js";
-import type { CreateConnectionInput, CreateMappingInput, HeaderParams, HeaderQuery } from "./sheets.validators.js";
+import type { CreateConnectionInput, CreateMappingInput, HeaderParams } from "./sheets.validators.js";
 
 export const sheetsController = {
   async setup(request: Request, response: Response): Promise<void> {
@@ -25,9 +25,8 @@ export const sheetsController = {
 
   async headers(request: Request, response: Response): Promise<void> {
     const { connectionId, sheetId } = request.params as unknown as HeaderParams;
-    const { row } = request.query as unknown as HeaderQuery;
-    const headers = await sheetsService.getHeaders(connectionId, sheetId, row, request.user!);
-    sendData(response, { headers });
+    const analysis = await sheetsService.getHeaders(connectionId, sheetId, request.user!);
+    sendData(response, analysis);
   },
 
   async saveMapping(request: Request, response: Response): Promise<void> {
@@ -38,5 +37,18 @@ export const sheetsController = {
       auditContextFrom(request),
     );
     sendCreated(response, { mapping });
+  },
+
+  async syncAssessedPools(request: Request, response: Response): Promise<void> {
+    sendData(response, await sheetsService.syncAssessedPools(
+      request.params.connectionId as string,
+      request.user!,
+      auditContextFrom(request),
+    ));
+  },
+
+  async remove(request: Request, response: Response): Promise<void> {
+    await sheetsService.deleteConnection(request.params.connectionId as string, request.user!, auditContextFrom(request));
+    sendNoContent(response);
   },
 };

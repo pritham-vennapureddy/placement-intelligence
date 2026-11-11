@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { INTERNAL_STAGES, PRIORITIES, STAGE_OUTCOMES, STAGE_STATUSES } from "@placement/shared";
+import { INTERNAL_STAGES, PRIORITIES, SCREENING_SKIP_REASONS, STAGE_OUTCOMES, STAGE_STATUSES } from "@placement/shared";
 import { paginationQuerySchema } from "../../utils/pagination.js";
 
 export const jobParamsSchema = z.object({ jobRequestId: z.uuid() });
@@ -14,6 +14,8 @@ export const updateStageSchema = z
   .object({
     status: z.enum(STAGE_STATUSES).optional(),
     statusRemarks: z.string().trim().max(1000).optional(),
+    /** Why SC was skipped; used with status NOT_CONDUCTED. */
+    skipReason: z.enum(SCREENING_SKIP_REASONS).nullable().optional(),
     ownerId: z.uuid().nullable().optional(),
     nextPlannedDate: z.iso.date().nullable().optional(),
     remarks: z.string().trim().max(2000).nullable().optional(),

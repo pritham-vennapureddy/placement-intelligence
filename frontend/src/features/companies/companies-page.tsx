@@ -6,13 +6,13 @@ import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { DataTable, SortableHeader } from "../../components/data-table";
 import { PageHeader } from "../../components/page-header";
-import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { useDebouncedValue } from "../../hooks/use-debounced-value";
 import { usePermissions } from "../../hooks/use-permissions";
 import { companiesApi } from "../../services/api";
 import type { CompanyListItem } from "../../types/api";
+import { ProcessBadge } from "../tracking/tracking-dialogs";
 import { CompanyFormDialog } from "./company-form-dialog";
 
 const PAGE_SIZE = 20;
@@ -57,22 +57,29 @@ const columns: ColumnDef<CompanyListItem>[] = [
   { accessorKey: "openPositions", header: ({ column }) => <SortableHeader column={column} title="Open positions" /> },
   {
     id: "psmOwners",
-    header: "PSM owners",
+    header: "Employee owners",
     cell: ({ row }) => row.original.psmOwners.length
       ? row.original.psmOwners.map(({ fullName }) => fullName).join(", ")
       : <span className="text-slate-400">—</span>,
   },
   {
-    accessorKey: "status",
-    header: "Status",
-    cell: ({ row }) => (
-      <Badge
-        variant="outline"
-        className={row.original.status === "ACTIVE" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500"}
-      >
-        {row.original.status === "ACTIVE" ? "Active" : "Inactive"}
-      </Badge>
-    ),
+    id: "process",
+    header: "Hiring status",
+    cell: ({ row }) => {
+      const processes = row.original.processes;
+      if (processes.length === 0) return <span className="text-xs text-slate-400">No job requests</span>;
+      return (
+        <div className="space-y-1">
+          {processes.slice(0, 2).map((process) => (
+            <div key={process.jobRequestId} className="flex flex-col items-start gap-0.5">
+              <ProcessBadge phase={process.phase} label={process.label} />
+              {processes.length > 1 && <span className="text-[10px] text-slate-400">{process.roleTitle}</span>}
+            </div>
+          ))}
+          {processes.length > 2 && <span className="text-[10px] text-slate-400">+{processes.length - 2} more jobs</span>}
+        </div>
+      );
+    },
   },
   {
     accessorKey: "updatedAt",
@@ -110,7 +117,7 @@ export function CompaniesPage() {
       <PageHeader
         eyebrow="Placements"
         title="Companies"
-        description="Hiring partners, their open job requests and the PSMs who own them."
+        description="Hiring partners, their open job requests and the employees who own them."
         actions={can("company:write") && (
           <Button onClick={() => setCreating(true)}><Plus size={16} /> Add company</Button>
         )}

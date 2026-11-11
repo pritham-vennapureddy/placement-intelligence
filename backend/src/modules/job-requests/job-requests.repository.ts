@@ -8,9 +8,12 @@ const listSelect = {
   roleTitle: true,
   openings: true,
   requiredCandidateCount: true,
+  ctcLpa: true,
   requestDate: true,
   deadline: true,
   status: true,
+  processPhase: true,
+  processRound: { select: { name: true } },
   updatedAt: true,
   company: { select: { id: true, name: true } },
   psmOwner: { select: { id: true, fullName: true } },
@@ -34,6 +37,10 @@ const detailInclude = {
       assignedBy: { select: { id: true, fullName: true } },
     },
     orderBy: { assignedAt: "desc" as const },
+  },
+  recruitmentBatches: {
+    select: { id: true, name: true, sequence: true, status: true, openings: true, startsAt: true, endsAt: true, internalSheetUrl: true, companySheetUrl: true, internalTabs: true, createdAt: true },
+    orderBy: { sequence: "asc" as const },
   },
 } satisfies Prisma.JobRequestInclude;
 
@@ -87,10 +94,10 @@ export const jobRequestsRepository = {
     return prisma.product.count({ where: { id: { in: ids }, isActive: true } });
   },
 
-  /** The user, if they are active and hold the PSM role. */
+  /** The user, if they are active and hold the Employee role. */
   findAssignablePsm(userId: string) {
     return prisma.user.findFirst({
-      where: { id: userId, isActive: true, roles: { some: { role: { code: "PSM" } } } },
+      where: { id: userId, isActive: true, roles: { some: { role: { code: "EMPLOYEE" } } } },
       select: { id: true, fullName: true },
     });
   },
@@ -103,6 +110,18 @@ export const jobRequestsRepository = {
     assignedById: string,
   ) {
     const job = await db.jobRequest.create({ data });
+    await db.recruitmentBatch.create({
+      data: {
+        jobRequestId: job.id,
+        name: "Batch 1",
+        sequence: 1,
+        openings: job.openings,
+        startsAt: job.requestDate,
+        endsAt: job.deadline,
+        internalSheetUrl: job.internalSheetUrl,
+        companySheetUrl: job.companySheetUrl,
+      },
+    });
     const skillIds = await upsertSkills(db, skills);
     await db.jobRequestSkill.createMany({ data: skillIds.map((skillId) => ({ jobRequestId: job.id, skillId })) });
     if (productIds.length > 0) {

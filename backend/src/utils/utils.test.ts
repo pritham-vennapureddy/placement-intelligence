@@ -19,6 +19,12 @@ describe("request hashing for idempotency", () => {
     assert.notEqual(base, hashRequest("POST", "/api/y", { a: 1 }));
     assert.notEqual(base, hashRequest("PUT", "/api/x", { a: 1 }));
   });
+
+  test("binary bodies are hashed without JSON expansion", () => {
+    const body = Buffer.from([1, 2, 3]);
+    assert.equal(hashRequest("POST", "/api/upload", body), hashRequest("POST", "/api/upload", Buffer.from([1, 2, 3])));
+    assert.notEqual(hashRequest("POST", "/api/upload", body), hashRequest("POST", "/api/upload", Buffer.from([1, 2, 4])));
+  });
 });
 
 describe("pagination", () => {

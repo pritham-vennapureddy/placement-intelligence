@@ -11,6 +11,7 @@ import { definedOnly } from "../../utils/object.js";
 import { splitSkills } from "../../utils/skills.js";
 import { createCompanySchema } from "../companies/companies.validators.js";
 import { createJobRequestSchema, updateJobRequestSchema } from "./job-requests.validators.js";
+import { resolveJobRequestOwner } from "./owner-policy.js";
 
 const COMPANY_ID = "0b6f7a3e-2c1d-4e5f-9a8b-7c6d5e4f3a2b";
 const validJob = {
@@ -71,6 +72,30 @@ describe("job request validation", () => {
   test("a partial update does not fill in defaults that would wipe existing data", () => {
     const parsed = definedOnly(updateJobRequestSchema.parse({ roleTitle: "AIML Engineer" }));
     assert.deepEqual(parsed, { roleTitle: "AIML Engineer" });
+  });
+});
+
+describe("job request owner selection", () => {
+  test("an admin can leave the employee owner blank and own the new job", () => {
+    assert.deepEqual(resolveJobRequestOwner({ id: "admin-1", roles: ["ADMIN"] }), {
+      ownerId: "admin-1",
+      adminSelfAssignment: true,
+    });
+  });
+
+  test("an admin-selected employee still goes through employee validation", () => {
+    assert.deepEqual(resolveJobRequestOwner({ id: "admin-1", roles: ["ADMIN"] }, "employee-1"), {
+      ownerId: "employee-1",
+      adminSelfAssignment: false,
+    });
+  });
+
+  test("a manager still must choose an employee and an employee defaults to themself", () => {
+    assert.throws(() => resolveJobRequestOwner({ id: "manager-1", roles: ["MANAGER"] }), /Choose the employee/);
+    assert.deepEqual(resolveJobRequestOwner({ id: "employee-1", roles: ["EMPLOYEE"] }), {
+      ownerId: "employee-1",
+      adminSelfAssignment: false,
+    });
   });
 });
 

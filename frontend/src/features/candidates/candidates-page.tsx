@@ -10,7 +10,7 @@ import { useDebouncedValue } from "../../hooks/use-debounced-value";
 import { catalogApi } from "../../services/api";
 import { candidatesApi } from "../../services/workflow-api";
 import type { CandidateListItem } from "../../types/workflow";
-import { ASSESSED_LABELS, CATEGORY_LABELS } from "../screening/badges";
+import { CATEGORY_LABELS } from "../screening/badges";
 
 const ALL = "__all__";
 
@@ -50,7 +50,7 @@ const columns: ColumnDef<CandidateListItem>[] = [
     header: "College",
     cell: ({ row }) => <span className="text-xs text-slate-600">{[row.original.college, row.original.graduationYear].filter(Boolean).join(" · ") || "—"}</span>,
   },
-  { accessorKey: "assessedPool", header: "Assessed pool", cell: ({ row }) => <span className="text-xs">{ASSESSED_LABELS[row.original.assessedPool]}</span> },
+  { id: "pools", header: "Assessed pools", cell: ({ row }) => <span className="text-xs">{row.original.poolMemberships?.map(({ poolType }) => poolType).join(", ") || "—"}</span> },
   { accessorKey: "applications", header: "Jobs" },
   { accessorKey: "updatedAt", header: "Updated", cell: ({ row }) => <span className="text-xs text-slate-500">{format(new Date(row.original.updatedAt), "d MMM yyyy")}</span> },
 ];
@@ -60,8 +60,9 @@ export function CandidatesPage({ assessedOnly = false }: { assessedOnly?: boolea
   const [params, setParams] = useSearchParams();
   const page = Math.max(1, Number(params.get("page")) || 1);
   const category = params.get("category") ?? ALL;
-  const assessedPool = assessedOnly ? "YES" : params.get("assessed") ?? ALL;
+  const poolType = params.get("pool") ?? ALL;
   const productId = params.get("product") ?? ALL;
+  const jobRequestId = params.get("jobRequestId") ?? undefined;
   const [search, setSearch] = useState(params.get("q") ?? "");
   const debounced = useDebouncedValue(search);
   const products = useQuery({ queryKey: ["catalog", "products"], queryFn: catalogApi.products, staleTime: 5 * 60_000 });
@@ -74,13 +75,15 @@ export function CandidatesPage({ assessedOnly = false }: { assessedOnly?: boolea
   }, { replace: true });
 
   const candidates = useQuery({
-    queryKey: ["candidates", { page, category, assessedPool, productId, search: debounced }],
+    queryKey: ["candidates", { page, category, poolType, assessedOnly, productId, jobRequestId, search: debounced }],
     queryFn: () => candidatesApi.list({
       page,
       ...(debounced ? { search: debounced } : {}),
       ...(category !== ALL ? { category } : {}),
-      ...(assessedPool !== ALL ? { assessedPool } : {}),
+      ...(poolType !== ALL ? { poolType } : {}),
+      ...(assessedOnly ? { poolOnly: true } : {}),
       ...(productId !== ALL ? { productId } : {}),
+      ...(jobRequestId ? { jobRequestId } : {}),
     }),
     placeholderData: keepPreviousData,
   });
@@ -91,7 +94,9 @@ export function CandidatesPage({ assessedOnly = false }: { assessedOnly?: boolea
         eyebrow="Placements"
         title={assessedOnly ? "Assessed pool" : "Candidates"}
         description={assessedOnly
-          ? "Candidates marked as assessed. “Unknown” is kept separate from “No”."
+          ? "Candidates synced from the Bucket, TR and Competency Google Sheets tabs."
+          : jobRequestId
+            ? "Candidates who applied to this job request, with details imported from Google Sheets."
           : "Everyone who applied to job requests you can see, with their history across drives."}
       />
       <DataTable
@@ -128,15 +133,15 @@ export function CandidatesPage({ assessedOnly = false }: { assessedOnly?: boolea
                 {Object.entries(CATEGORY_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
               </SelectContent>
             </Select>
-            {!assessedOnly && (
-              <Select value={assessedPool} onValueChange={(value) => setParam("assessed", value)}>
-                <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ALL}>Assessed: any</SelectItem>
-                  {Object.entries(ASSESSED_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>Assessed: {label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            )}
+            <Select value={poolType} onValueChange={(value) => setParam("pool", value)}>
+              <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>All assessed pools</SelectItem>
+                <SelectItem value="BUCKET">Bucket</SelectItem>
+                <SelectItem value="TR">TR</SelectItem>
+                <SelectItem value="COMPETENCY">Competency</SelectItem>
+              </SelectContent>
+            </Select>
           </>
         )}
       />

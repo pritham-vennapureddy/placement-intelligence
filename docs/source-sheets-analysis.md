@@ -53,15 +53,15 @@ These sheets contain formulas over `mainsheet`. The rules they encode:
 | Eligible Students | ~18.9k | `user_id`, name, mobile, alternate mobile, email, skills, `product` | Candidate pool and products; not applications |
 | Applied Users | 940 | Applied Datetime, User Id, **Job Id (platform UUID)**, Product, gender, location, education (bachelors, masters, 12th, 10th %), Resume Link | `Application` (TA) + candidate profile |
 | Form Responses 1 | 211 | Company-specific Google Form: UID, interest, work experience, internships, full-time roles, notice period, GitHub, coding profile, resume | Candidate profile, `CandidateExperience`, application answers |
-| tool | 1.1k | Resume analysis per candidate: skills / projects / experience / certification / education / summary, each with a 0–1 score, project titles, latest company, analysis time | `ResumeAssessment` |
+| tool | 1.1k | Resume analysis per candidate: skills / projects / experience / certification / education / summary, each with a 0–1 score, project titles, latest company, analysis time | Job-scoped `CandidateResumeAssessment`; source row also classified as `RESUME` |
 | TA | 1.1k | Mobile, resume, product, name (FILTER of Applied Users), no header | Stage TA |
 | SC | 28 | mobile, resume, priority `P1/P2/P3`, resume decision `c / reject / hold`, email **or** a reason in the same column, `tech` and `comm` scores (1–5), screening `status` consider / reject / hold, remark | RS outcome + SC outcome |
-| SP | 6 | mobile, resume, priority | Stage SP |
+| SP | 6 | mobile, `Selection_Basis`, `Remarks` | Final shortlist (`SP`) outcome; presence in the tab means selected |
 
 Observations:
 
-- **Candidate key.** `user_id` (UUID) is the platform candidate ID. The stage tabs (TA / SC / SP) only carry the **mobile number**, so imports match stage rows to candidates by mobile.
-- **Email and mobile are not unique per candidate.** In Eligible Students, 175 emails and 177 mobiles belong to more than one `user_id`. This conflicts with decision D1 (email unique).
+- **Candidate key.** `user_id` (UUID) remains source data, but placement imports now match on normalized mobile only. Every mobile must identify one person; duplicate mobiles in an applicant or supplemental sheet are excluded as ambiguous until the sheet is corrected.
+- **Email and mobile are not unique in the source workbook.** Eligible Students has 175 emails and 177 mobile values associated with multiple `user_id`s (429 affected rows); Form Responses 1 also has a mobile shared by two UUID rows. With mobile-only matching, those source rows will remain unresolved until the team makes their mobile values unique. This replaces the earlier UUID-first import behavior.
 - **Candidates can have more than one product.** 30 users appear with two products (e.g. `CCBP_INTENSIVE` + `External`). Products seen: `CCBP_ACADEMY_SMART`, `CCBP_ACADEMY_GENIUS`, `CCBP_ACADEMY_EDGE`, `CCBP_ACADEMY_SMART_CAREER_PLUS`, `CCBP_ACADEMY_GENIUS_CAREER_PLUS`, `CCBP_INTENSIVE`, `CCBP_INTENSIVE_NSDC_SKILL_INDIA`, `INTENSIVE_COLLEGE_PLUS`, `External`. Category (Academy / Intensive / External) follows from the product code.
 - **One job draws applicants from many products**, so product belongs to the candidate and to each application (as it was when they applied), not to the job.
 - **Two job identifiers.** Applied Users carries a platform Job Id (UUID); the tracker uses `CMP-xxx`.
@@ -75,7 +75,7 @@ Observations:
 
 One tab per role (`AIML Engineer`, `MERN Developer`). Columns: Full Name, Mobile Number, Email Id, Bachelors Course / Department / Year / Percentage, Resume, then one column per company round (`Screening Round`, `TR Round 1`, `MR Round`, `Final Status`), all still empty.
 
-- No Candidate ID and no Job ID: rows are matched by email / mobile, and the job by company + tab (role).
+- No Candidate ID and no Job ID: rows are matched by normalized mobile only, and the job by company + tab (role). A duplicated mobile is rejected as ambiguous.
 - The round columns differ per company. This confirms that rounds are configured per job request.
 - One mobile number appears on two rows of the same tab.
 
@@ -90,3 +90,16 @@ One tab per role (`AIML Engineer`, `MERN Developer`). Columns: Full Name, Mobile
 7. `InternalStageCandidate`: add priority (P1–P3), technical and communication scores.
 8. PSM operations: `PsmTask`, `JobContribution` (lead owner, primary / secondary screener, primary / secondary guidance), `GuidanceSession`.
 9. Incentives: `IncentiveRule` (role → weight, effective dates), tier and target-status thresholds as configuration, `PsmMonthlyTarget`. Scores are computed from candidate outcomes and contributions, never stored as the source of truth.
+
+## 5. Assessed-pool upload and analytics
+
+The supplied `Post Assessment eligible students for Placement Pool.xlsx` contains one response worksheet with 76 non-empty data rows and 31 columns. Its columns cover a UID, student contact/profile fields, availability and job-search answers, education, resume, and placement information. It does **not** contain an explicit product, Bucket A/B/C tier, TR status, Competency status, or SP reason column.
+
+The assessed-pool Google Sheet includes `Offline Pool Main` and `Competency Pool Main` tabs, with a separate `Offline Attended - Old Process` tab. The assessed-pool source sync reads the first two tabs only, preserves every cell (including repeated or blank headers), hyperlink, and repeated-mobile source row, and stores a process label per mobile-keyed record. `Offline Pool Main` is classified as New; `Competency Pool Main` remains Unknown because its tab does not explicitly identify an old/new process. The Old Process tab is excluded from this source as requested. Refresh is manual, and detected column mappings are refreshed on each sync.
+
+- The assessed pool is a standalone Academy dataset. It does not look up or update candidate profiles and does not read other Google Sheets.
+- Assessed-pool rows are keyed by normalized mobile number. Repeated mobile rows are merged into one candidate record while every source row remains available in the record details. Rows with missing or invalid mobile numbers are skipped and counted.
+- Imports merge into existing pool records. Rows absent from a later file are preserved; mapped blank cells clear that mapped field, while fields not mapped in the upload retain their previous value. The upload is not a delete/replace operation.
+- The competency tab has a grouped header row followed by metric headers. The importer combines them and stores C1–C7 overall scores, verdict bands, clearance statuses, and levels; analytics report score averages and value counts for each competency.
+- Bucket A/B/C counts use the source bucket column. TR1/TR2 counts use explicit source statuses; only `Clear`/`Cleared` count as cleared.
+- `Offline Pool Main` provides `Role Rank Checks` and `Final Pool Checks`, but no explicit SP/final-shortlist reason column. The checks are shown separately in analytics and record details; a reason is only reported when the sheet contains a reason field.

@@ -89,7 +89,7 @@ async function googleRequest<T>(url: string): Promise<T> {
   const auth = googleAuth();
   const client = await auth.getClient();
   try {
-    const response = await client.request<T>({ url, method: "GET" });
+    const response = await client.request<T>({ url, method: "GET", timeout: 90_000 });
     return response.data;
   } catch (error) {
     const status = typeof error === "object" && error !== null && "response" in error &&
@@ -100,7 +100,7 @@ async function googleRequest<T>(url: string): Promise<T> {
       throw new ApiError(
         403,
         "SHEET_ACCESS_DENIED",
-        "Google could not access this spreadsheet. Share it with the configured service account and check the Sheets API is enabled.",
+        `Google could not open this spreadsheet. Share it (Viewer is enough) with ${getGoogleServiceAccountEmail() ?? "the configured service account"}, then try again.`,
       );
     }
     if (status === 401) {
@@ -137,4 +137,78 @@ export async function readHeaderRow(
   );
   const row = result.values?.[0] ?? [];
   return row.map((value) => typeof value === "string" ? value.trim() : String(value ?? ""));
+}
+
+export async function readSampleRows(
+  spreadsheetId: string,
+  sheetTitle: string,
+  limit = 10,
+): Promise<{ rowNumber: number; cells: string[] }[]> {
+  const escapedTitle = sheetTitle.replaceAll("'", "''");
+  const range = `'${escapedTitle}'!A1:AZ${limit}`;
+  const result = await googleRequest<ValuesResponse>(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}`,
+  );
+  return (result.values ?? []).map((values, index) => ({
+    rowNumber: index + 1,
+    cells: values.map((value) => typeof value === "string" ? value.trim() : String(value ?? "").trim()),
+  })).filter((row) => row.cells.some(Boolean));
+}
+
+export async function readColumnValues(
+  spreadsheetId: string,
+  sheetTitle: string,
+  columnIndex: number,
+  firstRow: number,
+): Promise<string[]> {
+  let column = "";
+  for (let value = columnIndex + 1; value > 0; value = Math.floor((value - 1) / 26)) {
+    column = String.fromCharCode(65 + ((value - 1) % 26)) + column;
+  }
+  const escapedTitle = sheetTitle.replaceAll("'", "''");
+  const range = `'${escapedTitle}'!${column}${firstRow}:${column}`;
+  const result = await googleRequest<ValuesResponse>(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}`,
+  );
+  return (result.values ?? []).map((row) => {
+    const value = row[0];
+    return typeof value === "string" ? value.trim() : String(value ?? "").trim();
+  });
+}
+
+export interface SpreadsheetGrid {
+  title: string;
+  sheets: { title: string; rows: { text: string; link?: string }[][] }[];
+}
+
+interface GridResponse {
+  properties?: { title?: string };
+  sheets?: {
+    properties: { title: string; sheetType?: string };
+    data?: { rowData?: { values?: { formattedValue?: string; hyperlink?: string }[] }[] }[];
+  }[];
+}
+
+/**
+ * Every grid tab's displayed values and cell hyperlinks (e.g. resume links),
+ * read in one call with the read-only scope. Charts and other non-grid tabs are skipped.
+ */
+export async function fetchSpreadsheetGrid(spreadsheetId: string): Promise<SpreadsheetGrid> {
+  const fields = "properties.title,sheets(properties(title,sheetType),data(rowData(values(formattedValue,hyperlink))))";
+  const grid = await googleRequest<GridResponse>(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?includeGridData=true&fields=${encodeURIComponent(fields)}`,
+  );
+  return {
+    title: grid.properties?.title ?? "Untitled spreadsheet",
+    sheets: (grid.sheets ?? [])
+      .filter(({ properties }) => !properties.sheetType || properties.sheetType === "GRID")
+      .map((sheet) => ({
+        title: sheet.properties.title,
+        rows: (sheet.data?.[0]?.rowData ?? []).map((row) =>
+          (row.values ?? []).map((cell) => ({
+            text: cell.formattedValue ?? "",
+            ...(cell.hyperlink ? { link: cell.hyperlink } : {}),
+          }))),
+      })),
+  };
 }
