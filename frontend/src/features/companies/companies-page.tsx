@@ -64,19 +64,25 @@ const columns: ColumnDef<CompanyListItem>[] = [
   },
   {
     id: "process",
-    header: "Hiring status",
+    header: "JDs · hiring status",
     cell: ({ row }) => {
       const processes = row.original.processes;
-      if (processes.length === 0) return <span className="text-xs text-slate-400">No job requests</span>;
+      if (processes.length === 0) return <span className="text-xs text-slate-400">No JDs yet</span>;
       return (
-        <div className="space-y-1">
-          {processes.slice(0, 2).map((process) => (
-            <div key={process.jobRequestId} className="flex flex-col items-start gap-0.5">
+        <div className="space-y-1.5">
+          {processes.map((process) => (
+            <div key={process.jobRequestId} className="flex flex-wrap items-center gap-2">
+              <Link
+                to={`/job-requests/${process.jobRequestId}`}
+                className="max-w-[220px] truncate text-xs font-medium text-slate-700 hover:text-indigo-700"
+                title={process.roleTitle}
+                onClick={(event) => event.stopPropagation()}
+              >
+                {process.roleTitle}
+              </Link>
               <ProcessBadge phase={process.phase} label={process.label} />
-              {processes.length > 1 && <span className="text-[10px] text-slate-400">{process.roleTitle}</span>}
             </div>
           ))}
-          {processes.length > 2 && <span className="text-[10px] text-slate-400">+{processes.length - 2} more jobs</span>}
         </div>
       );
     },

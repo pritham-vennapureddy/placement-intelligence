@@ -6,20 +6,26 @@ import {
   Target,
   Users,
 } from "lucide-react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { format } from "date-fns";
+import { Pencil } from "lucide-react";
+import { useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { useAuth } from "../contexts/auth-context";
 import { FilterBar } from "../components/filter-bar";
 import { LiveFunnel } from "../components/live-funnel";
 import { PlacementKpiPanel } from "../components/placement-kpi-panel";
 import { useDashboardFilters } from "../hooks/use-dashboard-filters";
-import { ProcessBadge } from "../features/tracking/tracking-dialogs";
+import { ProcessBadge, ProcessStatusDialog } from "../features/tracking/tracking-dialogs";
+import { usePermissions } from "../hooks/use-permissions";
 import { dashboardApi } from "../services/api";
+import type { DashboardSummary } from "../types/api";
 
 const numberFormat = new Intl.NumberFormat("en-IN");
 
 const pageDetails: Record<string, { title: string; subtitle: string }> = {
-  "/": { title: "Companies", subtitle: "Choose a company to review its job applicants and Google Sheets analytics." },
+  "/": { title: "Companies", subtitle: "Every company with its JDs and each JD's hiring status. Open a company for its applicants and Google Sheets analytics." },
   "/assessed-pool": { title: "Assessed candidate pool", subtitle: "Candidates from the assessed pools synced from Google Sheets." },
   "/sheets": { title: "Spreadsheet connections", subtitle: "Set up the source sheets that will keep your placement data in sync." },
   "/my-work": { title: "My work dashboard", subtitle: "Your owned companies, candidate actions and upcoming placement priorities." },
@@ -54,65 +60,104 @@ function MetricCard({
   );
 }
 
+type SummaryCompany = DashboardSummary["companies"][number];
+type SummaryJob = SummaryCompany["jobRequests"][number];
+
+/** Every company with its JDs underneath; the hiring status belongs to each JD. */
 function CompanyTable({ onSelect }: { onSelect: (companyId: string) => void }) {
+  const { can } = usePermissions();
   const summary = useQuery({ queryKey: ["dashboard", "summary"], queryFn: () => dashboardApi.getSummary() });
   const companies = summary.data?.companies ?? [];
+  const [editing, setEditing] = useState<{ company: SummaryCompany; job: SummaryJob } | null>(null);
+  const canChange = can("pipeline:write");
+  const jdCount = companies.reduce((total, company) => total + company.jobRequests.length, 0);
 
   return (
     <Card>
       <CardContent className="p-0">
         <div className="flex flex-col justify-between gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center">
           <div>
-            <CardTitle>Companies and job requests</CardTitle>
-            <p className="mt-1 text-xs text-slate-400">Applicants from imported Google Sheets</p>
+            <CardTitle>Companies and their JDs</CardTitle>
+            <p className="mt-1 text-xs text-slate-400">{companies.length} companies · {jdCount} JDs. Each JD has its own hiring status{canChange ? "; use Change to update it" : ""}.</p>
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[700px] text-left">
+          <table className="w-full min-w-[820px] text-left">
             <thead className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400">
               <tr>
-                <th className="px-5 py-3 font-semibold">Company</th>
-                <th className="px-3 py-3 font-semibold">Job requests</th>
+                <th className="px-5 py-3 font-semibold">Company / JD</th>
+                <th className="px-3 py-3 font-semibold">Owner</th>
                 <th className="px-3 py-3 font-semibold">Applicants</th>
-                <th className="px-3 py-3 font-semibold">Open positions</th>
-                <th className="px-5 py-3 text-right font-semibold">Hiring status</th>
+                <th className="px-3 py-3 font-semibold">Openings</th>
+                <th className="px-5 py-3 font-semibold">Hiring status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {companies.map((company) => {
-                const applicants = company.jobRequests.reduce((total, job) => total + job.applications, 0);
-                const openPositions = company.jobRequests.reduce((total, job) => total + (job.status === "OPEN" ? job.openings : 0), 0);
-                return (
-                  <tr key={company.id} className="cursor-pointer hover:bg-slate-50/80" onClick={() => onSelect(company.id)}>
-                    <td className="px-5 py-3.5">
+            {companies.map((company) => {
+              const applicants = company.jobRequests.reduce((total, job) => total + job.applications, 0);
+              return (
+                <tbody key={company.id} className="border-t border-slate-200">
+                  <tr className="cursor-pointer bg-slate-50/50 hover:bg-slate-100/70" onClick={() => onSelect(company.id)}>
+                    <td className="px-5 py-3" colSpan={2}>
                       <div className="flex items-center gap-3">
-                        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-100 text-sm font-bold text-indigo-700">{company.name.slice(0, 1).toUpperCase()}</span>
-                        <div><p className="text-sm font-semibold text-slate-800">{company.name}</p><p className="mt-0.5 text-xs text-slate-400">{company.jobRequests.map((job) => job.roleTitle).join(" · ")}</p></div>
+                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-100 text-sm font-bold text-indigo-700">{company.name.slice(0, 1).toUpperCase()}</span>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">{company.name}</p>
+                          <p className="text-[11px] text-slate-400">{company.jobRequests.length} JD{company.jobRequests.length === 1 ? "" : "s"}</p>
+                        </div>
                       </div>
                     </td>
-                    <td className="px-3 py-3.5 text-sm text-slate-600">{company.jobRequests.length}</td>
-                    <td className="px-3 py-3.5 text-sm text-slate-600">{numberFormat.format(applicants)}</td>
-                    <td className="px-3 py-3.5 text-sm text-slate-600">{numberFormat.format(openPositions)}</td>
-                    <td className="px-5 py-3.5 text-right">
-                      <div className="flex flex-col items-end gap-1">
-                        {company.jobRequests.map((job) => (
-                          <span key={job.id} className="flex items-center gap-1.5" title={job.roleTitle}>
-                            {company.jobRequests.length > 1 && <span className="max-w-[140px] truncate text-[10px] text-slate-400">{job.roleTitle}</span>}
-                            <ProcessBadge phase={job.processPhase} label={job.processLabel} />
-                          </span>
-                        ))}
-                      </div>
-                    </td>
+                    <td className="px-3 py-3 text-sm font-medium text-slate-600">{numberFormat.format(applicants)}</td>
+                    <td className="px-3 py-3" colSpan={2} />
                   </tr>
-                );
-              })}
-              {summary.isPending && <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-slate-400">Loading company analytics…</td></tr>}
-              {summary.isError && <tr><td colSpan={5} role="alert" className="px-5 py-8 text-center text-sm text-rose-600">Could not load company analytics.</td></tr>}
-              {!summary.isPending && !summary.isError && companies.length === 0 && <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-slate-500">No companies are available in your workspace yet.</td></tr>}
-            </tbody>
+                  {company.jobRequests.map((job) => (
+                    <tr key={job.id} className="border-t border-slate-100 hover:bg-slate-50/60">
+                      <td className="py-2.5 pl-16 pr-3">
+                        <Link to={`/job-requests/${job.id}`} className="text-sm font-medium text-slate-700 hover:text-indigo-700">{job.roleTitle}</Link>
+                        <p className="font-mono text-[10px] text-slate-400">{job.jobId}</p>
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-slate-500">{job.psmOwner?.fullName ?? "—"}</td>
+                      <td className="px-3 py-2.5 text-sm text-slate-600">{numberFormat.format(job.applications)}</td>
+                      <td className="px-3 py-2.5 text-sm text-slate-600">{numberFormat.format(job.openings)}</td>
+                      <td className="px-5 py-2.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <ProcessBadge phase={job.processPhase} label={job.processLabel} />
+                          {job.processPhaseAt && <span className="text-[10px] text-slate-400">since {format(new Date(job.processPhaseAt), "d MMM")}</span>}
+                          {canChange && (
+                            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-indigo-600" onClick={() => setEditing({ company, job })}>
+                              <Pencil size={12} /> Change
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              );
+            })}
+            {(summary.isPending || summary.isError || companies.length === 0) && (
+              <tbody>
+                {summary.isPending && <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-slate-400">Loading companies…</td></tr>}
+                {summary.isError && <tr><td colSpan={5} role="alert" className="px-5 py-8 text-center text-sm text-rose-600">Could not load companies.</td></tr>}
+                {!summary.isPending && !summary.isError && companies.length === 0 && <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-slate-500">No companies are available in your workspace yet.</td></tr>}
+              </tbody>
+            )}
           </table>
         </div>
       </CardContent>
+      {editing && (
+        <ProcessStatusDialog
+          open
+          onOpenChange={(open) => !open && setEditing(null)}
+          job={{
+            id: editing.job.id,
+            roleTitle: editing.job.roleTitle,
+            companyName: editing.company.name,
+            phase: editing.job.processPhase,
+            roundId: editing.job.processRoundId,
+            rounds: editing.job.rounds,
+          }}
+        />
+      )}
     </Card>
   );
 }

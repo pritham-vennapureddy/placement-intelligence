@@ -21,7 +21,7 @@ const today = () => format(new Date(), "yyyy-MM-dd");
 /** Refreshes everything that shows company status or guidance. */
 export function useTrackingRefresh() {
   const queryClient = useQueryClient();
-  return () => Promise.all(["tracking", "my-work", "guidance", "insights", "pipeline", "dashboard"].map((key) => queryClient.invalidateQueries({ queryKey: [key] })));
+  return () => Promise.all(["tracking", "my-work", "guidance", "insights", "pipeline", "dashboard", "companies", "job-requests"].map((key) => queryClient.invalidateQueries({ queryKey: [key] })));
 }
 
 const PHASE_HINTS: Partial<Record<CompanyProcessPhase, string>> = {

@@ -423,6 +423,7 @@ export function CompanyDetailPage() {
   const [editing, setEditing] = useState(false);
   const [confirmStatus, setConfirmStatus] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [changingJobId, setChangingJobId] = useState<string | null>(null);
   const company = useQuery({ queryKey: ["companies", companyId], queryFn: () => companiesApi.get(companyId) });
 
   const toggleStatus = useMutation({
@@ -493,7 +494,7 @@ export function CompanyDetailPage() {
       <Tabs defaultValue="analytics">
         <TabsList>
           <TabsTrigger value="analytics">Analytics</TabsTrigger>
-          <TabsTrigger value="jobs">Job requests ({data.jobRequests.length})</TabsTrigger>
+          <TabsTrigger value="jobs">JDs & hiring status ({data.jobRequests.length})</TabsTrigger>
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
@@ -508,7 +509,7 @@ export function CompanyDetailPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="bg-slate-50/60">
-                    <TableHead className="px-4 text-xs">Role</TableHead>
+                    <TableHead className="px-4 text-xs">JD / role</TableHead>
                     <TableHead className="px-4 text-xs">Openings</TableHead>
                     <TableHead className="px-4 text-xs">Employee owner</TableHead>
                     <TableHead className="px-4 text-xs">Requested</TableHead>
@@ -528,7 +529,14 @@ export function CompanyDetailPage() {
                       <TableCell className="px-4">{format(new Date(job.requestDate), "d MMM yyyy")}</TableCell>
                       <TableCell className="px-4">{job.deadline ? format(new Date(job.deadline), "d MMM yyyy") : "—"}</TableCell>
                       <TableCell className="px-4">
-                        <ProcessBadge phase={job.processPhase} label={job.processLabel} />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <ProcessBadge phase={job.processPhase} label={job.processLabel} />
+                          {can("pipeline:write") && (
+                            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-indigo-600" onClick={(event) => { event.stopPropagation(); setChangingJobId(job.id); }}>
+                              <Pencil size={12} /> Change
+                            </Button>
+                          )}
+                        </div>
                         {job.processPhaseAt && <p className="mt-0.5 text-[10px] text-slate-400">since {format(new Date(job.processPhaseAt), "d MMM yyyy")}</p>}
                       </TableCell>
                     </TableRow>
@@ -567,6 +575,16 @@ export function CompanyDetailPage() {
         </TabsContent>
       </Tabs>
 
+      {(() => {
+        const job = data.jobRequests.find(({ id }) => id === changingJobId);
+        return job ? (
+          <ProcessStatusDialog
+            open
+            onOpenChange={(open) => !open && setChangingJobId(null)}
+            job={{ id: job.id, roleTitle: job.roleTitle, companyName: data.name, phase: job.processPhase, roundId: job.processRound?.id ?? null, rounds: job.interviewRounds }}
+          />
+        ) : null;
+      })()}
       <CompanyFormDialog open={editing} onOpenChange={setEditing} company={data} />
       <ConfirmDialog
         open={confirmStatus}

@@ -85,7 +85,18 @@ export const dashboardRepository = {
           name: true,
           jobRequests: {
             where: filter,
-            select: { id: true, jobId: true, roleTitle: true, openings: true, status: true, processPhase: true, processRound: { select: { name: true } } },
+            select: {
+              id: true,
+              jobId: true,
+              roleTitle: true,
+              openings: true,
+              status: true,
+              processPhase: true,
+              processPhaseAt: true,
+              processRound: { select: { id: true, name: true } },
+              interviewRounds: { select: { id: true, name: true }, orderBy: { sequence: "asc" } },
+              psmOwner: { select: { id: true, fullName: true } },
+            },
             orderBy: { updatedAt: "desc" },
           },
         },
@@ -100,9 +111,11 @@ export const dashboardRepository = {
     const countsByJob = new Map(applicationCounts.map(({ jobRequestId, _count }) => [jobRequestId, _count._all]));
     return companies.map((company) => ({
       ...company,
-      jobRequests: company.jobRequests.map(({ processRound, ...job }) => ({
+      jobRequests: company.jobRequests.map(({ processRound, interviewRounds, ...job }) => ({
         ...job,
         processLabel: companyProcessLabel(job.processPhase, processRound?.name),
+        processRoundId: processRound?.id ?? null,
+        rounds: interviewRounds,
         applications: countsByJob.get(job.id) ?? 0,
       })),
     }));

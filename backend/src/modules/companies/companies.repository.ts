@@ -67,6 +67,7 @@ export const companiesRepository = {
             processPhase: true,
             processPhaseAt: true,
             processRound: { select: { id: true, name: true } },
+            interviewRounds: { select: { id: true, name: true }, orderBy: { sequence: "asc" } },
             psmOwner: { select: { id: true, fullName: true } },
           },
           orderBy: { requestDate: "desc" },

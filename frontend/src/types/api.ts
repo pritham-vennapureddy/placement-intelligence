@@ -25,7 +25,11 @@ export interface DashboardSummary {
       openings: number;
       status: string;
       processPhase: CompanyProcessPhase;
+      processPhaseAt: string | null;
       processLabel: string;
+      processRoundId: string | null;
+      rounds: { id: string; name: string }[];
+      psmOwner: PersonRef | null;
       applications: number;
     }[];
   }[];
@@ -331,6 +335,7 @@ export interface CompanyDetail {
     processPhaseAt: string | null;
     processRound: { id: string; name: string } | null;
     processLabel: string;
+    interviewRounds: { id: string; name: string }[];
   }[];
   history: AuditEntry[];
 }
