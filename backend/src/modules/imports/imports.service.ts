@@ -5,6 +5,7 @@ import {
   suggestPipelineStatus,
   suggestStageOutcome,
   normalizeValueKey,
+  STAGE_LABELS,
   type DecisionStage,
 } from "@placement/shared";
 import { inTransaction, prisma, type Db } from "../../db.js";
@@ -155,13 +156,10 @@ function assertGoogleInternalMapping(mapping: ReturnType<typeof inferGoogleMappi
     if (selected.mode !== "SHEET") continue;
     const stage = mapping.stages[stageKey];
     if (!stage || typeof stage !== "object" || !("mode" in stage) || stage.mode !== "SHEET") {
-      const needsReason = stageKey === "FINAL_SHORTLIST";
       throw new ApiError(
         422,
         "GOOGLE_SHEET_ANALYSIS_FAILED",
-        needsReason
-          ? `Could not identify a mobile-number column in the selected SP tab “${selected.sheet}”.`
-          : `Could not identify a candidate ID, email, or mobile in the selected ${stageKey} tab “${selected.sheet}”.`,
+        `Could not find a mobile-number or candidate-ID column in the selected ${STAGE_LABELS[stageKey].code} tab “${selected.sheet}”. Add a column with the students' mobile numbers or candidate IDs.`,
       );
     }
   }

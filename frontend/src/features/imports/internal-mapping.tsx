@@ -22,8 +22,10 @@ import {
   withSuggestions,
 } from "./sheet-controls";
 
+const UUID_VALUE = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i;
+
 const APPLICATION_FIELDS = [
-  { key: "candidateId", label: "Candidate ID (ignored for matching)", pattern: /user\s*id|candidate\s*id|^uid$/i, hint: "Kept as source data only. Candidate identity is matched by normalized mobile number." },
+  { key: "candidateId", label: "Candidate ID", pattern: /user\s*id|candidate\s*id|^uid$/i, hint: "Lets stage tabs that list only candidate IDs find the applicant; identity itself is the mobile number." },
   { key: "fullName", label: "Full name", pattern: /^(full\s*)?name$|candidate name|username/i, required: true, hint: "New candidates need a name; normalized mobile matches existing profiles." },
   { key: "email", label: "Email", pattern: /e-?mail/i },
   { key: "mobile", label: "Mobile (required identity)", pattern: /mobile|phone/i, hint: "Normalized mobile number is the sole identity key and must be unique." },
@@ -98,8 +100,9 @@ export function initialInternalMapping(batch: ImportBatch): InternalMappingState
       headerRow: 1,
       valueMap: {},
       ...prior,
-      matchBy: "mobile",
-      ...(prior.mode === "SHEET" && prior.matchBy !== "mobile" ? { matchColumn: undefined } : {}),
+      // Stage tabs are matched by mobile or by candidate ID; email is not used.
+      matchBy: prior.matchBy === "candidateId" ? "candidateId" : "mobile",
+      ...(prior.mode === "SHEET" && prior.matchBy === "email" ? { matchColumn: undefined } : {}),
     };
     const sheet = sheetNamed(new RegExp(`(^|[^a-z])${code}([^a-z]|$)`, "i"));
     return {
@@ -202,13 +205,13 @@ export function toInternalPayload(state: InternalMappingState, automatic = false
         mode: "SHEET",
         sheet: stage.sheet,
         headerRow: stage.headerRow,
-        matchBy: "mobile",
+        matchBy: stage.matchBy,
         matchColumn: stage.matchColumn,
         // No Selection_Basis column: the Remarks column is the selection basis.
         ...(stage.selectionBasisColumn ?? stage.remarksColumn) !== undefined ? { selectionBasisColumn: stage.selectionBasisColumn ?? stage.remarksColumn } : {},
         ...(stage.remarksColumn !== undefined ? { remarksColumn: stage.remarksColumn } : {}),
       }
-      : { ...stage, matchBy: "mobile" };
+      : { ...stage };
   }
   return {
     missing,
@@ -402,9 +405,13 @@ function StageSection({ batch, stageKey, config, onChange, automatic }: { batch:
         const digits = value.replace(/\D/g, "");
         return /^[+\d\s().-]+$/.test(value) && digits.length >= 10 && digits.length <= 13;
       });
-    const email = guessColumn(options, /e-?mail/i)
-      ?? guessColumnByValues(preview.data.rows, headerRow, (value) => /^\S+@\S+\.\S+$/.test(value));
-    set({ matchBy: "mobile", matchColumn: mobile ?? 0 });
+    // No mobile column: a candidate-ID column, looked up in the TA / student-detail tabs on check.
+    const candidateId = mobile === undefined
+      ? guessColumnByValues(preview.data.rows, headerRow, (value) => UUID_VALUE.test(value.trim())) ?? guessColumn(options, /candidate\s*id|user\s*id|^uid$|uuid/i)
+      : undefined;
+    set(mobile !== undefined || candidateId === undefined
+      ? { matchBy: "mobile", matchColumn: mobile ?? 0 }
+      : { matchBy: "candidateId", matchColumn: candidateId });
   }, [preview.data, options, config.mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -487,8 +494,14 @@ function StageSection({ batch, stageKey, config, onChange, automatic }: { batch:
             <div className="mt-3 space-y-3">
               <SheetPreview rows={preview.data?.rows} isLoading={preview.isPending && Boolean(config.sheet)} headerRow={headerRow} />
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <Field label="Candidate identity" hint="All stage sheets are matched by normalized mobile number. UUID and email values are ignored.">
-                  <div className="flex h-9 items-center rounded-md border border-slate-200 px-3 text-sm">Mobile number</div>
+                <Field label="Find the applicant by" hint="Mobile number, or candidate ID looked up in the TA / student-detail tabs. Each value is read for what it is, so a mixed column also works.">
+                  <Select value={config.matchBy === "candidateId" ? "candidateId" : "mobile"} onValueChange={(matchBy) => set({ matchBy: matchBy as MatchBy })}>
+                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="mobile">Mobile number</SelectItem>
+                      <SelectItem value="candidateId">Candidate ID (UUID)</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </Field>
                 <Field label="…in column *"><ColumnSelect options={options} value={config.matchColumn} onChange={(matchColumn) => set({ matchColumn })} optional={false} /></Field>
                 {stageKey !== "FINAL_SHORTLIST" && <>

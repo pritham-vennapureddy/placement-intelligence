@@ -453,8 +453,9 @@ describe("internal sheet planning", () => {
     assert.deepEqual(plan.summary.stages.SCREENING_SHORTLIST, { mode: "SHEET", rows: 3, selected: 1, rejected: 1, onHold: 0, noShow: 0, pending: 0, other: 0, errors: 1, conflicts: 0 });
   });
 
-  test("stage rows ignore UUIDs and match only normalized mobile numbers", () => {
+  test("stage rows match by mobile number or by a candidate ID found on the applications tab", () => {
     const uuid = "00000000-0000-4000-8000-000000000001";
+    const unknownUuid = "00000000-0000-4000-8000-0000000000ff";
     const applied = [
       APPLIED[0]!,
       [uuid, JOB.jobId, "CCBP_INTENSIVE", "Asha Rao", "9876543210", "asha@example.com"],
@@ -462,16 +463,57 @@ describe("internal sheet planning", () => {
     ];
     const stageRows = [
       ["identifier", "decision"],
-      [uuid, "c"],
+      [uuid.toUpperCase(), "c"],
       ["9123456780", "reject"],
+      [unknownUuid, "c"],
     ];
     const plan = planInternalImport(mapping(), reader({ Applied: applied, SC: stageRows }), context());
     const sc = plan.rows.filter((row) => row.role === "SCREENING_SHORTLIST");
+    const asha = plan.rows.find((row) => row.role === "APPLICATIONS" && row.rowRef === "9876543210");
 
-    assert.equal(sc[0]?.included, false);
-    assert.equal(sc[0]?.issues[0]?.code, "NOT_AN_APPLICANT");
+    // The candidate ID resolves to Asha's mobile, so the row lands on her application.
+    assert.equal(sc[0]?.included, true);
+    assert.equal((sc[0]?.data as { candidateCode: string }).candidateCode, (asha?.data as { candidateCode: string }).candidateCode);
     assert.equal(sc[1]?.included, true);
     assert.match((sc[1]?.data as { candidateCode: string }).candidateCode, /^GEN-/);
+    assert.equal(sc[2]?.included, false);
+    assert.equal(sc[2]?.issues[0]?.code, "NOT_AN_APPLICANT");
+  });
+
+  test("a TA row with “#N/A” for mobile gets the mobile and details its candidate ID has on a student-detail tab", () => {
+    const uuid = "00000000-0000-4000-8000-000000000003";
+    const applied = [
+      APPLIED[0]!,
+      [uuid, JOB.jobId, "External", "", "#N/A", ""],
+    ];
+    const form = [
+      ["Candidate ID", "Name", "Mobile"],
+      [uuid, "Sravani K", "9573033382"],
+    ];
+    const plan = planInternalImport(
+      mapping({}, [{ sheet: "Form", headerRow: 1, keyType: "mobile", keyColumn: 2, columns: { candidateId: 0, fullName: 1, mobile: 2 } }]),
+      reader({ Applied: applied, Form: form, SC: [["id", "decision"], [uuid, "c"]] }),
+      context(),
+    );
+    const ta = plan.rows.find((row) => row.role === "APPLICATIONS");
+    const sc = plan.rows.find((row) => row.role === "SCREENING_SHORTLIST");
+    assert.equal(ta?.included, true);
+    assert.equal((ta?.data as { candidate: { mobile: string; fullName: string } }).candidate.mobile, "9573033382");
+    assert.equal((ta?.data as { candidate: { mobile: string; fullName: string } }).candidate.fullName, "Sravani K");
+    assert.equal(sc?.included, true);
+  });
+
+  test("a candidate ID listed with two different mobiles is not guessed", () => {
+    const uuid = "00000000-0000-4000-8000-000000000002";
+    const applied = [
+      APPLIED[0]!,
+      [uuid, JOB.jobId, "CCBP_INTENSIVE", "Asha Rao", "9876543210", "asha@example.com"],
+      [uuid, JOB.jobId, "CCBP_INTENSIVE", "Ravi Kumar", "9000000001", "ravi@example.com"],
+    ];
+    const plan = planInternalImport(mapping(), reader({ Applied: applied, SC: [["identifier", "decision"], [uuid, "c"]] }), context());
+    const sc = plan.rows.filter((row) => row.role === "SCREENING_SHORTLIST");
+    assert.equal(sc[0]?.included, false);
+    assert.equal(sc[0]?.issues[0]?.code, "AMBIGUOUS_MATCH");
   });
 
   test("final shortlist selection reasons are read from the SP tab", () => {

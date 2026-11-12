@@ -269,6 +269,30 @@ export function planInternalImport(config: InternalMapping, read: Reader, contex
 
   type ProfileData = NonNullable<ApplicationRowData["resumeAssessment"]>;
   type ProfileEntry = { candidateCode: string | null; fields: Partial<CandidateFields>; product?: string | undefined; resumeAssessment?: ProfileData | undefined; additionalProfiles: NonNullable<ApplicationRowData["additionalProfiles"]> };
+  /**
+   * Candidate ID (UUID) → mobiles, from every TA / student-detail row that shows both.
+   * Stage tabs that list only candidate IDs are matched through it; mobile stays the identity key.
+   */
+  const mobilesByUuid = new Map<string, Set<string>>();
+  const rememberUuids = (row: SheetRow, mobile: string | null) => {
+    if (!mobile) return;
+    for (const value of row.cells) {
+      const trimmed = value?.trim();
+      if (trimmed && UUID_VALUE.test(trimmed)) {
+        const key = trimmed.toLowerCase();
+        (mobilesByUuid.get(key) ?? mobilesByUuid.set(key, new Set()).get(key)!).add(mobile);
+      }
+    }
+  };
+  /** The one mobile the row's candidate ID(s) point to, or null when none or several. */
+  const mobileFromUuids = (row: SheetRow): string | null => {
+    const found = new Set<string>();
+    for (const value of row.cells) {
+      const trimmed = value?.trim();
+      if (trimmed && UUID_VALUE.test(trimmed)) for (const mobile of mobilesByUuid.get(trimmed.toLowerCase()) ?? []) found.add(mobile);
+    }
+    return found.size === 1 ? [...found][0]! : null;
+  };
   const profileByKey = new Map<string, ProfileEntry>();
   const ambiguousProfileKeys = new Set<string>();
   const ambiguousProfileSheetKeys = new Set<string>();
@@ -284,6 +308,7 @@ export function planInternalImport(config: InternalMapping, read: Reader, contex
       const rawMobile = cell(row, lookup.columns.mobile);
       const mobile = rawMobile && !UUID_VALUE.test(rawMobile) ? normalizeMobile(rawMobile) : null;
       if (mobile) (rowsByMobile.get(mobile) ?? rowsByMobile.set(mobile, []).get(mobile)!).push(row);
+      rememberUuids(row, mobile);
     }
     const collapsedRowsByMobile = new Map<string, number>();
     const ambiguousMobiles = new Set<string>();
@@ -382,9 +407,11 @@ export function planInternalImport(config: InternalMapping, read: Reader, contex
     }
   }
 
+  /** Student-detail data for a TA row, by its own mobile or, failing that, the mobile its candidate ID points to. */
   const profileForRow = (row: SheetRow): ProfileEntry => {
     const rawMobile = cell(row, config.applications.columns.mobile);
-    const keys = [profileKey(rawMobile)];
+    const ownKey = profileKey(rawMobile);
+    const keys = [ownKey ?? profileKey(mobileFromUuids(row))];
     let profile: ProfileEntry = { candidateCode: null, fields: {}, additionalProfiles: [] };
     for (const key of keys) {
       const match = key && !ambiguousProfileKeys.has(key) ? profileByKey.get(key) : undefined;
@@ -417,8 +444,14 @@ export function planInternalImport(config: InternalMapping, read: Reader, contex
     const issues: PlanIssue[] = [];
     const profile = profileForRow(row);
     const rawMobile = cell(row, columns.mobile);
-    const mobile = (rawMobile && !UUID_VALUE.test(rawMobile) ? normalizeMobile(rawMobile) : null) ?? normalizeMobile(profile.fields.mobile);
-    const fullName = cell(row, columns.fullName) ?? profile.fields.fullName ?? null;
+    // No usable mobile on the TA row (blank, "#N/A"): its candidate ID can still give one from the student-detail tabs.
+    const mobile = (rawMobile && !UUID_VALUE.test(rawMobile) ? normalizeMobile(rawMobile) : null)
+      ?? normalizeMobile(profile.fields.mobile)
+      ?? mobileFromUuids(row);
+    rememberUuids(row, mobile);
+    // A candidate ID sitting in the name column is not a name.
+    const sheetName = cell(row, columns.fullName);
+    const fullName = (sheetName && !UUID_VALUE.test(sheetName) ? sheetName : null) ?? profile.fields.fullName ?? null;
     const rawEmail = cell(row, columns.email) ?? profile.fields.email ?? null;
     const email = normalizeEmail(rawEmail);
     const rowJobId = lower(cell(row, columns.jobId));
@@ -588,12 +621,25 @@ export function planInternalImport(config: InternalMapping, read: Reader, contex
   const resolveApplicant = (mapping: StageSheetMapping, row: SheetRow): { code: string | null; issue?: PlanIssue } => {
     const raw = cell(row, mapping.matchColumn);
     if (!raw) return { code: null, issue: { severity: "ERROR", code: "MISSING_MATCH_VALUE", message: "The column used to find the applicant is empty." } };
-    const key = UUID_VALUE.test(raw) ? null : normalizeMobile(raw);
+    // Each value is read for what it is: a candidate ID is looked up in the TA / student-detail tabs, anything else is a mobile.
+    let key: string | null;
+    if (UUID_VALUE.test(raw)) {
+      const mobiles = mobilesByUuid.get(raw.toLowerCase());
+      if (!mobiles || mobiles.size === 0) {
+        return { code: null, issue: { severity: "ERROR", code: "NOT_AN_APPLICANT", message: `Candidate ID “${raw}” is not on the applications tab or any student-detail tab with a mobile number, so the applicant cannot be found.` } };
+      }
+      if (mobiles.size > 1) {
+        return { code: null, issue: { severity: "ERROR", code: "AMBIGUOUS_MATCH", message: `Candidate ID “${raw}” appears with different mobile numbers (${[...mobiles].join(", ")}).` } };
+      }
+      key = [...mobiles][0]!;
+    } else {
+      key = normalizeMobile(raw);
+    }
     const matches = key
       ? new Set([...(batchByMobile.get(key) ?? []), ...(existingByMobile.get(key) ?? [])])
       : new Set<string>();
     if (!matches || matches.size === 0) {
-      return { code: null, issue: { severity: "ERROR", code: "NOT_AN_APPLICANT", message: `“${raw}” does not match an applicant mobile number. Stage sheets must use the candidate's mobile number.` } };
+      return { code: null, issue: { severity: "ERROR", code: "NOT_AN_APPLICANT", message: `“${raw}” does not match an applicant. Stage tabs must list the candidate's mobile number or candidate ID.` } };
     }
     if (matches.size > 1) {
       return { code: null, issue: { severity: "ERROR", code: "AMBIGUOUS_MATCH", message: `“${raw}” matches more than one applicant.` } };

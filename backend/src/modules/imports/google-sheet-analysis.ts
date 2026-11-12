@@ -23,6 +23,7 @@ type SheetAnalysis = {
 
 const normalizeHeader = (value: string) => value.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
 const emailValue = (value: string) => /^\S+@\S+\.\S+$/.test(value.trim());
+const uuidValue = (value: string) => /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(value.trim());
 const mobileValue = (value: string) => {
   const normalized = value.trim();
   if (/^[+\d\s().-]+$/.test(normalized)) {
@@ -55,6 +56,13 @@ function valueColumn(rows: SheetAnalysis["rows"], headerRow: number, matches: (v
     }
   }
   return bestIndex;
+}
+
+/** True when at least 80% of the column's first non-empty data values match. */
+function columnMostly(rows: SheetAnalysis["rows"], headerRow: number, column: number, matches: (value: string) => boolean): boolean {
+  const values = rows.filter((row) => row.rowNumber > headerRow).slice(0, 12)
+    .map((row) => row.cells[column]?.trim()).filter((value): value is string => Boolean(value));
+  return values.length > 0 && values.filter(matches).length / values.length >= 0.8;
 }
 
 function nameValueColumn(rows: SheetAnalysis["rows"], headerRow: number): number | undefined {
@@ -176,12 +184,22 @@ function analyzeSheets(workbook: Workbook): SheetAnalysis[] {
       const column = valueColumn(rows, headerRow, mobileValue);
       if (column !== undefined) columns.mobile = column;
     }
-    if (fullName === undefined) {
+    // A "Name" header over candidate IDs (seen in real TA tabs) is an ID column, not names.
+    if (fullName !== undefined && columnMostly(rows, headerRow, fullName, uuidValue)) {
+      delete columns.fullName;
+      if (columns.candidateId === undefined) columns.candidateId = fullName;
+    }
+    if (columns.fullName === undefined) {
       const column = nameValueColumn(rows, headerRow);
       if (column !== undefined) columns.fullName = column;
     }
-    if (candidateId === undefined && headerRow > 0) {
+    if (columns.candidateId === undefined && headerRow > 0) {
       const column = headerColumn(headers, /user id|candidate id|^uid$/);
+      if (column !== undefined) columns.candidateId = column;
+    }
+    // Headerless or oddly named ID columns are found by their values.
+    if (columns.candidateId === undefined) {
+      const column = valueColumn(rows, headerRow, uuidValue);
       if (column !== undefined) columns.candidateId = column;
     }
     return { name, headerRow, rows, headers, columns };
@@ -308,8 +326,10 @@ function mappingForInternal(sheets: SheetAnalysis[], selection?: GoogleInternalS
     const tab = selected?.mode === "SHEET"
       ? sheets.find(({ name }) => name === selected.sheet)
       : stageSheet(sheets, stageCodes[stage] as RecruitmentCode, usedSheets);
-    const matchColumn = tab?.columns.mobile;
-    const matchBy = "mobile";
+    // Stage tabs list applicants by mobile or by candidate ID, whichever the tab has.
+    // IDs are turned into mobiles through the TA / student-detail tabs when the plan is built.
+    const matchColumn = tab?.columns.mobile ?? tab?.columns.candidateId;
+    const matchBy = tab?.columns.mobile !== undefined ? "mobile" : "candidateId";
     const inferredDecisionColumn = tab
       ? valueMappedColumn(tab.rows, tab.headerRow, [matchColumn ?? -1], suggestStageOutcome)
       : undefined;
