@@ -103,6 +103,7 @@ export interface CompanyAnalytics {
     stages: Partial<Record<import("@placement/shared").DecisionStage, {
       status: import("@placement/shared").StageStatus;
       remarks: string | null;
+      skipReason: import("@placement/shared").ScreeningSkipReason | null;
       selected: number;
       rejected: number;
       pending: number;
@@ -413,6 +414,8 @@ export interface RecruitmentBatchSummary {
   companySheetUrl: string | null;
   internalTabs: BatchTabs | null;
   createdAt: string;
+  /** Saved data in the batch; any of it means the batch cannot be deleted. `importBatches` counts saved imports only. */
+  _count: { applications: number; interviewRounds: number; resumeAssessments: number; additionalProfiles: number; importBatches: number };
 }
 
 export const BATCH_TAB_CODES = ["TA", "RS", "SC", "AS", "SP"] as const;

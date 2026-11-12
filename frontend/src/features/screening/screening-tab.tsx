@@ -25,6 +25,7 @@ import { cn } from "../../utils/cn";
 import { CATEGORY_LABELS, OutcomeBadge, StageStatusBadge } from "./badges";
 import { RefreshFromGoogleButton } from "../imports/refresh-button";
 import { RecruitmentBatchesPanel } from "./recruitment-batches";
+import { ScreeningSkipDialog, useUndoScreeningSkip } from "./screening-dialogs";
 
 const ALL = "__all__";
 
@@ -48,14 +49,37 @@ function StageCard({ stage, total, active, onClick }: { stage: StageView; total:
   );
 }
 
-function StageTrackingSummary({ stage }: { stage: StageView }) {
+function StageTrackingSummary({ jobRequestId, stage }: { jobRequestId: string; stage: StageView }) {
+  const { can } = usePermissions();
+  const [skipOpen, setSkipOpen] = useState(false);
+  const undo = useUndoScreeningSkip(jobRequestId);
+  const isScreening = stage.stage === "SCREENING_SHORTLIST";
+  const skipped = stage.status === "NOT_CONDUCTED";
+  const canEdit = isScreening && can("screening:write");
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-slate-100 px-4 py-3 text-xs text-slate-500">
       <StageStatusBadge status={stage.status} />
       {stage.completedAt && <span>Updated {format(new Date(stage.completedAt), "d MMM yyyy")}</span>}
-      {stage.status === "NOT_CONDUCTED" && stage.skipReason && <span className="font-medium text-violet-700">Skipped: {SCREENING_SKIP_REASON_LABELS[stage.skipReason]}</span>}
+      {skipped && isScreening && (
+        <span className={cn("font-medium", stage.skipReason ? "text-violet-700" : "text-amber-700")}>
+          {stage.skipReason ? `Skipped: ${SCREENING_SKIP_REASON_LABELS[stage.skipReason]}` : "Skipped: reason not recorded"}
+        </span>
+      )}
       {stage.remarks && <span>{stage.remarks}</span>}
       {stage.nextPlannedDate && <span>Next: {format(new Date(stage.nextPlannedDate), "d MMM yyyy")}</span>}
+      {canEdit && (
+        <span className="ml-auto flex gap-2">
+          {skipped ? (
+            <>
+              <Button size="sm" variant="outline" onClick={() => setSkipOpen(true)}>Edit skip reason</Button>
+              <Button size="sm" variant="ghost" disabled={undo.isPending} onClick={() => undo.mutate()}>Screening was conducted</Button>
+            </>
+          ) : (stage.counts.SELECTED ?? 0) + (stage.counts.REJECTED ?? 0) + (stage.counts.ON_HOLD ?? 0) === 0 && (
+            <Button size="sm" variant="outline" onClick={() => setSkipOpen(true)}>Mark screening not conducted</Button>
+          )}
+        </span>
+      )}
+      {canEdit && <ScreeningSkipDialog jobRequestId={jobRequestId} stage={stage} open={skipOpen} onOpenChange={setSkipOpen} />}
     </div>
   );
 }
@@ -329,7 +353,7 @@ export function ScreeningTab({ jobRequestId }: { jobRequestId: string }) {
         <div className="border-b border-slate-100 px-4 pt-4">
           <p className="text-sm font-semibold text-slate-800">{STAGE_LABELS[stage].code} · {STAGE_LABELS[stage].label}</p>
         </div>
-        <StageTrackingSummary stage={current} />
+        <StageTrackingSummary jobRequestId={jobRequestId} stage={current} />
         <StageCandidates jobRequestId={jobRequestId} stage={stage} />
       </Card>
     </div>

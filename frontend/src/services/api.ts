@@ -669,6 +669,11 @@ export const jobRequestsApi = {
     return response.data.recruitmentBatch;
   },
 
+  /** Deletes a batch with no saved data; the API refuses (409) when it has applicants, rounds or saved imports. */
+  async deleteRecruitmentBatch(jobRequestId: string, batchId: string): Promise<void> {
+    await request(`/job-requests/${jobRequestId}/recruitment-batches/${batchId}`, { method: "DELETE", idempotencyKey: newIdempotencyKey() });
+  },
+
   /** Tabs of the internal sheet a batch reads (its own, else the job request's), with suggestions. */
   async internalSheetTabs(jobRequestId: string, batchId?: string, url?: string): Promise<InternalSheetTabs> {
     const response = await request<{ data: InternalSheetTabs }>(`/job-requests/${jobRequestId}/internal-sheet/tabs${toQueryString({ batchId, url })}`);

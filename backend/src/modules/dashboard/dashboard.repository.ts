@@ -139,7 +139,7 @@ export const dashboardRepository = {
           psmOwner: { select: { id: true, fullName: true } },
           internalProcess: {
             select: {
-              stages: { select: { id: true, stage: true, status: true, remarks: true } },
+              stages: { select: { id: true, stage: true, status: true, remarks: true, skipReason: true } },
             },
           },
           recruitmentBatches: {
@@ -367,6 +367,7 @@ export const dashboardRepository = {
           return [stage.stage, {
             status: stage.status,
             remarks: stage.remarks,
+            skipReason: stage.skipReason,
             selected: outcomes.find(({ outcome }) => outcome === "SELECTED")?._count._all ?? 0,
             rejected: outcomes.find(({ outcome }) => outcome === "REJECTED")?._count._all ?? 0,
             pending: outcomes.find(({ outcome }) => outcome === "PENDING")?._count._all ?? 0,

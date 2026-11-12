@@ -21,7 +21,7 @@ import { SupportBadge } from "../tracking/student-support";
 import { CompanyStatusCell, ProcessBadge, ProcessStatusDialog } from "../tracking/tracking-dialogs";
 import { CompanyFormDialog } from "./company-form-dialog";
 import { CATEGORY_LABELS, OutcomeBadge } from "../screening/badges";
-import { PIPELINE_STATUS_LABELS, STAGE_LABELS, STAGE_OUTCOME_LABELS, STAGE_OUTCOMES, type DecisionStage, type PipelineStatus, type StageOutcome } from "@placement/shared";
+import { PIPELINE_STATUS_LABELS, SCREENING_SKIP_REASON_LABELS, STAGE_LABELS, STAGE_OUTCOME_LABELS, STAGE_OUTCOMES, type DecisionStage, type PipelineStatus, type ScreeningSkipReason, type StageOutcome } from "@placement/shared";
 
 function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -121,6 +121,12 @@ function PoolCell({ pool }: { pool: CandidateItem["assessedPool"] }) {
     </div>
     {tr && <p className="text-[10px] text-slate-500">{tr}</p>}
   </div>;
+}
+
+/** "Not conducted · <reason> · <note>" for a skipped stage. */
+function skipText({ skipReason, remarks }: { skipReason?: ScreeningSkipReason | null; remarks: string | null }) {
+  const reason = skipReason ? SCREENING_SKIP_REASON_LABELS[skipReason] : remarks ? null : "reason not recorded";
+  return ["Not conducted", reason, remarks].filter(Boolean).join(" · ");
 }
 
 function categoryLabel(value: string | null | undefined) {
@@ -328,7 +334,7 @@ function CompanyAnalytics({ companyId, canViewCandidates }: { companyId: string;
                   counts.pending ? `${counts.pending} pending` : null,
                 ].filter(Boolean);
                 const notConducted = job.stages[stage]?.status === "NOT_CONDUCTED";
-                return <td key={stage} className="py-2 pr-2">{notConducted ? <span className="text-amber-700">Not conducted{job.stages[stage]?.remarks ? ` · ${job.stages[stage]?.remarks}` : ""}</span> : parts.join(" · ") || "—"}</td>;
+                return <td key={stage} className="py-2 pr-2">{notConducted ? <span className="text-amber-700">{skipText(job.stages[stage]!)}</span> : parts.join(" · ") || "—"}</td>;
               })}
             </tr>
           ))}</tbody>
@@ -360,7 +366,7 @@ function CompanyAnalytics({ companyId, canViewCandidates }: { companyId: string;
                   const data = job.stages[stage];
                   return <td key={stage} className="px-4 py-3">
                     {data?.status === "NOT_CONDUCTED"
-                      ? <span title={data.remarks ?? "No reason recorded"} className="text-xs text-amber-700">Not conducted{data.remarks ? ` · ${data.remarks}` : " · reason not recorded"}</span>
+                      ? <span title={data.remarks ?? "No note recorded"} className="text-xs text-amber-700">{skipText(data)}</span>
                       : data?.selected ?? 0}
                   </td>;
                 })}

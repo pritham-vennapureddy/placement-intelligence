@@ -297,6 +297,50 @@ export const jobRequestsService = {
   },
 
   /**
+   * Deletes a batch that holds no saved data (e.g. one added by mistake), with its
+   * unsaved draft or cancelled imports. Saved imports cannot be rolled back, so a
+   * batch with applicants, rounds or committed imports must be closed instead.
+   */
+  async deleteRecruitmentBatch(user: AuthenticatedUser, jobRequestId: string, batchId: string, audit: AuditContext) {
+    const { job, scope } = await loadVisible(user, jobRequestId);
+    if (!hasPermission(user.roles, "job:write") || !isJobOwnerInScope(scope, job.psmOwnerId)) {
+      throw new ApiError(403, "FORBIDDEN", "You cannot delete recruitment batches of this job request.");
+    }
+    const current = job.recruitmentBatches.find((batch) => batch.id === batchId);
+    if (!current) throw new ApiError(404, "RECRUITMENT_BATCH_NOT_FOUND", "The recruitment batch was not found on this job request.");
+
+    await inTransaction(async (transaction) => {
+      // Counted again inside the transaction so an import saved meanwhile is not lost.
+      const counts = await transaction.recruitmentBatch.findUniqueOrThrow({
+        where: { id: batchId },
+        select: { _count: { select: { applications: true, interviewRounds: true, resumeAssessments: true, additionalProfiles: true, importBatches: { where: { status: "COMMITTED" } } } } },
+      });
+      const held = counts._count;
+      if (held.applications + held.interviewRounds + held.resumeAssessments + held.additionalProfiles + held.importBatches > 0) {
+        const parts = [
+          held.applications ? `${held.applications} applicant${held.applications === 1 ? "" : "s"}` : null,
+          held.importBatches ? `${held.importBatches} saved import${held.importBatches === 1 ? "" : "s"}` : null,
+          held.interviewRounds ? `${held.interviewRounds} company round${held.interviewRounds === 1 ? "" : "s"}` : null,
+        ].filter(Boolean);
+        throw new ApiError(409, "RECRUITMENT_BATCH_HAS_DATA",
+          `${current.name} has saved data${parts.length ? ` (${parts.join(", ")})` : ""} and cannot be deleted. Close the batch instead to hide it from imports.`);
+      }
+      const drafts = await transaction.importBatch.findMany({ where: { recruitmentBatchId: batchId }, select: { id: true } });
+      if (drafts.length > 0) {
+        const ids = drafts.map(({ id }) => id);
+        await transaction.importApproval.deleteMany({ where: { batchId: { in: ids } } });
+        await transaction.importBatch.deleteMany({ where: { id: { in: ids } } });
+      }
+      await transaction.recruitmentBatch.delete({ where: { id: batchId } });
+      await recordAudit(transaction, audit, {
+        action: "RECRUITMENT_BATCH_DELETED", entityType: "JobRequest", entityId: job.id,
+        metadata: { recruitmentBatchId: batchId, name: current.name, sequence: current.sequence, draftImportsRemoved: drafts.length },
+      });
+    }, { timeoutMs: 30_000 });
+    return { id: batchId, name: current.name };
+  },
+
+  /**
    * The tabs of the internal sheet a batch reads (its own workbook, else the
    * job's), with a suggested TA / RS / SC / AS / SP choice and which tabs other
    * batches already use.

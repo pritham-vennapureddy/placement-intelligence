@@ -39,6 +39,12 @@ export const jobRequestsController = {
     ) });
   },
 
+  async deleteRecruitmentBatch(request: Request, response: Response): Promise<void> {
+    sendData(response, { recruitmentBatch: await jobRequestsService.deleteRecruitmentBatch(
+      request.user!, idOf(request), request.params.batchId as string, auditContextFrom(request),
+    ) });
+  },
+
   async internalSheetTabs(request: Request, response: Response): Promise<void> {
     const { batchId, url } = request.query as { batchId?: string; url?: string };
     sendData(response, await jobRequestsService.internalSheetTabs(request.user!, idOf(request), batchId, url));

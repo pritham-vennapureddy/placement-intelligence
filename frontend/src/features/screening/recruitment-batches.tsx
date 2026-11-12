@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ExternalLink, Layers, Pencil, Plus, UploadCloud } from "lucide-react";
+import { AlertTriangle, ExternalLink, Layers, Pencil, Plus, Trash2, UploadCloud } from "lucide-react";
+import { ConfirmDialog } from "../../components/confirm-dialog";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -38,6 +39,19 @@ function TabChips({ tabs }: { tabs: BatchTabs | null }) {
   );
 }
 
+function hasSavedData({ _count: count }: RecruitmentBatchSummary) {
+  return count.applications + count.importBatches + count.interviewRounds + count.resumeAssessments + count.additionalProfiles > 0;
+}
+
+function savedDataText({ name, _count: count }: RecruitmentBatchSummary) {
+  const parts = [
+    count.applications ? `${count.applications} applicant${count.applications === 1 ? "" : "s"}` : null,
+    count.importBatches ? `${count.importBatches} saved import${count.importBatches === 1 ? "" : "s"}` : null,
+    count.interviewRounds ? `${count.interviewRounds} company round${count.interviewRounds === 1 ? "" : "s"}` : null,
+  ].filter(Boolean);
+  return `${name} has saved data${parts.length ? ` (${parts.join(", ")})` : ""} and cannot be deleted`;
+}
+
 /**
  * Recruitment batches of a job request. Every batch reads the job request's
  * internal sheet (unless it names its own workbook); the PSM picks which tabs
@@ -46,7 +60,9 @@ function TabChips({ tabs }: { tabs: BatchTabs | null }) {
 export function RecruitmentBatchesPanel({ jobRequestId }: { jobRequestId: string }) {
   const { can } = usePermissions();
   const job = useQuery({ queryKey: ["job-requests", jobRequestId], queryFn: () => jobRequestsApi.get(jobRequestId) });
+  const queryClient = useQueryClient();
   const [editing, setEditing] = useState<RecruitmentBatchSummary | "new" | null>(null);
+  const [deleting, setDeleting] = useState<RecruitmentBatchSummary | null>(null);
   if (!job.data) return null;
   const batches = [...job.data.recruitmentBatches].sort((a, b) => a.sequence - b.sequence);
   const canWrite = can("job:write");
@@ -89,6 +105,13 @@ export function RecruitmentBatchesPanel({ jobRequestId }: { jobRequestId: string
               <div className="min-w-48 flex-[2]"><TabChips tabs={batch.internalTabs} /></div>
               <div className="flex gap-1.5">
                 {canWrite && <Button size="sm" variant="ghost" onClick={() => setEditing(batch)}><Pencil size={13} /> Edit</Button>}
+                {canWrite && (hasSavedData(batch) ? (
+                  <Button size="sm" variant="ghost" disabled title={`${savedDataText(batch)}. Close the batch instead (Edit → Batch closed).`} aria-label={`${batch.name} has saved data and cannot be deleted`}>
+                    <Trash2 size={13} /> Delete
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="ghost" className="text-red-600 hover:text-red-700" onClick={() => setDeleting(batch)}><Trash2 size={13} /> Delete</Button>
+                ))}
                 {can("import:run") && batch.status === "ACTIVE" && (
                   <Button size="sm" variant="outline" asChild>
                     <Link to={`/job-requests/${jobRequestId}/imports/new?target=INTERNAL_SCREENING&batch=${batch.id}`}><UploadCloud size={13} /> Import</Link>
@@ -101,6 +124,21 @@ export function RecruitmentBatchesPanel({ jobRequestId }: { jobRequestId: string
       )}
 
       {editing && <BatchDialog job={job.data} batch={editing === "new" ? null : editing} onClose={() => setEditing(null)} />}
+      <ConfirmDialog
+        open={Boolean(deleting)}
+        onOpenChange={(open) => !open && setDeleting(null)}
+        title={`Delete ${deleting?.name ?? "batch"}?`}
+        description="This batch has no applicants or saved imports. Its tab choices and any unsaved draft imports are removed. This cannot be undone."
+        confirmLabel="Delete batch"
+        destructive
+        onConfirm={async () => {
+          await jobRequestsApi.deleteRecruitmentBatch(jobRequestId, deleting!.id);
+          toast.success(`${deleting!.name} deleted.`);
+          await queryClient.invalidateQueries({ queryKey: ["job-requests", jobRequestId] });
+          await queryClient.invalidateQueries({ queryKey: ["internal-sheet-tabs", jobRequestId] });
+          setDeleting(null);
+        }}
+      />
     </Card>
   );
 }

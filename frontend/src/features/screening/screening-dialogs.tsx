@@ -3,11 +3,14 @@ import {
   DECISION_STAGES,
   INTERNAL_STAGES,
   PRIORITIES,
+  SCREENING_SKIP_REASON_LABELS,
+  SCREENING_SKIP_REASONS,
   STAGE_LABELS,
   STAGE_OUTCOME_LABELS,
   STAGE_OUTCOMES,
   type DecisionStage,
   type Priority,
+  type ScreeningSkipReason,
   type StageOutcome,
 } from "@placement/shared";
 import { useEffect, useMemo, useState } from "react";
@@ -21,7 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Textarea } from "../../components/ui/textarea";
 import { catalogApi } from "../../services/api";
 import { applicationsApi, screeningApi } from "../../services/workflow-api";
-import type { StageCandidateRow } from "../../types/workflow";
+import type { StageCandidateRow, StageView } from "../../types/workflow";
 import { OutcomeBadge } from "./badges";
 
 const NONE = "__none__";
@@ -120,6 +123,85 @@ export function DecisionDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/**
+ * Marks SC "not conducted" for the whole drive, or edits the reason of one already skipped.
+ * The reason category is counted on Insights; the note says what happened.
+ */
+export function ScreeningSkipDialog({
+  jobRequestId,
+  stage,
+  open,
+  onOpenChange,
+}: {
+  jobRequestId: string;
+  stage: StageView;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const refresh = useRefresh(jobRequestId);
+  const editing = stage.status === "NOT_CONDUCTED";
+  const [reason, setReason] = useState<ScreeningSkipReason | null>(null);
+  const [note, setNote] = useState("");
+  useEffect(() => {
+    if (!open) return;
+    setReason(stage.skipReason ?? null);
+    setNote(editing ? stage.remarks ?? "" : "");
+  }, [open, stage, editing]);
+  const save = useMutation({
+    mutationFn: () => screeningApi.updateStage(jobRequestId, "SCREENING_SHORTLIST", editing
+      ? { skipReason: reason, remarks: note.trim() }
+      : { status: "NOT_CONDUCTED", skipReason: reason, statusRemarks: note.trim() }),
+    onSuccess: async () => {
+      await refresh();
+      toast.success(editing ? "Skip reason updated" : "Screening marked as not conducted");
+      onOpenChange(false);
+    },
+  });
+  const ready = Boolean(reason) && Boolean(note.trim());
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !save.isPending && onOpenChange(next)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{editing ? "Edit why screening was skipped" : "Screening not conducted"}</DialogTitle>
+          <DialogDescription>
+            Use this when the drive had no screening round and profiles went straight to the final shortlist. The reason is counted on Insights.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <FormField id="skip-reason" label="Reason" required>
+            <Select value={reason ?? ""} onValueChange={(value) => setReason(value as ScreeningSkipReason)}>
+              <SelectTrigger id="skip-reason" className="h-10 w-full"><SelectValue placeholder="Choose a reason" /></SelectTrigger>
+              <SelectContent>{SCREENING_SKIP_REASONS.map((value) => <SelectItem key={value} value={value}>{SCREENING_SKIP_REASON_LABELS[value]}</SelectItem>)}</SelectContent>
+            </Select>
+          </FormField>
+          <FormField id="skip-note" label="Note" required>
+            <Textarea id="skip-note" rows={3} value={note} onChange={(event) => setNote(event.target.value)} placeholder="e.g. Company needed profiles within a day; shortlisted on resume and assessment scores" />
+          </FormField>
+        </div>
+        {save.error && <p role="alert" className="text-sm text-rose-600">{save.error.message}</p>}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={save.isPending}>Cancel</Button>
+          <Button onClick={() => save.mutate()} disabled={save.isPending || !ready}>{save.isPending ? "Saving…" : "Save"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Undoes a skipped SC: the stage goes back to "not started" and its reason is cleared. */
+export function useUndoScreeningSkip(jobRequestId: string) {
+  const refresh = useRefresh(jobRequestId);
+  return useMutation({
+    mutationFn: () => screeningApi.updateStage(jobRequestId, "SCREENING_SHORTLIST", { status: "NOT_STARTED", statusRemarks: "Screening skip undone", remarks: null }),
+    onSuccess: async () => {
+      await refresh();
+      toast.success("Screening is no longer marked as skipped");
+    },
+    onError: (error) => toast.error(error.message),
+  });
 }
 
 /** Manual candidate selection: choose applicants (by default, those selected at the previous stage). */

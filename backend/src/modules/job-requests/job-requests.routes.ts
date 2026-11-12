@@ -35,6 +35,12 @@ jobRequestsRouter.patch(
   validateBody(updateRecruitmentBatchSchema),
   jobRequestsController.updateRecruitmentBatch,
 );
+jobRequestsRouter.delete(
+  "/:jobRequestId/recruitment-batches/:batchId",
+  requirePermission("job:write"),
+  validateParams(recruitmentBatchParamsSchema),
+  jobRequestsController.deleteRecruitmentBatch,
+);
 jobRequestsRouter.get(
   "/:jobRequestId/internal-sheet/tabs",
   withId,

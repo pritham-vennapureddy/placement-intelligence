@@ -1,4 +1,4 @@
-import type { DecisionStage, InternalStage, InterviewOutcome, PaginationMeta, PipelineStatus, RoundType, StageOutcome, StageStatus } from "@placement/shared";
+import type { DecisionStage, InternalStage, InterviewOutcome, PaginationMeta, PipelineStatus, RoundType, ScreeningSkipReason, StageOutcome, StageStatus } from "@placement/shared";
 import type {
   CandidateDetail,
   CandidateListItem,
@@ -37,7 +37,7 @@ export const screeningApi = {
   async updateStage(
     jobRequestId: string,
     stage: InternalStage,
-    input: { status?: StageStatus; statusRemarks?: string; ownerId?: string | null; nextPlannedDate?: string | null; remarks?: string | null },
+    input: { status?: StageStatus; statusRemarks?: string; skipReason?: ScreeningSkipReason | null; ownerId?: string | null; nextPlannedDate?: string | null; remarks?: string | null },
   ): Promise<ScreeningProcess> {
     return (await request<Data<{ process: ScreeningProcess }>>(`/job-requests/${jobRequestId}/screening/stages/${stage}`, json("PATCH", input))).data.process;
   },

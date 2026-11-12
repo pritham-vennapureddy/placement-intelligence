@@ -104,17 +104,32 @@ export const screeningService = {
 
     const statusChanged = input.status !== undefined && input.status !== stage.status;
     const nextStatus = input.status ?? stage.status;
+    // Stage results are sheet-driven. The only manual change is skipping SC, editing that skip, or undoing it.
+    const skipEdit = stageName === "SCREENING_SHORTLIST"
+      && input.ownerId === undefined && input.nextPlannedDate === undefined
+      && (statusChanged
+        ? nextStatus === "NOT_CONDUCTED" || (stage.status === "NOT_CONDUCTED" && nextStatus === "NOT_STARTED")
+        : stage.status === "NOT_CONDUCTED");
+    if (!skipEdit) {
+      throw new ApiError(400, "STAGE_READ_ONLY", "Stage results come from the internal Google Sheet. Only skipping screening (SC) can be recorded here.");
+    }
     if (stageName === "SCREENING_SHORTLIST" && statusChanged && nextStatus === "NOT_CONDUCTED") {
       if (!input.skipReason) throw new ApiError(400, "SKIP_REASON_REQUIRED", "Choose why screening was not conducted.");
       if (!input.statusRemarks?.trim()) throw new ApiError(400, "SKIP_NOTE_REQUIRED", "Add a note explaining why screening was not conducted.");
     }
-    // The reason belongs to a skipped stage only; clear it when the stage is conducted after all.
-    const skipReason = nextStatus === "NOT_CONDUCTED" ? input.skipReason : statusChanged ? null : undefined;
+    // Editing an already-skipped SC: the reason and note can change but not be emptied.
+    if (stageName === "SCREENING_SHORTLIST" && !statusChanged && stage.status === "NOT_CONDUCTED") {
+      if (input.skipReason === null) throw new ApiError(400, "SKIP_REASON_REQUIRED", "Choose why screening was not conducted.");
+      if (input.remarks !== undefined && !input.remarks?.trim()) throw new ApiError(400, "SKIP_NOTE_REQUIRED", "Add a note explaining why screening was not conducted.");
+    }
+    // The reason belongs to a skipped SC only; clear it when the stage is conducted after all.
+    const skipReason = stageName !== "SCREENING_SHORTLIST" ? undefined
+      : nextStatus === "NOT_CONDUCTED" ? input.skipReason : statusChanged ? null : undefined;
     await inTransaction(async (transaction) => {
       await screeningRepository.updateStage(transaction, stage.id, definedOnly({
         status: input.status,
         ownerId: input.ownerId,
-        remarks: input.remarks ?? (statusChanged && nextStatus === "NOT_CONDUCTED" ? input.statusRemarks : undefined),
+        remarks: input.remarks !== undefined ? input.remarks : (statusChanged && nextStatus === "NOT_CONDUCTED" ? input.statusRemarks : undefined),
         skipReason,
         nextPlannedDate: input.nextPlannedDate === undefined ? undefined : input.nextPlannedDate ? new Date(`${input.nextPlannedDate}T00:00:00Z`) : null,
         completedAt: statusChanged ? (COMPLETE.has(input.status!) ? new Date() : null) : undefined,

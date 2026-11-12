@@ -39,7 +39,10 @@ const detailInclude = {
     orderBy: { assignedAt: "desc" as const },
   },
   recruitmentBatches: {
-    select: { id: true, name: true, sequence: true, status: true, openings: true, startsAt: true, endsAt: true, internalSheetUrl: true, companySheetUrl: true, internalTabs: true, createdAt: true },
+    select: { id: true, name: true, sequence: true, status: true, openings: true, startsAt: true, endsAt: true, internalSheetUrl: true, companySheetUrl: true, internalTabs: true, createdAt: true,
+      // Saved data that stops the batch from being deleted.
+      _count: { select: { applications: true, interviewRounds: true, resumeAssessments: true, additionalProfiles: true, importBatches: { where: { status: "COMMITTED" } } } },
+    },
     orderBy: { sequence: "asc" as const },
   },
 } satisfies Prisma.JobRequestInclude;
