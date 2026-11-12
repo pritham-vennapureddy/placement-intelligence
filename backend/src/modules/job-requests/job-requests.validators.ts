@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { JOB_REQUEST_STATUSES, parseHubspotRecordId } from "@placement/shared";
+import { COMPANY_PROCESS_PHASES, JOB_REQUEST_STATUSES, parseHubspotRecordId } from "@placement/shared";
 import { paginationQuerySchema } from "../../utils/pagination.js";
 
 const optionalText = (max: number) =>
@@ -35,6 +35,9 @@ export const listJobRequestsQuerySchema = paginationQuerySchema.extend({
   ownerId: z.uuid().optional(),
   productId: z.uuid().optional(),
   skill: z.string().trim().toLowerCase().max(80).optional(),
+  /** Hiring status with the company; with a round phase, `round` narrows it to one round name (e.g. "TR1"). */
+  process: z.enum(COMPANY_PROCESS_PHASES).optional(),
+  round: z.string().trim().max(120).optional(),
 });
 
 const jobFields = {

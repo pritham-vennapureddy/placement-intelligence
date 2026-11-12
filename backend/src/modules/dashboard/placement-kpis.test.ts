@@ -103,3 +103,26 @@ test("results are grouped by request month (newest first) and by company", () =>
   assert.deepEqual(result.companies.map(({ name, kpis }) => [name, kpis.TEAM_BELOW_8.placements]), [["Beta", 2], ["Acme", 1]]);
   assert.equal(result.totals.TEAM_BELOW_8.placements, 3);
 });
+
+test("the big picture counts every CTC level, splits placements by category and groups by request month", () => {
+  const jobs = [
+    // 12 LPA is outside the < 8 LPA team but still in the big picture.
+    job({ id: "j1", openings: 1, ctcLpa: 12, applications: [app("ACADEMY", "JOINED"), app("ACADEMY_INTENSIVE", "OFFER_RELEASED"), app("EXTERNAL", "REJECTED")] }),
+    job({ id: "j2", companyId: "c2", openings: 3, ctcLpa: null, applications: [app(null, "SELECTED")] }),
+    job({ id: "j3", companyId: "c2", openings: 2, requestDate: new Date("2026-11-02"), applications: [] }),
+  ];
+  const { overview } = buildPlacementKpis(jobs);
+  assert.deepEqual(overview.totals, {
+    jobRequests: 3,
+    companies: 2,
+    openings: 6,
+    positionsClosed: 2,
+    positionsClosedPct: 33.3,
+    placements: 3,
+    placementsByCategory: { ACADEMY: 1, ACADEMY_INTENSIVE: 1, EXTERNAL: 1 },
+  });
+  assert.deepEqual(overview.monthly.map(({ month, openings, placements }) => ({ month, openings, placements })), [
+    { month: "2026-11", openings: 2, placements: 0 },
+    { month: "2026-10", openings: 4, placements: 3 },
+  ]);
+});

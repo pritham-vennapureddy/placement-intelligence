@@ -1,6 +1,9 @@
 import {
   canTransitionJob,
+  COMPANY_PROCESS_PHASES,
   companyProcessLabel,
+  isRoundPhase,
+  type CompanyProcessPhase,
   hasPermission,
   hubspotRecordUrl,
   jobTransitionNeedsReason,
@@ -179,27 +182,38 @@ async function resolveCompany(db: Db, name: string, user: AuthenticatedUser, aud
   return company;
 }
 
+/** The list's filters (scope, view, search, owner…) other than the hiring status. */
+async function listFilter(user: AuthenticatedUser, query: ListJobRequestsQuery): Promise<Prisma.JobRequestWhereInput> {
+  const scope = await resolveDataScope(user);
+  const statuses = query.status ? [query.status] : VIEW_STATUSES[query.view];
+  return {
+    ...jobRequestScopeFilter(scope),
+    archivedAt: null,
+    ...(statuses ? { status: { in: [...statuses] } } : {}),
+    ...(query.companyId ? { companyId: query.companyId } : {}),
+    ...(query.ownerId ? { psmOwnerId: query.ownerId } : {}),
+    ...(query.productId ? { eligibleProducts: { some: { productId: query.productId } } } : {}),
+    ...(query.skill ? { skills: { some: { skill: { normalizedName: query.skill } } } } : {}),
+    ...(query.search
+      ? {
+        OR: [
+          { jobId: { contains: query.search.toLowerCase() } },
+          { roleTitle: { contains: query.search, mode: "insensitive" } },
+          { company: { name: { contains: query.search, mode: "insensitive" } } },
+          { skills: { some: { skill: { normalizedName: { contains: query.search.toLowerCase() } } } } },
+        ],
+      }
+      : {}),
+  };
+}
+
 export const jobRequestsService = {
   async list(user: AuthenticatedUser, query: ListJobRequestsQuery) {
-    const scope = await resolveDataScope(user);
-    const statuses = query.status ? [query.status] : VIEW_STATUSES[query.view];
     const where: Prisma.JobRequestWhereInput = {
-      ...jobRequestScopeFilter(scope),
-      archivedAt: null,
-      ...(statuses ? { status: { in: [...statuses] } } : {}),
-      ...(query.companyId ? { companyId: query.companyId } : {}),
-      ...(query.ownerId ? { psmOwnerId: query.ownerId } : {}),
-      ...(query.productId ? { eligibleProducts: { some: { productId: query.productId } } } : {}),
-      ...(query.skill ? { skills: { some: { skill: { normalizedName: query.skill } } } } : {}),
-      ...(query.search
-        ? {
-          OR: [
-            { jobId: { contains: query.search.toLowerCase() } },
-            { roleTitle: { contains: query.search, mode: "insensitive" } },
-            { company: { name: { contains: query.search, mode: "insensitive" } } },
-            { skills: { some: { skill: { normalizedName: { contains: query.search.toLowerCase() } } } } },
-          ],
-        }
+      ...(await listFilter(user, query)),
+      ...(query.process ? { processPhase: query.process } : {}),
+      ...(query.process && isRoundPhase(query.process) && query.round
+        ? { processRound: { name: { equals: query.round, mode: "insensitive" } } }
         : {}),
     };
     const { rows, total } = await jobRequestsRepository.list(where, toPrismaPage(query));
@@ -210,6 +224,29 @@ export const jobRequestsService = {
       eligibleProducts: eligibleProducts.map(({ product }) => product),
     }));
     return { jobRequests, meta: buildPaginationMeta(query, total) };
+  },
+
+  /**
+   * How many jobs sit at each hiring status, for the list's status filter. Round
+   * phases are split by round name ("TR1 in progress", "Yet to start TR2").
+   * Uses the same view, search and other filters as the list, but not the status filter itself.
+   */
+  async processSummary(user: AuthenticatedUser, query: ListJobRequestsQuery) {
+    const rows = await prisma.jobRequest.findMany({
+      where: await listFilter(user, query),
+      select: { processPhase: true, processRound: { select: { name: true } } },
+    });
+    const groups = new Map<string, { phase: CompanyProcessPhase; round: string | null; label: string; count: number }>();
+    for (const { processPhase, processRound } of rows) {
+      const round = isRoundPhase(processPhase) ? processRound?.name?.trim() || null : null;
+      const key = `${processPhase}|${round?.toLowerCase() ?? ""}`;
+      const group = groups.get(key) ?? { phase: processPhase, round, label: companyProcessLabel(processPhase, round), count: 0 };
+      group.count++;
+      groups.set(key, group);
+    }
+    return [...groups.values()].sort((a, b) =>
+      COMPANY_PROCESS_PHASES.indexOf(a.phase) - COMPANY_PROCESS_PHASES.indexOf(b.phase)
+      || (a.round ?? "").localeCompare(b.round ?? "", undefined, { numeric: true }));
   },
 
   async get(user: AuthenticatedUser, jobRequestId: string) {

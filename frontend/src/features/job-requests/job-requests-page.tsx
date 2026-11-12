@@ -1,4 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { COMPANY_PROCESS_PHASES, companyProcessLabel, type CompanyProcessPhase } from "@placement/shared";
 import type { ColumnDef } from "@tanstack/react-table";
 import { differenceInCalendarDays, format } from "date-fns";
 import { Plus } from "lucide-react";
@@ -10,9 +11,10 @@ import { Button } from "../../components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { useDebouncedValue } from "../../hooks/use-debounced-value";
 import { usePermissions } from "../../hooks/use-permissions";
-import { jobRequestsApi } from "../../services/api";
+import { jobRequestsApi, type ProcessSummaryGroup } from "../../services/api";
 import type { JobRequestListItem } from "../../types/api";
 import { ProcessBadge } from "../tracking/tracking-dialogs";
+import { cn } from "../../utils/cn";
 
 const PAGE_SIZE = 20;
 const VIEWS = ["active", "closed", "all"] as const;
@@ -92,6 +94,9 @@ export function JobRequestsPage() {
   const view: View = VIEWS.includes(params.get("view") as View) ? (params.get("view") as View) : "active";
   const [search, setSearch] = useState(params.get("q") ?? "");
   const debouncedSearch = useDebouncedValue(search);
+  const processParam = params.get("process") as CompanyProcessPhase | null;
+  const process = processParam && COMPANY_PROCESS_PHASES.includes(processParam) ? processParam : null;
+  const round = process ? params.get("round") : null;
 
   const setParam = (key: string, value: string | null) =>
     setParams((current) => {
@@ -102,10 +107,29 @@ export function JobRequestsPage() {
     }, { replace: true });
 
   const jobs = useQuery({
-    queryKey: ["job-requests", { page, view, search: debouncedSearch }],
-    queryFn: () => jobRequestsApi.list({ page, pageSize: PAGE_SIZE, view, ...(debouncedSearch ? { search: debouncedSearch } : {}) }),
+    queryKey: ["job-requests", { page, view, search: debouncedSearch, process, round }],
+    queryFn: () => jobRequestsApi.list({
+      page, pageSize: PAGE_SIZE, view,
+      ...(debouncedSearch ? { search: debouncedSearch } : {}),
+      ...(process ? { process } : {}),
+      ...(round ? { round } : {}),
+    }),
     placeholderData: keepPreviousData,
   });
+  const summary = useQuery({
+    queryKey: ["job-requests", "process-summary", { view, search: debouncedSearch }],
+    queryFn: () => jobRequestsApi.processSummary({ view, ...(debouncedSearch ? { search: debouncedSearch } : {}) }),
+    placeholderData: keepPreviousData,
+  });
+  const chooseProcess = (group: ProcessSummaryGroup | null) =>
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("page");
+      next.delete("round");
+      if (group) next.set("process", group.phase); else next.delete("process");
+      if (group?.round) next.set("round", group.round);
+      return next;
+    }, { replace: true });
 
   return (
     <div className="space-y-6">
@@ -117,6 +141,7 @@ export function JobRequestsPage() {
           <Button asChild><Link to="/job-requests/new"><Plus size={16} /> New job request</Link></Button>
         )}
       />
+      <ProcessFilter groups={summary.data} process={process} round={round} onChoose={chooseProcess} />
       <DataTable
         columns={columns}
         data={jobs.data?.items}
@@ -125,7 +150,7 @@ export function JobRequestsPage() {
         onRetry={() => void jobs.refetch()}
         onRowClick={(row) => navigate(`/job-requests/${row.id}`)}
         searchPlaceholder="Search Job ID, role, company, skill…"
-        emptyTitle={view === "active" ? "No active job requests" : "No job requests in this view"}
+        emptyTitle={process ? "No job requests at this hiring status" : view === "active" ? "No active job requests" : "No job requests in this view"}
         emptyDescription={can("job:write") ? "Create one from a HubSpot deal to get started." : undefined}
         server={{
           page,
@@ -148,6 +173,47 @@ export function JobRequestsPage() {
           </Tabs>
         )}
       />
+    </div>
+  );
+}
+
+/** One chip per hiring status with its job count; round stages get a chip per round name. */
+function ProcessFilter({ groups, process, round, onChoose }: {
+  groups: ProcessSummaryGroup[] | undefined;
+  process: CompanyProcessPhase | null;
+  round: string | null;
+  onChoose: (group: ProcessSummaryGroup | null) => void;
+}) {
+  if (!groups) return null;
+  const total = groups.reduce((sum, group) => sum + group.count, 0);
+  const isActive = (group: ProcessSummaryGroup) =>
+    group.phase === process && (group.round ?? "").toLowerCase() === (round ?? "").toLowerCase();
+  // A status chosen from a link can have no jobs in this view; keep it visible so it can be cleared.
+  const shown = process && !groups.some(isActive)
+    ? [...groups, { phase: process, round, label: companyProcessLabel(process, round), count: 0 }]
+    : groups;
+  const chip = (key: string, label: string, count: number, active: boolean, onClick: () => void) => (
+    <button
+      key={key}
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition",
+        active ? "border-indigo-300 bg-indigo-50 font-medium text-indigo-700" : "border-slate-200 bg-white text-slate-600 hover:border-indigo-200",
+      )}
+    >
+      {label}
+      <span className={cn("rounded-full px-1.5 text-[11px] tabular-nums", active ? "bg-indigo-100" : "bg-slate-100 text-slate-500")}>{count}</span>
+    </button>
+  );
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs font-medium text-slate-500">Hiring status</p>
+      <div className="flex flex-wrap gap-1.5">
+        {chip("all", "All", total, !process, () => onChoose(null))}
+        {shown.map((group) => chip(`${group.phase}|${group.round ?? ""}`, group.label, group.count, isActive(group), () => onChoose(isActive(group) ? null : group)))}
+      </div>
     </div>
   );
 }

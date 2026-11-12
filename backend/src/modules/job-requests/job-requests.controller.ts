@@ -17,6 +17,10 @@ export const jobRequestsController = {
     sendData(response, { jobs: await jobRequestsService.progress(request.user!) });
   },
 
+  async processSummary(request: Request, response: Response): Promise<void> {
+    sendData(response, { groups: await jobRequestsService.processSummary(request.user!, request.query as unknown as ListJobRequestsQuery) });
+  },
+
   async list(request: Request, response: Response): Promise<void> {
     const { jobRequests, meta } = await jobRequestsService.list(request.user!, request.query as unknown as ListJobRequestsQuery);
     sendData(response, { jobRequests }, 200, meta);

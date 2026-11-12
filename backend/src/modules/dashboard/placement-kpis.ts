@@ -115,6 +115,46 @@ export function computeKpis(jobs: KpiJob[], segment: (typeof KPI_SEGMENTS)[numbe
 const allSegments = (jobs: KpiJob[]) =>
   Object.fromEntries(KPI_SEGMENTS.map((segment) => [segment.key, computeKpis(jobs, segment)])) as Record<SegmentKey, Kpis>;
 
+/** Placement categories in display order. */
+export const OVERVIEW_CATEGORIES = ["ACADEMY", "ACADEMY_INTENSIVE", "EXTERNAL"] as const satisfies readonly CandidateCategory[];
+
+export interface OverviewFigures {
+  jobRequests: number;
+  companies: number;
+  /** Openings on the job requests received. */
+  openings: number;
+  /** Openings filled, each job capped at its openings. */
+  positionsClosed: number;
+  positionsClosedPct: number | null;
+  placements: number;
+  placementsByCategory: Record<(typeof OVERVIEW_CATEGORIES)[number], number>;
+}
+
+/** Big-picture figures over every job at any CTC: openings received, positions closed, placements by category. */
+export function overviewFigures(jobs: KpiJob[]): OverviewFigures {
+  const placementsByCategory = { ACADEMY: 0, ACADEMY_INTENSIVE: 0, EXTERNAL: 0 };
+  let openings = 0;
+  let positionsClosed = 0;
+  const companies = new Set<string>();
+  for (const job of jobs) {
+    const placed = job.applications.filter(isPlaced);
+    for (const application of placed) placementsByCategory[categoryOf(application) as keyof typeof placementsByCategory]++;
+    openings += job.openings;
+    positionsClosed += Math.min(placed.length, job.openings);
+    companies.add(job.companyId);
+  }
+  const placements = placementsByCategory.ACADEMY + placementsByCategory.ACADEMY_INTENSIVE + placementsByCategory.EXTERNAL;
+  return {
+    jobRequests: jobs.length,
+    companies: companies.size,
+    openings,
+    positionsClosed,
+    positionsClosedPct: ratio(positionsClosed, openings),
+    placements,
+    placementsByCategory,
+  };
+}
+
 /** Calendar month of the job's request date, e.g. "2026-10". */
 export const monthOf = (date: Date) => date.toISOString().slice(0, 7);
 
@@ -132,6 +172,13 @@ export function buildPlacementKpis(jobs: KpiJob[]) {
     ctcThresholdLpa: CTC_THRESHOLD_LPA,
     segments: KPI_SEGMENTS.map(({ key, label, detail }) => ({ key, label, detail })),
     totals: allSegments(jobs),
+    /** All CTC levels: the month-by-month big picture (by job request month). */
+    overview: {
+      totals: overviewFigures(jobs),
+      monthly: [...byMonth]
+        .sort(([a], [b]) => b.localeCompare(a))
+        .map(([month, monthJobs]) => ({ month, ...overviewFigures(monthJobs) })),
+    },
     monthly: [...byMonth]
       .sort(([a], [b]) => b.localeCompare(a))
       .map(([month, monthJobs]) => ({ month, kpis: allSegments(monthJobs) })),

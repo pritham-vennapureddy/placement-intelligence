@@ -1,4 +1,4 @@
-import { IDEMPOTENCY_HEADER, type ApiErrorBody, type PaginationMeta } from "@placement/shared";
+import { IDEMPOTENCY_HEADER, type ApiErrorBody, type CompanyProcessPhase, type PaginationMeta } from "@placement/shared";
 import type {
   AuthUser,
   CatalogOption,
@@ -636,6 +636,17 @@ export interface JobRequestListParams {
   view?: "active" | "closed" | "all";
   companyId?: string;
   ownerId?: string;
+  /** Hiring status with the company; `round` narrows a round phase to one round name. */
+  process?: CompanyProcessPhase;
+  round?: string;
+}
+
+/** Jobs at one hiring status (round phases split by round name), for the list's status filter. */
+export interface ProcessSummaryGroup {
+  phase: CompanyProcessPhase;
+  round: string | null;
+  label: string;
+  count: number;
 }
 
 export const jobRequestsApi = {
@@ -644,6 +655,10 @@ export const jobRequestsApi = {
       `/job-requests${toQueryString({ ...params, page: params.page?.toString(), pageSize: params.pageSize?.toString() })}`,
     );
     return { items: response.data.jobRequests, meta: response.meta };
+  },
+
+  async processSummary(params: Pick<JobRequestListParams, "search" | "view">): Promise<ProcessSummaryGroup[]> {
+    return (await request<{ data: { groups: ProcessSummaryGroup[] } }>(`/job-requests/process-summary${toQueryString(params)}`)).data.groups;
   },
 
   async get(jobRequestId: string): Promise<JobRequestDetail> {

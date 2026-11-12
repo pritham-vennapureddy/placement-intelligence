@@ -25,6 +25,7 @@ const withId = validateParams(jobRequestIdParamsSchema);
 
 jobRequestsRouter.get("/", validateQuery(listJobRequestsQuerySchema), jobRequestsController.list);
 jobRequestsRouter.get("/progress", jobRequestsController.progress);
+jobRequestsRouter.get("/process-summary", validateQuery(listJobRequestsQuerySchema), jobRequestsController.processSummary);
 jobRequestsRouter.post("/", requirePermission("job:write"), validateBody(createJobRequestSchema), jobRequestsController.create);
 jobRequestsRouter.get("/:jobRequestId", withId, jobRequestsController.get);
 jobRequestsRouter.post("/:jobRequestId/recruitment-batches", requirePermission("job:write"), withId, validateBody(createRecruitmentBatchSchema), jobRequestsController.createRecruitmentBatch);

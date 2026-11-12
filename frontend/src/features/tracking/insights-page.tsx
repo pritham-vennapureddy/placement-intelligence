@@ -16,6 +16,7 @@ import { useDebouncedValue } from "../../hooks/use-debounced-value";
 import { usePermissions } from "../../hooks/use-permissions";
 import { insightsApi } from "../../services/tracking-api";
 import type { InsightCategory, InsightFilters, InsightMetrics, StudentStatusFilter } from "../../types/tracking";
+import { BigPicture } from "./big-picture";
 import { CompanyStatusCell } from "./tracking-dialogs";
 
 const ALL = "__all__";
@@ -178,6 +179,8 @@ export function InsightsPage() {
         {companyName && <Button size="sm" variant="outline" onClick={() => { set({ companyId: undefined }); setCompanyName(null); }}>{companyName} <X size={13} /></Button>}
         {Object.values(filters).some(Boolean) && <Button size="sm" variant="ghost" onClick={() => { setFilters({}); setCompanyName(null); }}>Reset</Button>}
       </Card>
+
+      <BigPicture from={filters.from} to={filters.to} />
 
       {overview.isPending ? <Card><LoadingRows rows={6} /></Card> : overview.error ? <Card><ErrorState error={overview.error} onRetry={() => void overview.refetch()} /></Card> : (() => {
         const data = overview.data;

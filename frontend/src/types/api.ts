@@ -51,12 +51,24 @@ export interface PlacementKpiValues {
 
 export type PlacementKpiSet = Record<PlacementSegmentKey, PlacementKpiValues>;
 
+export interface PlacementOverviewFigures {
+  jobRequests: number;
+  companies: number;
+  openings: number;
+  positionsClosed: number;
+  positionsClosedPct: number | null;
+  placements: number;
+  placementsByCategory: Record<"ACADEMY" | "ACADEMY_INTENSIVE" | "EXTERNAL", number>;
+}
+
 export interface PlacementKpis {
   from: string | null;
   to: string | null;
   ctcThresholdLpa: number;
   segments: { key: PlacementSegmentKey; label: string; detail: string }[];
   totals: PlacementKpiSet;
+  /** Every CTC level, by job request month. */
+  overview: { totals: PlacementOverviewFigures; monthly: ({ month: string } & PlacementOverviewFigures)[] };
   monthly: { month: string; kpis: PlacementKpiSet }[];
   companies: { id: string; name: string; kpis: PlacementKpiSet }[];
   coverage: { jobs: number; jobsWithoutCtc: number; jobsAtOrAboveThreshold: number };
