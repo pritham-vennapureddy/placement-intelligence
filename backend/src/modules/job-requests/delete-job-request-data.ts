@@ -15,6 +15,10 @@ export async function deleteJobRequestData(db: Db, jobRequestId: string): Promis
   });
   await db.internalProcessStage.deleteMany({ where: { jobRequestId } });
   await db.internalProcess.deleteMany({ where: { jobRequestId } });
+  // Per-job student data saved by imports (tool analysis, other student-detail tabs);
+  // they point at this job's batches and imports, so they go before those.
+  await db.candidateResumeAssessment.deleteMany({ where: { jobRequestId } });
+  await db.candidateAdditionalProfile.deleteMany({ where: { jobRequestId } });
   await db.application.deleteMany({ where: { jobRequestId } });
   await db.companyInterviewRound.deleteMany({ where: { jobRequestId } });
   await db.pSMAssignment.deleteMany({ where: { jobRequestId } });
