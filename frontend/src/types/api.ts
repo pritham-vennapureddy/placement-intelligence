@@ -346,6 +346,8 @@ export interface CompanyDetail {
     psmOwner: PersonRef | null;
     processPhase: CompanyProcessPhase;
     processPhaseAt: string | null;
+    companyProcessStartDate: string | null;
+    companyProcessEndDate: string | null;
     processRound: { id: string; name: string } | null;
     processLabel: string;
     interviewRounds: { id: string; name: string }[];

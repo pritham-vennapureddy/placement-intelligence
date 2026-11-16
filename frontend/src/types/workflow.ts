@@ -177,6 +177,9 @@ export interface Nomination {
   offerReleasedAt: string | null;
   offerAcceptedAt: string | null;
   joinedAt: string | null;
+  /** This student's company process start / end dates, entered by hand. */
+  processStartDate: string | null;
+  processEndDate: string | null;
   remarks: string | null;
   createdAt: string;
   nominatedBy: { fullName: string };

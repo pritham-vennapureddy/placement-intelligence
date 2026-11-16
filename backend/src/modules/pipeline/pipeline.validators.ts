@@ -29,6 +29,11 @@ export const pipelineStatusSchema = z.object({
   notes: z.string().trim().max(1000).optional(),
 });
 
+/** A student's company process start / end dates, entered by hand; null clears a date. */
+export const processDatesSchema = z
+  .object({ startDate: z.iso.date().nullable(), endDate: z.iso.date().nullable() })
+  .refine(({ startDate, endDate }) => !startDate || !endDate || endDate >= startDate, { message: "The end date cannot be before the start date.", path: ["endDate"] });
+
 export const withdrawSchema = z.object({ notes: z.string().trim().min(2, "Say why the nomination is withdrawn.").max(1000) });
 
 export const interviewSchema = z.object({
@@ -44,3 +49,4 @@ export type UpdateRoundInput = z.infer<typeof updateRoundSchema>;
 export type NominateInput = z.infer<typeof nominateSchema>;
 export type PipelineStatusInput = z.infer<typeof pipelineStatusSchema>;
 export type InterviewInput = z.infer<typeof interviewSchema>;
+export type ProcessDatesInput = z.infer<typeof processDatesSchema>;

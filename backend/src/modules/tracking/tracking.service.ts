@@ -204,18 +204,40 @@ async function saveSupport(
 export const trackingService = {
   async setProcessStatus(user: AuthenticatedUser, jobRequestId: string, input: ProcessStatusInput, audit: AuditContext) {
     const { job } = await loadJobForUser(user, jobRequestId, "pipeline:write");
-    const current = await prisma.jobRequest.findUniqueOrThrow({ where: { id: job.id }, select: { processPhase: true, processRoundId: true } });
+    const current = await prisma.jobRequest.findUniqueOrThrow({
+      where: { id: job.id },
+      select: { processPhase: true, processRoundId: true, companyProcessStartDate: true, companyProcessEndDate: true },
+    });
     let round: { id: string; name: string } | null = null;
     if (isRoundPhase(input.phase)) {
       round = await prisma.companyInterviewRound.findFirst({ where: { id: input.roundId!, jobRequestId: job.id }, select: { id: true, name: true } });
       if (!round) throw new ApiError(400, "ROUND_NOT_FOUND", "Choose one of this job's company rounds.");
     }
-    if (current.processPhase === input.phase && current.processRoundId === (round?.id ?? null) && !input.notes) return { ok: true };
+    const isoDay = (value: Date | null) => value?.toISOString().slice(0, 10) ?? null;
+    const nextStart = input.startDate === undefined ? isoDay(current.companyProcessStartDate) : input.startDate;
+    const nextEnd = input.endDate === undefined ? isoDay(current.companyProcessEndDate) : input.endDate;
+    if (nextStart && nextEnd && nextEnd < nextStart) throw new ApiError(400, "INVALID_PROCESS_DATES", "The end date cannot be before the start date.");
+    const datesChanged = nextStart !== isoDay(current.companyProcessStartDate) || nextEnd !== isoDay(current.companyProcessEndDate);
+    const phaseChanged = current.processPhase !== input.phase || current.processRoundId !== (round?.id ?? null);
+    if (!phaseChanged && !datesChanged && !input.notes) return { ok: true };
     await inTransaction(async (transaction) => {
       await transaction.jobRequest.update({
         where: { id: job.id },
-        data: { processPhase: input.phase, processRoundId: round?.id ?? null, processPhaseAt: new Date() },
+        data: {
+          ...(phaseChanged || input.notes ? { processPhase: input.phase, processRoundId: round?.id ?? null, processPhaseAt: new Date() } : {}),
+          companyProcessStartDate: nextStart ? new Date(`${nextStart}T00:00:00Z`) : null,
+          companyProcessEndDate: nextEnd ? new Date(`${nextEnd}T00:00:00Z`) : null,
+        },
       });
+      if (!phaseChanged && !input.notes) {
+        await recordAudit(transaction, audit, {
+          action: "COMPANY_PROCESS_DATES_CHANGED",
+          entityType: "JobRequest",
+          entityId: job.id,
+          metadata: { startDate: nextStart, endDate: nextEnd },
+        });
+        return;
+      }
       await transaction.companyProcessHistory.create({
         data: {
           jobRequestId: job.id,
@@ -231,7 +253,7 @@ export const trackingService = {
         action: "COMPANY_PROCESS_STATUS_CHANGED",
         entityType: "JobRequest",
         entityId: job.id,
-        metadata: { from: current.processPhase, to: input.phase, round: round?.name ?? null, notes: input.notes ?? null },
+        metadata: { from: current.processPhase, to: input.phase, round: round?.name ?? null, notes: input.notes ?? null, startDate: nextStart, endDate: nextEnd },
       });
     });
     return { ok: true };
@@ -243,7 +265,13 @@ export const trackingService = {
     const [detail, history, sessions, notShared, studentsGuided] = await Promise.all([
       prisma.jobRequest.findUniqueOrThrow({
         where: { id: job.id },
-        select: { processPhase: true, processPhaseAt: true, processRound: { select: { id: true, name: true } } },
+        select: {
+          processPhase: true,
+          processPhaseAt: true,
+          companyProcessStartDate: true,
+          companyProcessEndDate: true,
+          processRound: { select: { id: true, name: true } },
+        },
       }),
       prisma.companyProcessHistory.findMany({
         where: { jobRequestId: job.id },
@@ -277,6 +305,8 @@ export const trackingService = {
         round: detail.processRound,
         label: companyProcessLabel(detail.processPhase, detail.processRound?.name),
         updatedAt: detail.processPhaseAt,
+        startDate: detail.companyProcessStartDate?.toISOString().slice(0, 10) ?? null,
+        endDate: detail.companyProcessEndDate?.toISOString().slice(0, 10) ?? null,
         history: history.map((entry) => ({
           ...entry,
           label: companyProcessLabel(entry.toPhase, entry.roundName),

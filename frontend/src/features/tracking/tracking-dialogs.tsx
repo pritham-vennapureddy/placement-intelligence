@@ -47,12 +47,27 @@ export function ProcessStatusDialog({
   const [phase, setPhase] = useState<CompanyProcessPhase>(job.phase);
   const [roundId, setRoundId] = useState<string>(job.roundId ?? "");
   const [notes, setNotes] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  // Current process dates come from the job's tracking record, whichever page opened the dialog.
+  const tracking = useQuery({ queryKey: ["tracking", job.id], queryFn: () => trackingApi.job(job.id), enabled: open });
+  const datesLoaded = tracking.isSuccess;
   useEffect(() => {
     if (open) { setPhase(job.phase); setRoundId(job.roundId ?? job.rounds[0]?.id ?? ""); setNotes(""); }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (open && tracking.data) { setStartDate(tracking.data.process.startDate ?? ""); setEndDate(tracking.data.process.endDate ?? ""); }
+  }, [open, tracking.data]);
   const needsRound = isRoundPhase(phase);
+  const datesInvalid = Boolean(startDate && endDate && endDate < startDate);
   const save = useMutation({
-    mutationFn: () => trackingApi.setProcessStatus(job.id, { phase, roundId: needsRound ? roundId : null, ...(notes.trim() ? { notes: notes.trim() } : {}) }),
+    mutationFn: () => trackingApi.setProcessStatus(job.id, {
+      phase,
+      roundId: needsRound ? roundId : null,
+      ...(notes.trim() ? { notes: notes.trim() } : {}),
+      // Only send dates once the current ones are loaded, so a slow load never clears them.
+      ...(datesLoaded ? { startDate: startDate || null, endDate: endDate || null } : {}),
+    }),
     onSuccess: async () => { await refresh(); toast.success("Company status updated"); onOpenChange(false); },
   });
   return (
@@ -86,12 +101,21 @@ export function ProcessStatusDialog({
               )}
             </FormField>
           )}
+          <div className="grid grid-cols-2 gap-3">
+            <FormField id="process-start" label="Process start date">
+              <Input id="process-start" type="date" value={startDate} disabled={!datesLoaded} onChange={(event) => setStartDate(event.target.value)} />
+            </FormField>
+            <FormField id="process-end" label="Process end date">
+              <Input id="process-end" type="date" value={endDate} min={startDate || undefined} disabled={!datesLoaded} onChange={(event) => setEndDate(event.target.value)} />
+            </FormField>
+          </div>
+          {datesInvalid && <p className="-mt-2 text-xs text-rose-600">The end date cannot be before the start date.</p>}
           <FormField id="process-notes" label="Notes"><Textarea id="process-notes" rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="e.g. TR1 scheduled for Friday" /></FormField>
         </div>
         {save.error && <p role="alert" className="text-sm text-rose-600">{save.error.message}</p>}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={save.isPending}>Cancel</Button>
-          <Button onClick={() => save.mutate()} disabled={save.isPending || (needsRound && !roundId)}>Save</Button>
+          <Button onClick={() => save.mutate()} disabled={save.isPending || (needsRound && !roundId) || datesInvalid}>Save</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -170,6 +194,15 @@ export function RecordGuidanceDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/** "12 Nov 2026 → 20 Nov 2026", "From 12 Nov 2026 (ongoing)", or a dash. Dates are yyyy-mm-dd. */
+export function ProcessDates({ start, end }: { start: string | null; end: string | null }) {
+  const day = (value: string) => format(new Date(`${value.slice(0, 10)}T00:00:00`), "d MMM yyyy");
+  if (!start && !end) return <span className="text-slate-300">—</span>;
+  if (start && end) return <span className="whitespace-nowrap">{day(start)} → {day(end)}</span>;
+  if (start) return <span className="whitespace-nowrap">From {day(start)} <span className="text-slate-400">(ongoing)</span></span>;
+  return <span className="whitespace-nowrap">Ended {day(end!)}</span>;
 }
 
 export function ProcessBadge({ label, phase }: { label: string; phase: CompanyProcessPhase }) {

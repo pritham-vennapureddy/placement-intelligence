@@ -18,7 +18,7 @@ import { companiesApi, dashboardApi } from "../../services/api";
 import type { CompanyAnalytics, CompanyJobCandidates } from "../../types/api";
 import { RefreshFromGoogleButton } from "../imports/refresh-button";
 import { SupportBadge } from "../tracking/student-support";
-import { CompanyStatusCell, ProcessBadge, ProcessStatusDialog } from "../tracking/tracking-dialogs";
+import { CompanyStatusCell, ProcessBadge, ProcessDates, ProcessStatusDialog } from "../tracking/tracking-dialogs";
 import { CompanyFormDialog } from "./company-form-dialog";
 import { CATEGORY_LABELS, OutcomeBadge } from "../screening/badges";
 import { PIPELINE_STATUS_LABELS, SCREENING_SKIP_REASON_LABELS, STAGE_LABELS, STAGE_OUTCOME_LABELS, STAGE_OUTCOMES, type DecisionStage, type PipelineStatus, type ScreeningSkipReason, type StageOutcome } from "@placement/shared";
@@ -521,6 +521,7 @@ export function CompanyDetailPage() {
                     <TableHead className="px-4 text-xs">Requested</TableHead>
                     <TableHead className="px-4 text-xs">Deadline</TableHead>
                     <TableHead className="px-4 text-xs">Hiring status</TableHead>
+                    <TableHead className="px-4 text-xs">Process dates</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -544,6 +545,9 @@ export function CompanyDetailPage() {
                           )}
                         </div>
                         {job.processPhaseAt && <p className="mt-0.5 text-[10px] text-slate-400">since {format(new Date(job.processPhaseAt), "d MMM yyyy")}</p>}
+                      </TableCell>
+                      <TableCell className="px-4 text-xs text-slate-600">
+                        <ProcessDates start={job.companyProcessStartDate} end={job.companyProcessEndDate} />
                       </TableCell>
                     </TableRow>
                   ))}

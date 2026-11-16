@@ -13,7 +13,7 @@ export const trackingApi = {
   async job(jobRequestId: string): Promise<JobTracking> {
     return (await request<Data<JobTracking>>(`/job-requests/${jobRequestId}/tracking`)).data;
   },
-  async setProcessStatus(jobRequestId: string, input: { phase: CompanyProcessPhase; roundId?: string | null; notes?: string }): Promise<void> {
+  async setProcessStatus(jobRequestId: string, input: { phase: CompanyProcessPhase; roundId?: string | null; notes?: string; startDate?: string | null; endDate?: string | null }): Promise<void> {
     await request(`/job-requests/${jobRequestId}/tracking/process-status`, json("PUT", input));
   },
   async myWork(ownerId?: string): Promise<MyWork> {

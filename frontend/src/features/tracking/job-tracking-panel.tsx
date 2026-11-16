@@ -7,7 +7,7 @@ import { ErrorState, LoadingRows } from "../../components/states";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { trackingApi } from "../../services/tracking-api";
-import { ProcessBadge, ProcessStatusDialog, RecordGuidanceDialog } from "./tracking-dialogs";
+import { ProcessBadge, ProcessDates, ProcessStatusDialog, RecordGuidanceDialog } from "./tracking-dialogs";
 
 const day = (value: string) => format(new Date(value), "d MMM yyyy");
 
@@ -41,6 +41,7 @@ export function JobTrackingPanel({ jobRequestId, roleTitle, companyName, rounds 
             </div>
           </div>
           <ProcessBadge phase={process.phase} label={process.label} />
+          <p className="text-xs text-slate-600"><span className="text-slate-400">Process dates: </span><ProcessDates start={process.startDate} end={process.endDate} /></p>
           {showHistory && (
             <ol className="space-y-1.5 border-t border-slate-100 pt-3 text-xs text-slate-600">
               {process.history.map((entry) => (

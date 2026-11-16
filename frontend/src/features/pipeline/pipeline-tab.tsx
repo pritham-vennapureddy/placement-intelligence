@@ -30,6 +30,7 @@ import { pipelineApi } from "../../services/workflow-api";
 import type { Nomination, Round } from "../../types/workflow";
 import { RefreshFromGoogleButton } from "../imports/refresh-button";
 import { JobTrackingPanel } from "../tracking/job-tracking-panel";
+import { ProcessDates } from "../tracking/tracking-dialogs";
 import { InterviewBadge, PipelineBadge } from "../screening/badges";
 
 function useRefresh(jobRequestId: string) {
@@ -161,7 +162,9 @@ function InterviewDialog({ jobRequestId, target, onClose }: { jobRequestId: stri
   const [interviewer, setInterviewer] = useState("");
   const [feedback, setFeedback] = useState("");
   const [reason, setReason] = useState("");
+  const [roundDate, setRoundDate] = useState("");
   useEffect(() => {
+    setRoundDate(existing?.scheduledAt?.slice(0, 10) ?? "");
     setOutcome(existing?.outcome ?? "SCHEDULED");
     setInterviewer(existing?.interviewerName ?? "");
     setFeedback(existing?.feedback ?? "");
@@ -169,7 +172,10 @@ function InterviewDialog({ jobRequestId, target, onClose }: { jobRequestId: stri
   }, [target]); // eslint-disable-line react-hooks/exhaustive-deps
   const save = useMutation({
     mutationFn: () => pipelineApi.recordInterview(jobRequestId, target!.nomination.id, target!.round.id, {
-      outcome, interviewerName: interviewer.trim() || null, feedback: feedback.trim() || null, rejectionReason: reason.trim() || null,
+      outcome,
+      // A calendar day, stored at midnight UTC so it reads back as the same day.
+      scheduledAt: roundDate ? `${roundDate}T00:00:00.000Z` : null,
+      interviewerName: interviewer.trim() || null, feedback: feedback.trim() || null, rejectionReason: reason.trim() || null,
     }),
     onSuccess: async () => { await refresh(); toast.success("Round result saved"); onClose(); },
   });
@@ -186,6 +192,9 @@ function InterviewDialog({ jobRequestId, target, onClose }: { jobRequestId: stri
               <SelectTrigger id="round-outcome" className="h-10 w-full"><SelectValue /></SelectTrigger>
               <SelectContent>{INTERVIEW_OUTCOMES.map((value) => <SelectItem key={value} value={value}>{value === "SCHEDULED" ? "Scheduled / in progress" : INTERVIEW_OUTCOME_LABELS[value]}</SelectItem>)}</SelectContent>
             </Select>
+          </FormField>
+          <FormField id="round-date" label="Round date">
+            <Input id="round-date" type="date" value={roundDate} onChange={(event) => setRoundDate(event.target.value)} />
           </FormField>
           <FormField id="round-interviewer" label="Interviewer"><Input id="round-interviewer" value={interviewer} onChange={(event) => setInterviewer(event.target.value)} /></FormField>
           <FormField id="round-feedback" label="Feedback"><Textarea id="round-feedback" rows={3} value={feedback} onChange={(event) => setFeedback(event.target.value)} /></FormField>
@@ -265,6 +274,7 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
   const [statusTarget, setStatusTarget] = useState<{ nomination: Nomination; to: PipelineStatus } | null>(null);
   const [withdrawing, setWithdrawing] = useState<Nomination | null>(null);
   const [showWithdrawn, setShowWithdrawn] = useState(false);
+  const [datesTarget, setDatesTarget] = useState<Nomination | null>(null);
   const pipeline = useQuery({ queryKey: ["pipeline", jobRequestId], queryFn: () => pipelineApi.get(jobRequestId) });
 
   if (pipeline.isPending) return <Card><LoadingRows rows={5} /></Card>;
@@ -300,7 +310,7 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
                 <tr>
                   <th className="px-4 py-2">Candidate</th>
                   {rounds.map((round) => <th key={round.id} className="whitespace-nowrap px-3 py-2">{round.name}</th>)}
-                  <th className="px-4 py-2">Status</th><th className="px-4 py-2">Offer / joining</th><th className="px-4 py-2" />
+                  <th className="px-4 py-2">Status</th><th className="whitespace-nowrap px-4 py-2">Process dates</th><th className="px-4 py-2">Offer / joining</th><th className="px-4 py-2" />
                 </tr>
               </thead>
               <tbody>
@@ -320,12 +330,19 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
                             <button type="button" disabled={!canEdit || withdrawn} onClick={() => setInterview({ nomination, round })}
                               className="rounded-md p-0.5 hover:bg-slate-100 disabled:cursor-default disabled:hover:bg-transparent" title={result?.feedback ?? "Record result"}>
                               {result ? <InterviewBadge outcome={result.outcome} /> : <span className="text-xs text-slate-300">—</span>}
+                              {result?.scheduledAt && <p className="mt-0.5 whitespace-nowrap text-[10px] text-slate-400">{format(new Date(`${result.scheduledAt.slice(0, 10)}T00:00:00`), "d MMM yyyy")}</p>}
                             </button>
                           </td>
                         );
                       })}
                       <td className="px-4 py-2.5">
                         {withdrawn ? <span className="text-xs text-slate-400">Withdrawn</span> : <PipelineBadge status={nomination.pipelineStatus} />}
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-slate-600">
+                        <button type="button" disabled={!canEdit} onClick={() => setDatesTarget(nomination)}
+                          className="rounded-md p-0.5 text-left hover:bg-slate-100 disabled:cursor-default disabled:hover:bg-transparent" title={canEdit ? "Set process dates" : undefined}>
+                          <ProcessDates start={nomination.processStartDate} end={nomination.processEndDate} />
+                        </button>
                       </td>
                       <td className="px-4 py-2.5 text-xs text-slate-600">
                         {nomination.offerReleasedAt && <p>Offer {format(new Date(nomination.offerReleasedAt), "d MMM")}</p>}
@@ -363,6 +380,46 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
       <InterviewDialog jobRequestId={jobRequestId} target={interview} onClose={() => setInterview(null)} />
       <StatusDialog jobRequestId={jobRequestId} target={statusTarget} onClose={() => setStatusTarget(null)} />
       <WithdrawDialog jobRequestId={jobRequestId} nomination={withdrawing} onClose={() => setWithdrawing(null)} />
+      <StudentProcessDatesDialog jobRequestId={jobRequestId} nomination={datesTarget} onClose={() => setDatesTarget(null)} />
     </div>
+  );
+}
+
+/** Hand-entered start / end dates of one student's company process. */
+function StudentProcessDatesDialog({ jobRequestId, nomination, onClose }: { jobRequestId: string; nomination: Nomination | null; onClose: () => void }) {
+  const refresh = useRefresh(jobRequestId);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  useEffect(() => {
+    if (nomination) { setStartDate(nomination.processStartDate?.slice(0, 10) ?? ""); setEndDate(nomination.processEndDate?.slice(0, 10) ?? ""); }
+  }, [nomination]);
+  const invalid = Boolean(startDate && endDate && endDate < startDate);
+  const save = useMutation({
+    mutationFn: () => pipelineApi.setProcessDates(jobRequestId, nomination!.id, { startDate: startDate || null, endDate: endDate || null }),
+    onSuccess: async () => { await refresh(); toast.success("Process dates saved"); onClose(); },
+  });
+  return (
+    <Dialog open={Boolean(nomination)} onOpenChange={(open) => !open && !save.isPending && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Student process dates</DialogTitle>
+          <DialogDescription>{nomination?.application.candidate.fullName} · when this student's company process started and ended.</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <FormField id="student-process-start" label="Start date">
+            <Input id="student-process-start" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+          </FormField>
+          <FormField id="student-process-end" label="End date">
+            <Input id="student-process-end" type="date" value={endDate} min={startDate || undefined} onChange={(event) => setEndDate(event.target.value)} />
+          </FormField>
+        </div>
+        {invalid && <p className="text-xs text-rose-600">The end date cannot be before the start date.</p>}
+        {save.error && <p role="alert" className="text-sm text-rose-600">{save.error.message}</p>}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={save.isPending}>Cancel</Button>
+          <Button onClick={() => save.mutate()} disabled={save.isPending || invalid}>Save</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

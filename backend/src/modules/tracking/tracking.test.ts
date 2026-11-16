@@ -35,6 +35,9 @@ test("round phases of the company process need a round", () => {
   assert.equal(processStatusSchema.safeParse({ phase: "ROUND_IN_PROGRESS" }).success, false);
   assert.equal(processStatusSchema.safeParse({ phase: "ROUND_YET_TO_START", roundId }).success, true);
   assert.equal(processStatusSchema.safeParse({ phase: "SOMETHING_ELSE" }).success, false);
+  assert.equal(processStatusSchema.safeParse({ phase: "CVS_SHARED", startDate: "2026-11-01", endDate: "2026-11-20" }).success, true);
+  assert.equal(processStatusSchema.safeParse({ phase: "CVS_SHARED", startDate: "2026-11-01", endDate: null }).success, true);
+  assert.equal(processStatusSchema.safeParse({ phase: "CVS_SHARED", startDate: "2026-11-20", endDate: "2026-11-01" }).success, false);
 });
 
 test("company process labels name the round", () => {

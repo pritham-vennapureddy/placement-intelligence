@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { sendCreated, sendData, sendNoContent } from "../../utils/http.js";
 import { auditContextFrom } from "../audit/audit.service.js";
 import { pipelineService } from "./pipeline.service.js";
-import type { CreateRoundInput, InterviewInput, NominateInput, PipelineStatusInput, UpdateRoundInput } from "./pipeline.validators.js";
+import type { CreateRoundInput, InterviewInput, NominateInput, PipelineStatusInput, ProcessDatesInput, UpdateRoundInput } from "./pipeline.validators.js";
 
 const jobOf = (request: Request) => request.params.jobRequestId as string;
 const param = (request: Request, name: string) => request.params[name] as string;
@@ -33,6 +33,9 @@ export const pipelineController = {
   },
   async changeStatus(request: Request, response: Response) {
     sendData(response, await pipelineService.changeStatus(request.user!, jobOf(request), param(request, "nominationId"), request.body as PipelineStatusInput, auditContextFrom(request)));
+  },
+  async setProcessDates(request: Request, response: Response) {
+    sendData(response, await pipelineService.setProcessDates(request.user!, jobOf(request), param(request, "nominationId"), request.body as ProcessDatesInput, auditContextFrom(request)));
   },
   async withdraw(request: Request, response: Response) {
     sendData(response, await pipelineService.withdraw(request.user!, jobOf(request), param(request, "nominationId"), (request.body as { notes: string }).notes, auditContextFrom(request)));

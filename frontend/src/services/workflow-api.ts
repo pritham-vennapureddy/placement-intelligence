@@ -113,6 +113,9 @@ export const pipelineApi = {
   async changeStatus(jobRequestId: string, nominationId: string, status: PipelineStatus, date?: string, notes?: string) {
     await request(`/job-requests/${jobRequestId}/pipeline/nominations/${nominationId}/status`, json("POST", { status, ...(date ? { date } : {}), ...(notes ? { notes } : {}) }));
   },
+  async setProcessDates(jobRequestId: string, nominationId: string, input: { startDate: string | null; endDate: string | null }) {
+    await request(`/job-requests/${jobRequestId}/pipeline/nominations/${nominationId}/process-dates`, json("PUT", input));
+  },
   async withdraw(jobRequestId: string, nominationId: string, notes: string) {
     await request(`/job-requests/${jobRequestId}/pipeline/nominations/${nominationId}/withdraw`, json("POST", { notes }));
   },

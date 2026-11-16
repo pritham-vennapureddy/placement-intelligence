@@ -12,6 +12,7 @@ import {
   nominateSchema,
   nominationParamsSchema,
   pipelineStatusSchema,
+  processDatesSchema,
   reorderRoundsSchema,
   roundParamsSchema,
   updateRoundSchema,
@@ -32,6 +33,7 @@ pipelineRouter.patch("/rounds/:roundId", write, validateParams(roundParamsSchema
 pipelineRouter.delete("/rounds/:roundId", write, validateParams(roundParamsSchema), pipelineController.deleteRound);
 pipelineRouter.post("/nominations", write, validateParams(jobParamsSchema), validateBody(nominateSchema), pipelineController.nominate);
 pipelineRouter.post("/nominations/:nominationId/status", write, validateParams(nominationParamsSchema), validateBody(pipelineStatusSchema), pipelineController.changeStatus);
+pipelineRouter.put("/nominations/:nominationId/process-dates", write, validateParams(nominationParamsSchema), validateBody(processDatesSchema), pipelineController.setProcessDates);
 pipelineRouter.post("/nominations/:nominationId/withdraw", write, validateParams(nominationParamsSchema), validateBody(withdrawSchema), pipelineController.withdraw);
 pipelineRouter.put(
   "/nominations/:nominationId/interviews/:roundId",

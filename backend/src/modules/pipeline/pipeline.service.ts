@@ -7,7 +7,7 @@ import { ApiError } from "../../utils/api-error.js";
 import { definedOnly } from "../../utils/object.js";
 import { recordAudit, type AuditContext } from "../audit/audit.service.js";
 import { candidateSummarySelect } from "../screening/screening.repository.js";
-import type { CreateRoundInput, InterviewInput, NominateInput, PipelineStatusInput, UpdateRoundInput } from "./pipeline.validators.js";
+import type { CreateRoundInput, InterviewInput, NominateInput, PipelineStatusInput, ProcessDatesInput, UpdateRoundInput } from "./pipeline.validators.js";
 
 /** Date fields each status records. */
 const STATUS_DATES: Partial<Record<PipelineStatus, "submittedAt" | "offerReleasedAt" | "offerAcceptedAt" | "joinedAt">> = {
@@ -46,6 +46,8 @@ export const pipelineService = {
           offerReleasedAt: true,
           offerAcceptedAt: true,
           joinedAt: true,
+          processStartDate: true,
+          processEndDate: true,
           remarks: true,
           createdAt: true,
           nominatedBy: { select: { fullName: true } },
@@ -215,6 +217,26 @@ export const pipelineService = {
         entityType: "Application",
         entityId: nomination.applicationId,
         metadata: { from: nomination.pipelineStatus, to: input.status, date: input.date ?? null, notes: input.notes ?? null },
+      });
+    });
+    return { ok: true };
+  },
+
+  /** Hand-entered start / end dates of this student's company process. */
+  async setProcessDates(user: AuthenticatedUser, jobRequestId: string, nominationId: string, input: ProcessDatesInput, audit: AuditContext) {
+    const { job } = await loadJobForUser(user, jobRequestId, "pipeline:write");
+    const nomination = await loadNomination(job.id, nominationId);
+    const toDay = (value: string | null) => (value ? new Date(`${value}T00:00:00Z`) : null);
+    await inTransaction(async (transaction) => {
+      await transaction.companyNomination.update({
+        where: { id: nomination.id },
+        data: { processStartDate: toDay(input.startDate), processEndDate: toDay(input.endDate) },
+      });
+      await recordAudit(transaction, audit, {
+        action: "STUDENT_PROCESS_DATES_CHANGED",
+        entityType: "Application",
+        entityId: nomination.applicationId,
+        metadata: { startDate: input.startDate, endDate: input.endDate },
       });
     });
     return { ok: true };

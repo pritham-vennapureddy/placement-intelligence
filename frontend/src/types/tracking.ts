@@ -44,6 +44,9 @@ export interface JobTracking {
     round: { id: string; name: string } | null;
     label: string;
     updatedAt: string | null;
+    /** Company process start / end dates (yyyy-mm-dd), entered by hand. */
+    startDate: string | null;
+    endDate: string | null;
     history: { id: string; fromPhase: CompanyProcessPhase | null; toPhase: CompanyProcessPhase; roundName: string | null; label: string; notes: string | null; changedAt: string; changedBy: { fullName: string } | null }[];
   };
   guidance: {

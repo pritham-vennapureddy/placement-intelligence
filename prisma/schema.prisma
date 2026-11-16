@@ -464,54 +464,57 @@ model Product {
 }
 
 model JobRequest {
-  id                     String                       @id @default(uuid()) @db.Uuid
+  id                      String                       @id @default(uuid()) @db.Uuid
   // Job ID generated in HubSpot (a UUID); the PSM copies it in. Internal-sheet
   // application exports carry the same value, so imports match on it.
-  jobId                  String                       @unique
+  jobId                   String                       @unique
   // HubSpot deal record (object 0-3) the job belongs to.
-  hubspotDealId          String?                      @unique
-  companyId              String                       @db.Uuid
-  roleTitle              String
-  openings               Int
-  requiredCandidateCount Int                          @default(1)
+  hubspotDealId           String?                      @unique
+  companyId               String                       @db.Uuid
+  roleTitle               String
+  openings                Int
+  requiredCandidateCount  Int                          @default(1)
   // Offered CTC in lakhs per annum (upper bound when the company gives a range).
   // Drives the < 8 LPA placement KPIs; null means not entered yet.
-  ctcLpa                 Float?
-  description            String
-  psmOwnerId             String?                      @db.Uuid
-  requestDate            DateTime                     @db.Date
-  deadline               DateTime?                    @db.Date
-  status                 JobRequestStatus             @default(DRAFT)
-  timeline               String?
-  shortlistingMechanism  String?
-  companyRemarks         String?
-  companySheetUrl        String?
-  internalSheetUrl       String?
+  ctcLpa                  Float?
+  description             String
+  psmOwnerId              String?                      @db.Uuid
+  requestDate             DateTime                     @db.Date
+  deadline                DateTime?                    @db.Date
+  status                  JobRequestStatus             @default(DRAFT)
+  timeline                String?
+  shortlistingMechanism   String?
+  companyRemarks          String?
+  companySheetUrl         String?
+  internalSheetUrl        String?
   // Company process status, set by a PSM (see CompanyProcessPhase).
-  processPhase           CompanyProcessPhase          @default(YET_TO_SHARE_CVS)
-  processRoundId         String?                      @db.Uuid
-  processPhaseAt         DateTime?
-  archivedAt             DateTime?
-  createdById            String                       @db.Uuid
-  createdAt              DateTime                     @default(now())
-  updatedAt              DateTime                     @updatedAt
-  company                Company                      @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  psmOwner               User?                        @relation("JobRequestOwner", fields: [psmOwnerId], references: [id], onDelete: SetNull)
-  createdBy              User                         @relation("JobRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  assignments            PSMAssignment[]
-  skills                 JobRequestSkill[]
-  eligibleProducts       JobRequestProduct[]
-  applications           Application[]
-  recruitmentBatches     RecruitmentBatch[]
-  internalProcess        InternalProcess?
-  interviewRounds        CompanyInterviewRound[]
-  importBatches          ImportBatch[]
-  resumeAssessments      CandidateResumeAssessment[]
-  additionalProfiles     CandidateAdditionalProfile[]
-  processRound           CompanyInterviewRound?       @relation("JobProcessRound", fields: [processRoundId], references: [id], onDelete: SetNull)
-  processHistory         CompanyProcessHistory[]
-  guidanceSessions       GuidanceSession[]
-  studentSupport         StudentSupport[]
+  processPhase            CompanyProcessPhase          @default(YET_TO_SHARE_CVS)
+  processRoundId          String?                      @db.Uuid
+  processPhaseAt          DateTime?
+  // When the company's hiring process started and ended, entered by hand by a PSM.
+  companyProcessStartDate DateTime?                    @db.Date
+  companyProcessEndDate   DateTime?                    @db.Date
+  archivedAt              DateTime?
+  createdById             String                       @db.Uuid
+  createdAt               DateTime                     @default(now())
+  updatedAt               DateTime                     @updatedAt
+  company                 Company                      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  psmOwner                User?                        @relation("JobRequestOwner", fields: [psmOwnerId], references: [id], onDelete: SetNull)
+  createdBy               User                         @relation("JobRequestCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  assignments             PSMAssignment[]
+  skills                  JobRequestSkill[]
+  eligibleProducts        JobRequestProduct[]
+  applications            Application[]
+  recruitmentBatches      RecruitmentBatch[]
+  internalProcess         InternalProcess?
+  interviewRounds         CompanyInterviewRound[]
+  importBatches           ImportBatch[]
+  resumeAssessments       CandidateResumeAssessment[]
+  additionalProfiles      CandidateAdditionalProfile[]
+  processRound            CompanyInterviewRound?       @relation("JobProcessRound", fields: [processRoundId], references: [id], onDelete: SetNull)
+  processHistory          CompanyProcessHistory[]
+  guidanceSessions        GuidanceSession[]
+  studentSupport          StudentSupport[]
 
   @@index([companyId, status])
   @@index([psmOwnerId, status])
@@ -846,24 +849,27 @@ model StageCompletionRecord {
 // The only link between internal screening and the company pipeline. Created by
 // the PSM; internally rejected candidates cannot be nominated.
 model CompanyNomination {
-  id              String                @id @default(uuid()) @db.Uuid
-  applicationId   String                @unique @db.Uuid
-  jobRequestId    String                @db.Uuid
-  status          NominationStatus      @default(NOMINATED)
-  pipelineStatus  CompanyPipelineStatus @default(NOT_SUBMITTED)
-  source          ChangeSource          @default(MANUAL)
-  nominatedById   String                @db.Uuid
-  submittedAt     DateTime?
-  offerReleasedAt DateTime?
-  offerAcceptedAt DateTime?
-  joinedAt        DateTime?
-  remarks         String?
-  createdAt       DateTime              @default(now())
-  updatedAt       DateTime              @updatedAt
-  application     Application           @relation(fields: [applicationId, jobRequestId], references: [id, jobRequestId], onDelete: Restrict)
-  nominatedBy     User                  @relation("NominationCreator", fields: [nominatedById], references: [id], onDelete: Restrict)
-  interviews      CompanyInterview[]
-  stageHistory    CompanyStageHistory[]
+  id               String                @id @default(uuid()) @db.Uuid
+  applicationId    String                @unique @db.Uuid
+  jobRequestId     String                @db.Uuid
+  status           NominationStatus      @default(NOMINATED)
+  pipelineStatus   CompanyPipelineStatus @default(NOT_SUBMITTED)
+  source           ChangeSource          @default(MANUAL)
+  nominatedById    String                @db.Uuid
+  submittedAt      DateTime?
+  offerReleasedAt  DateTime?
+  offerAcceptedAt  DateTime?
+  joinedAt         DateTime?
+  // When this student's company process started and ended, entered by hand by a PSM.
+  processStartDate DateTime?             @db.Date
+  processEndDate   DateTime?             @db.Date
+  remarks          String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  application      Application           @relation(fields: [applicationId, jobRequestId], references: [id, jobRequestId], onDelete: Restrict)
+  nominatedBy      User                  @relation("NominationCreator", fields: [nominatedById], references: [id], onDelete: Restrict)
+  interviews       CompanyInterview[]
+  stageHistory     CompanyStageHistory[]
 
   @@unique([id, jobRequestId])
   @@unique([applicationId, jobRequestId])
