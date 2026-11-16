@@ -65,6 +65,15 @@ function columnMostly(rows: SheetAnalysis["rows"], headerRow: number, column: nu
   return values.length > 0 && values.filter(matches).length / values.length >= 0.8;
 }
 
+/** Share of the first data rows (those with a key value) that have something in `column`. */
+function filledRatio(rows: SheetAnalysis["rows"], headerRow: number, column: number, keyColumn?: number): number {
+  const data = rows.filter((row) => row.rowNumber > headerRow)
+    .filter((row) => keyColumn === undefined || Boolean(row.cells[keyColumn]?.trim()))
+    .slice(0, 12);
+  if (!data.length) return 1;
+  return data.filter((row) => Boolean(row.cells[column]?.trim())).length / data.length;
+}
+
 function nameValueColumn(rows: SheetAnalysis["rows"], headerRow: number): number | undefined {
   const data = rows.filter((row) => row.rowNumber > headerRow).slice(0, 12);
   const width = Math.max(0, ...data.map((row) => row.cells.length));
@@ -343,9 +352,18 @@ function mappingForInternal(sheets: SheetAnalysis[], selection?: GoogleInternalS
       || screeningDecisionColumn !== undefined
       || labeledDecisionColumn === undefined
       || (tab !== undefined && containsMappedValues(tab.rows, tab.headerRow, labeledDecisionColumn, suggestStageOutcome));
-    const decisionColumn = screeningDecisionColumn
+    const candidateDecisionColumn = screeningDecisionColumn
       ?? (genericScreeningDecisionIsReliable ? labeledDecisionColumn : undefined)
       ?? inferredDecisionColumn;
+    // Outside SC (where blank = no show), a mostly empty decision column is not the
+    // stage's decision: a tab like RS simply lists the shortlisted candidates, so
+    // being on the tab means selected. Using the empty column would mark them pending.
+    const decisionColumn = candidateDecisionColumn !== undefined
+      && stage !== "SCREENING_SHORTLIST"
+      && tab
+      && filledRatio(tab.rows, tab.headerRow, candidateDecisionColumn, matchColumn) < 0.5
+      ? undefined
+      : candidateDecisionColumn;
     if (
       stage === "SCREENING_SHORTLIST"
       && labeledDecisionColumn !== undefined

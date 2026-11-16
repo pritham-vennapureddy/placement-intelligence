@@ -252,6 +252,26 @@ describe("Google Sheets tab analysis", () => {
     ]);
   });
 
+  test("treats an RS tab with a mostly empty status column as a list of shortlisted candidates", () => {
+    const suggested = inferGoogleMapping(workbook({
+      TA: [["mobile"], ["9876543210"], ["9123456780"], ["9000000001"], ["9000000002"]],
+      RS: [
+        ["mobile", "resume", "priority", "Gender", "", "", "", "python", "sql", "comm", "status"],
+        ["9876543210", "https://example.com/a", "p1", "MALE"],
+        ["9123456780", "https://example.com/b", "p3", "MALE", "", "", "", "#N/A"],
+        ["9000000001", "https://example.com/c", "p2", "FEMALE", "", "c", "consider", "consider"],
+        ["9000000002", "https://example.com/d", "p1", "MALE", "", "", "", "", "", "", "hold"],
+      ],
+    }), "INTERNAL_SCREENING") as {
+      stages: Record<string, { mode: string; sheet?: string; decisionColumn?: number; priorityColumn?: number }>;
+    };
+
+    assert.equal(suggested.stages.RESUME_SHORTLIST?.mode, "SHEET");
+    assert.equal(suggested.stages.RESUME_SHORTLIST?.sheet, "RS");
+    assert.equal(suggested.stages.RESUME_SHORTLIST?.decisionColumn, undefined);
+    assert.equal(suggested.stages.RESUME_SHORTLIST?.priorityColumn, 2);
+  });
+
   test("detects Applied Users and Form Responses as profile sources for selected TA", () => {
     const suggested = inferGoogleMapping(workbook({
       TA: [

@@ -667,6 +667,29 @@ describe("internal sheet planning", () => {
     assert.equal(plan.batchIssues.some((issue) => issue.code === "STAGE_ROWS_NOT_IN_TA"), false);
   });
 
+  test("applicants in TA but not on RS are rejected at resume shortlisting, unless a later stage lists them", () => {
+    const taMapping = internalMappingSchema.parse({
+      applications: { sheet: "TA", headerRow: 1, columns: { mobile: 0, fullName: 1 } },
+      profileLookups: [],
+      stages: {
+        RESUME_SHORTLIST: { mode: "SHEET", sheet: "RS", headerRow: 1, matchBy: "mobile", matchColumn: 0, priorityColumn: 1, valueMap: {} },
+        SCREENING_SHORTLIST: { mode: "SHEET", sheet: "SC", headerRow: 1, matchBy: "mobile", matchColumn: 0, decisionColumn: 1, valueMap: { consider: "SELECTED" } },
+        ASSIGNMENT_SHORTLIST: { mode: "MANUAL" },
+        FINAL_SHORTLIST: { mode: "UNCHANGED" },
+      },
+    });
+    const plan = planInternalImport(taMapping, reader({
+      TA: [["mobileno", "name"], ["9876543210", "Asha Rao"], ["9123456780", "Ravi Kumar"], ["9000000001", "Sita Devi"]],
+      RS: [["mobile", "priority"], ["9876543210", "p1"]],
+      SC: [["mobile", "status"], ["9000000001", "consider"]],
+    }), context());
+    const rs = plan.rows.filter((row) => row.role === "RESUME_SHORTLIST").map((row) => row.data as { candidateCode: string; outcome: string });
+    assert.deepEqual(rs.map((row) => row.outcome), ["SELECTED", "REJECTED"]);
+    assert.equal(plan.summary.stages.RESUME_SHORTLIST?.rejected, 1);
+    assert.equal(plan.summary.stages.RESUME_SHORTLIST?.selected, 1);
+    assert.ok(plan.batchIssues.some((issue) => issue.code === "RS_NOT_SHORTLISTED"));
+  });
+
   test("a mobile-only TA tab treats the same mobile twice as one applicant listed twice", () => {
     const taOnly = internalMappingSchema.parse({
       applications: { sheet: "TA", headerRow: 1, columns: { mobile: 0 } },

@@ -760,6 +760,84 @@ export function planInternalImport(config: InternalMapping, read: Reader, contex
     summaryStages[stage] = stats;
   }
 
+  // RS lists the candidates whose resumes were shortlisted, so an applicant in TA who is
+  // missing from RS was rejected at the resume stage. Only RS works this way: SC, AS and SP
+  // have their own outcomes (e.g. a blank SC decision is a no-show), so absence there
+  // means nothing. Applicants who appear on any later stage tab clearly passed RS.
+  const rsMapping = config.stages.RESUME_SHORTLIST;
+  const rsStats = summaryStages.RESUME_SHORTLIST;
+  const onAnyStageTab = new Set(rows.flatMap((row) =>
+    row.data.kind === "stage" && row.data.candidateCode ? [row.data.candidateCode.toLowerCase()] : []));
+  const rsListsApplicants = rows.some((row) =>
+    row.data.kind === "stage" && row.data.stage === "RESUME_SHORTLIST" && row.data.candidateCode);
+  if (rsMapping.mode === "SHEET" && rsStats && rsListsApplicants) {
+    let notShortlisted = 0;
+    const appRowsSnapshot = rows.filter((row): row is StagedRow<ApplicationRowData> => row.data.kind === "application" && row.included);
+    for (const appRow of appRowsSnapshot) {
+      const code = appRow.data.candidateCode;
+      const key = code.toLowerCase();
+      if (onAnyStageTab.has(key)) continue;
+      onAnyStageTab.add(key);
+
+      const issues: PlanIssue[] = [];
+      const candidateId = appRow.data.candidateId ?? candidateIdByCode.get(key) ?? null;
+      const previous = candidateId ? context.outcomes.get(candidateId)?.get("RESUME_SHORTLIST") : undefined;
+      let action: Action = "CREATE";
+      if (previous) {
+        if (previous.outcome === "REJECTED") {
+          action = "NO_CHANGE";
+        } else if (previous.source === "MANUAL") {
+          action = "CONFLICT";
+          rsStats.conflicts++;
+          issues.push({
+            severity: "WARNING",
+            code: "MANUAL_DECISION_DIFFERS",
+            message: `A PSM recorded “${previous.outcome.toLowerCase().replace("_", " ")}” by hand; this applicant is not on ${rsMapping.sheet}, so the sheet says “rejected”. ${config.overwriteManualDecisions ? "The sheet will replace it." : "Kept unless you include this row."}`,
+          });
+        } else {
+          action = "UPDATE";
+        }
+      }
+
+      rsStats.rows++;
+      rsStats.rejected++;
+      notShortlisted++;
+      const perCandidate = decided.get(key) ?? new Map<DecisionStage, StageOutcome>();
+      perCandidate.set("RESUME_SHORTLIST", "REJECTED");
+      decided.set(key, perCandidate);
+
+      rows.push({
+        role: "RESUME_SHORTLIST",
+        sheet: appRow.sheet,
+        headerRow: appRow.headerRow,
+        rowNumber: appRow.rowNumber,
+        rowRef: appRow.rowRef,
+        raw: appRow.raw,
+        data: {
+          kind: "stage",
+          stage: "RESUME_SHORTLIST",
+          candidateCode: code,
+          outcome: "REJECTED",
+          priority: null,
+          techScore: null,
+          commScore: null,
+          rejectionReason: `Resume not shortlisted (not on ${rsMapping.sheet})`,
+          remarks: null,
+        },
+        action,
+        issues,
+        included: action !== "CONFLICT" || config.overwriteManualDecisions,
+      });
+    }
+    if (notShortlisted > 0) {
+      batchIssues.push({
+        severity: "INFO",
+        code: "RS_NOT_SHORTLISTED",
+        message: `${notShortlisted} applicant(s) in ${config.applications.sheet} are not on ${rsMapping.sheet} or any later stage tab; they are recorded as rejected at resume shortlisting.`,
+      });
+    }
+  }
+
   // Selected at a stage after being rejected at an earlier one: allowed, but worth a look.
   for (const row of rows) {
     if (row.data.kind !== "stage" || !row.included || row.data.outcome !== "SELECTED" || !row.data.candidateCode) continue;
