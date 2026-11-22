@@ -33,6 +33,16 @@ export interface PipelineEntry {
   firstListedMonth: string;
 }
 
+export interface DriveStepCounts {
+  applied: number; internalRejected: number; finalShortlisted: number; shared: number;
+  interviewed: number; inProcess: number; companyRejected: number; selected: number;
+}
+export interface DriveRoundCounts { attended: number; cleared: number; rejected: number; scheduled: number }
+export interface DriveStages {
+  steps: { academy: DriveStepCounts; pool: DriveStepCounts; all: DriveStepCounts };
+  rounds: ({ roundId: string; name: string; sequence: number } & { academy: DriveRoundCounts; pool: DriveRoundCounts; all: DriveRoundCounts })[];
+}
+
 export interface MonthlyDrive {
   jobRequestId: string;
   jobCode: string;
@@ -55,6 +65,7 @@ export interface MonthlyDrive {
   lastCrmRemark: { on: string | null; remark: string } | null;
   hasRsaReview: boolean;
   onPotentialList: boolean;
+  stages: DriveStages | null;
 }
 
 export interface MonthlyStudentGroup {

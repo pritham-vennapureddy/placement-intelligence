@@ -23,6 +23,7 @@ import { AcademyPage } from "./features/tracking/academy-page";
 import { InsightsPage } from "./features/tracking/insights-page";
 import { MyWorkPage } from "./features/tracking/my-work-page";
 import { MonthlyPipelinePage } from "./features/pulse/monthly-pipeline-page";
+import { AssistantPage } from "./features/assistant/assistant-page";
 import { RsaPage } from "./features/pulse/rsa-page";
 import { LoginPage } from "./pages/login-page";
 import { SheetsPage } from "./pages/sheets-page";
@@ -46,6 +47,7 @@ const pages: Record<string, ReactNode> = {
   "/monthly": <MonthlyPipelinePage />,
   "/insights": <InsightsPage />,
   "/academy": <AcademyPage />,
+  "/assistant": <AssistantPage />,
   "/job-requests": <JobRequestsPage />,
   "/candidates": <CandidatesPage />,
   "/assessed-pool": <AssessedPoolPage />,

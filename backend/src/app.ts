@@ -26,6 +26,7 @@ import { jobRequestsRouter } from "./modules/job-requests/job-requests.routes.js
 import { neonRouter } from "./modules/neon/neon.routes.js";
 import { pipelineRouter } from "./modules/pipeline/pipeline.routes.js";
 import { driveNotesRouter, monthlyPipelineRouter, rsaRouter } from "./modules/pulse/pulse.routes.js";
+import { assistantRouter } from "./modules/assistant/assistant.routes.js";
 import { screeningRouter } from "./modules/screening/screening.routes.js";
 import { teamsRouter } from "./modules/teams/teams.routes.js";
 import { guidanceRouter, jobTrackingRouter, myWorkRouter } from "./modules/tracking/tracking.routes.js";
@@ -81,6 +82,7 @@ app.use("/api/insights", insightsRouter);
 app.use("/api/guidance", guidanceRouter);
 app.use("/api/my-work", myWorkRouter);
 app.use("/api/monthly-pipeline", monthlyPipelineRouter);
+app.use("/api/assistant", assistantRouter);
 app.use("/api/rsa", rsaRouter);
 app.use("/api/integrations/neon", neonRouter);
 app.use("/api/teams", teamsRouter);

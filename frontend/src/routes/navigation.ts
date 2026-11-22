@@ -1,6 +1,7 @@
 import type { Permission } from "@placement/shared";
 import {
   Activity,
+  Bot,
   BriefcaseBusiness,
   ChartNoAxesCombined,
   CalendarRange,
@@ -39,6 +40,7 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Monthly pipeline", icon: CalendarRange, path: "/monthly", permission: "report:read" },
       { label: "Insights", icon: ChartNoAxesCombined, path: "/insights", permission: "report:read" },
       { label: "Academy & pool", icon: GraduationCap, path: "/academy", permission: "report:read" },
+      { label: "Ask the data", icon: Bot, path: "/assistant", permission: "report:read" },
     ],
   },
   {

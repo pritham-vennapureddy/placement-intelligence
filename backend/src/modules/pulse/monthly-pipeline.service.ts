@@ -214,10 +214,82 @@ async function students(month: string, owners: Prisma.Sql) {
   };
 }
 
+type GroupKey = "academy" | "pool" | "all";
+type StageCounts = { attended: number; cleared: number; rejected: number; scheduled: number };
+const GROUPS = Prisma.sql`CROSS JOIN LATERAL (VALUES ('academy', f.category IN ('ACADEMY', 'ACADEMY_INTENSIVE')), ('pool', f.in_pool), ('all', TRUE)) AS g(grp, keep)`;
+
+/**
+ * Per drive: unique students at each step (applied → SP → shared → interviewed →
+ * in process / rejected / selected) and in each of the company's own rounds, for
+ * Academy, assessed-pool and all students.
+ */
+async function driveStages(month: string, owners: Prisma.Sql) {
+  const query = { dateBy: "requested", academyCategory: "ALL_ACADEMY", segment: "ALL" } as AcademyQuery;
+  const facts = academyFacts(query, owners, liveInMonth(month));
+  const [steps, rounds] = await Promise.all([
+    prisma.$queryRaw<{ job_id: string; grp: GroupKey; applied: number; internal_rejected: number; sp: number; shared: number; interviewed: number; in_process: number; company_rejected: number; selected: number }[]>`
+      ${facts}
+      SELECT f.job_id, g.grp,
+        COUNT(DISTINCT f.candidate_id)::int AS applied,
+        COUNT(DISTINCT f.candidate_id) FILTER (WHERE f.internal_rejected)::int AS internal_rejected,
+        COUNT(DISTINCT f.candidate_id) FILTER (WHERE f.sp)::int AS sp,
+        COUNT(DISTINCT f.candidate_id) FILTER (WHERE f.shared)::int AS shared,
+        COUNT(DISTINCT f.candidate_id) FILTER (WHERE f.interviewed)::int AS interviewed,
+        COUNT(DISTINCT f.candidate_id) FILTER (WHERE f.pipeline IN ('IN_PROCESS', 'ON_HOLD'))::int AS in_process,
+        COUNT(DISTINCT f.candidate_id) FILTER (WHERE f.pipeline = 'REJECTED')::int AS company_rejected,
+        COUNT(DISTINCT f.candidate_id) FILTER (WHERE f.selected)::int AS selected
+      FROM f ${GROUPS}
+      WHERE g.keep
+      GROUP BY f.job_id, g.grp`,
+    prisma.$queryRaw<({ job_id: string; grp: GroupKey; round_id: string; name: string; sequence: number } & StageCounts)[]>`
+      ${facts}
+      SELECT f.job_id, g.grp, cr.id AS round_id, cr.name, cr.sequence,
+        COUNT(DISTINCT f.candidate_id) FILTER (WHERE ci.outcome IN ('CLEARED', 'REJECTED', 'ON_HOLD'))::int AS attended,
+        COUNT(DISTINCT f.candidate_id) FILTER (WHERE ci.outcome = 'CLEARED')::int AS cleared,
+        COUNT(DISTINCT f.candidate_id) FILTER (WHERE ci.outcome = 'REJECTED')::int AS rejected,
+        COUNT(DISTINCT f.candidate_id) FILTER (WHERE ci.outcome = 'SCHEDULED')::int AS scheduled
+      FROM f
+      JOIN "CompanyInterview" ci ON ci."nominationId" = f.nomination_id
+      JOIN "CompanyInterviewRound" cr ON cr.id = ci."roundId"
+      ${GROUPS}
+      WHERE g.keep
+      GROUP BY f.job_id, g.grp, cr.id, cr.name, cr.sequence`,
+  ]);
+
+  const empty = () => ({ applied: 0, internalRejected: 0, finalShortlisted: 0, shared: 0, interviewed: 0, inProcess: 0, companyRejected: 0, selected: 0 });
+  const zero = (): StageCounts => ({ attended: 0, cleared: 0, rejected: 0, scheduled: 0 });
+  const byJob = new Map<string, {
+    steps: Record<GroupKey, ReturnType<typeof empty>>;
+    rounds: Map<string, { roundId: string; name: string; sequence: number } & Record<GroupKey, StageCounts>>;
+  }>();
+  const entry = (jobId: string) => {
+    let value = byJob.get(jobId);
+    if (!value) byJob.set(jobId, (value = { steps: { academy: empty(), pool: empty(), all: empty() }, rounds: new Map() }));
+    return value;
+  };
+  for (const row of steps) {
+    entry(row.job_id).steps[row.grp] = {
+      applied: row.applied, internalRejected: row.internal_rejected, finalShortlisted: row.sp, shared: row.shared,
+      interviewed: row.interviewed, inProcess: row.in_process, companyRejected: row.company_rejected, selected: row.selected,
+    };
+  }
+  for (const row of rounds) {
+    const job = entry(row.job_id);
+    const round = job.rounds.get(row.round_id)
+      ?? job.rounds.set(row.round_id, { roundId: row.round_id, name: row.name, sequence: row.sequence, academy: zero(), pool: zero(), all: zero() }).get(row.round_id)!;
+    round[row.grp] = { attended: row.attended, cleared: row.cleared, rejected: row.rejected, scheduled: row.scheduled };
+  }
+  return new Map([...byJob].map(([jobId, value]) => [jobId, {
+    steps: value.steps,
+    rounds: [...value.rounds.values()].sort((x, y) => x.sequence - y.sequence || x.name.localeCompare(y.name)),
+  }]));
+}
+
 async function drives(month: string, owners: Prisma.Sql) {
   const start = `${month}-01`;
   const end = `${nextMonthKey(month)}-01`;
   const query = { dateBy: "requested", academyCategory: "ALL_ACADEMY", segment: "ALL" } as AcademyQuery;
+  const stagesPromise = driveStages(month, owners);
   const rows = await prisma.$queryRaw<{
     id: string; job_code: string; role_title: string; company_id: string; company_name: string; psm: string | null; status: string; phase: string; round_name: string | null;
     request_date: Date; start_date: Date | null; end_date: Date | null; starts_in_month: boolean; ends_in_month: boolean; requested_in_month: boolean;
@@ -257,6 +329,7 @@ async function drives(month: string, owners: Prisma.Sql) {
     WHERE ${liveInMonth(month)} ${owners}
     ORDER BY starts_in_month DESC, co.name, j."roleTitle"`;
 
+  const stages = await stagesPromise;
   return rows.map((row) => ({
     jobRequestId: row.id,
     jobCode: row.job_code,
@@ -279,6 +352,8 @@ async function drives(month: string, owners: Prisma.Sql) {
     lastCrmRemark: row.crm_last ? { on: day(row.crm_last_on), remark: row.crm_last } : null,
     hasRsaReview: row.rsa_review,
     onPotentialList: row.on_list,
+    /** Unique students per step and per company round, for Academy, pool and everyone. */
+    stages: stages.get(row.id) ?? null,
   }));
 }
 

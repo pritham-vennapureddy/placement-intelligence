@@ -9,7 +9,7 @@ import {
 } from "@placement/shared";
 import { format } from "date-fns";
 import { ArrowRightLeft, Award, BriefcaseBusiness, Building2, CalendarClock, Download, GraduationCap, History, Pencil, Plus, Rocket, Trash2, UserRoundCheck } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ConfirmDialog } from "../../components/confirm-dialog";
@@ -29,7 +29,7 @@ import { catalogApi } from "../../services/api";
 import { monthlyPipelineApi } from "../../services/pulse-api";
 import { guidanceApi } from "../../services/tracking-api";
 import type { GuidanceJobOption } from "../../types/tracking";
-import type { MonthlyPipeline, MonthlyStudent, MonthlyStudentGroup, PipelineEntry } from "../../types/pulse";
+import type { DriveStages, DriveStepCounts, MonthlyPipeline, MonthlyStudent, MonthlyStudentGroup, PipelineEntry } from "../../types/pulse";
 import { cn } from "../../utils/cn";
 import { downloadCsv } from "../../utils/csv";
 
@@ -306,54 +306,160 @@ function PotentialList({ data }: { data: MonthlyPipeline }) {
   );
 }
 
+/** One drive's student journey: each step and each of the company's rounds, Academy / pool / everyone. */
+function DriveStagesTable({ stages }: { stages: DriveStages }) {
+  const groups = [
+    { key: "academy", label: "Academy" },
+    { key: "pool", label: "Assessed pool" },
+    { key: "all", label: "All students" },
+  ] as const;
+  const steps: { label: string; value: (counts: DriveStepCounts) => number; tone?: string }[] = [
+    { label: "Applied", value: (counts) => counts.applied },
+    { label: "Rejected in our process (RS/SC/AS)", value: (counts) => counts.internalRejected, tone: "text-rose-600" },
+    { label: "Shortlisted by us (SP)", value: (counts) => counts.finalShortlisted },
+    { label: "Shared with company", value: (counts) => counts.shared },
+    { label: "Got an interview", value: (counts) => counts.interviewed },
+  ];
+  const outcomes: typeof steps = [
+    { label: "Still in company process", value: (counts) => counts.inProcess },
+    { label: "Rejected by company", value: (counts) => counts.companyRejected, tone: "text-rose-600" },
+    { label: "Selected", value: (counts) => counts.selected, tone: "font-semibold text-emerald-700" },
+  ];
+  const stepRow = (step: (typeof steps)[number]) => (
+    <tr key={step.label}>
+      <td className="py-1 pr-3 text-slate-700">{step.label}</td>
+      {groups.map((group) => <td key={group.key} className={cn("px-2 text-right tabular-nums", step.tone)} colSpan={4}>{step.value(stages.steps[group.key])}</td>)}
+    </tr>
+  );
+  return (
+    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50/50 p-3">
+      <table className="w-full min-w-[760px] text-xs">
+        <thead className="text-slate-500">
+          <tr>
+            <th className="pb-1 text-left font-medium">Unique students</th>
+            {groups.map((group) => <th key={group.key} colSpan={4} className="px-2 pb-1 text-right font-semibold text-slate-700">{group.label}</th>)}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {steps.map(stepRow)}
+          {stages.rounds.length > 0 && (
+            <tr className="text-slate-500">
+              <td className="pb-1 pt-3 font-medium">Company rounds</td>
+              {groups.map((group) => (
+                <Fragment key={group.key}>
+                  <td className="px-1 pt-3 text-right" title="Attended">Att.</td>
+                  <td className="px-1 pt-3 text-right text-emerald-700" title="Cleared">Clr.</td>
+                  <td className="px-1 pt-3 text-right text-rose-600" title="Rejected">Rej.</td>
+                  <td className="px-1 pt-3 text-right" title="Scheduled, not yet attended">Sch.</td>
+                </Fragment>
+              ))}
+            </tr>
+          )}
+          {stages.rounds.map((round) => (
+            <tr key={round.roundId}>
+              <td className="py-1 pr-3 font-medium text-slate-800">{round.name}</td>
+              {groups.map((group) => (
+                <Fragment key={group.key}>
+                  <td className="px-1 text-right tabular-nums">{round[group.key].attended}</td>
+                  <td className="px-1 text-right tabular-nums text-emerald-700">{round[group.key].cleared}</td>
+                  <td className="px-1 text-right tabular-nums text-rose-600">{round[group.key].rejected}</td>
+                  <td className="px-1 text-right tabular-nums text-slate-500">{round[group.key].scheduled}</td>
+                </Fragment>
+              ))}
+            </tr>
+          ))}
+          {outcomes.map(stepRow)}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function Drives({ data }: { data: MonthlyPipeline }) {
   const [onlyStarting, setOnlyStarting] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const rows = onlyStarting ? data.drives.items.filter((drive) => drive.startsInMonth) : data.drives.items;
+  const toggle = (id: string) => setExpanded((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const allOpen = rows.length > 0 && rows.every((drive) => expanded.has(drive.jobRequestId));
   return (
     <Card className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold text-slate-900">Job drives in pipeline</h2>
-          <p className="mt-0.5 text-xs text-slate-500">Drives requested by the month's end that had not finished before it started. "Starts" uses the hand-entered company process start date.</p>
+          <p className="mt-0.5 text-xs text-slate-500">Drives requested by the month's end that had not finished before it started. Academy columns are unique Academy students on that drive; open "Stages" for every step and company round.</p>
         </div>
-        <label className="flex items-center gap-2 text-xs text-slate-600">
-          <input type="checkbox" checked={onlyStarting} onChange={(event) => setOnlyStarting(event.target.checked)} /> Only drives starting this month ({data.drives.summary.startingThisMonth})
-        </label>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-xs text-slate-600">
+            <input type="checkbox" checked={onlyStarting} onChange={(event) => setOnlyStarting(event.target.checked)} /> Only drives starting this month ({data.drives.summary.startingThisMonth})
+          </label>
+          {rows.length > 0 && (
+            <Button size="sm" variant="outline" onClick={() => setExpanded(allOpen ? new Set() : new Set(rows.map((drive) => drive.jobRequestId)))}>
+              {allOpen ? "Hide all stages" : "Show all stages"}
+            </Button>
+          )}
+        </div>
       </div>
       {rows.length === 0 ? <EmptyState icon={BriefcaseBusiness} title="No drives" className="py-8" /> : (
         <div className="mt-3 overflow-x-auto">
-          <table className="w-full min-w-[1000px] text-sm">
+          <table className="w-full min-w-[1100px] text-sm">
             <thead className="border-b border-slate-200 text-left text-xs text-slate-500">
               <tr>
                 <th className="py-2 pr-3 font-medium">Company · role</th><th className="pr-3 font-medium">Status</th><th className="pr-3 font-medium">Process dates</th><th className="pr-2 text-right font-medium">Openings</th>
-                <th className="pr-2 text-right font-medium" title="Academy students who applied">Academy</th><th className="pr-2 text-right font-medium" title="Assessed-pool students who applied">Pool</th>
-                <th className="pr-2 text-right font-medium">Shared</th><th className="pr-2 text-right font-medium" title="Attended at least one company round">Interviewed</th><th className="pr-3 text-right font-medium">Selected</th>
+                <th className="pr-2 text-right font-medium" title="Unique Academy students who applied">Academy</th>
+                <th className="pr-2 text-right font-medium" title="Academy students shared with the company">Acad. shared</th>
+                <th className="pr-2 text-right font-medium" title="Academy students who attended at least one company round">Acad. interviewed</th>
+                <th className="pr-2 text-right font-medium" title="Academy students still in the company process">Acad. in process</th>
+                <th className="pr-2 text-right font-medium" title="Academy students selected">Acad. selected</th>
+                <th className="pr-2 text-right font-medium" title="Assessed-pool students who applied">Pool</th>
+                <th className="pr-3 text-right font-medium" title="All students shared with the company">All shared</th>
                 <th className="pr-3 font-medium">Latest CRM remark</th><th className="font-medium">RSA review</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {rows.map((drive) => (
-                <tr key={drive.jobRequestId} className="align-top">
-                  <td className="py-2.5 pr-3">
-                    <Link to={`/job-requests/${drive.jobRequestId}`} className="font-medium text-slate-900 hover:text-indigo-700">{drive.companyName}</Link>
-                    <p className="text-xs text-slate-500">{drive.roleTitle}{drive.psmName ? ` · ${drive.psmName}` : ""}</p>
-                    {drive.startsInMonth && <Badge variant="outline" className="mt-1 border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700">Starts this month</Badge>}
-                  </td>
-                  <td className="pr-3 pt-2.5 text-xs text-slate-700">{companyProcessLabel(drive.phase, drive.roundName)}</td>
-                  <td className="pr-3 pt-2.5 text-xs text-slate-600">{dateText(drive.processStartDate)} – {dateText(drive.processEndDate)}</td>
-                  <td className="pr-2 pt-2.5 text-right tabular-nums">{drive.openings}</td>
-                  <td className="pr-2 pt-2.5 text-right tabular-nums">{drive.students.academy}</td>
-                  <td className="pr-2 pt-2.5 text-right tabular-nums">{drive.students.pool}</td>
-                  <td className="pr-2 pt-2.5 text-right tabular-nums">{drive.students.shared}</td>
-                  <td className="pr-2 pt-2.5 text-right tabular-nums">{drive.students.interviewed}</td>
-                  <td className="pr-3 pt-2.5 text-right tabular-nums font-medium text-emerald-700">{drive.students.selected}</td>
-                  <td className="max-w-xs pr-3 pt-2.5 text-xs text-slate-600">
-                    {drive.lastCrmRemark ? <><span className="text-slate-400">{dateText(drive.lastCrmRemark.on)}:</span> <span className="line-clamp-2">{drive.lastCrmRemark.remark}</span></> : <span className="text-slate-400">None</span>}
-                    <Link to={`/job-requests/${drive.jobRequestId}?tab=notes`} className="text-indigo-700 hover:underline">{drive.crmRemarkCount ? `All ${drive.crmRemarkCount}` : "Add"}</Link>
-                  </td>
-                  <td className="pt-2.5 text-xs">{drive.hasRsaReview ? <span className="text-emerald-700">Written</span> : <span className="text-slate-400">Not yet</span>}</td>
-                </tr>
-              ))}
+              {rows.map((drive) => {
+                const academy = drive.stages?.steps.academy;
+                const open = expanded.has(drive.jobRequestId);
+                return (
+                  <Fragment key={drive.jobRequestId}>
+                    <tr className="align-top">
+                      <td className="py-2.5 pr-3">
+                        <Link to={`/job-requests/${drive.jobRequestId}`} className="font-medium text-slate-900 hover:text-indigo-700">{drive.companyName}</Link>
+                        <p className="text-xs text-slate-500">{drive.roleTitle}{drive.psmName ? ` · ${drive.psmName}` : ""}</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          {drive.startsInMonth && <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700">Starts this month</Badge>}
+                          {drive.stages && (
+                            <button type="button" onClick={() => toggle(drive.jobRequestId)} className="text-xs font-medium text-indigo-700 hover:underline" aria-expanded={open}>
+                              {open ? "Hide stages" : `Stages${drive.stages.rounds.length ? ` (${drive.stages.rounds.length} rounds)` : ""}`}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                      <td className="pr-3 pt-2.5 text-xs text-slate-700">{companyProcessLabel(drive.phase, drive.roundName)}</td>
+                      <td className="pr-3 pt-2.5 text-xs text-slate-600">{dateText(drive.processStartDate)} – {dateText(drive.processEndDate)}</td>
+                      <td className="pr-2 pt-2.5 text-right tabular-nums">{drive.openings}</td>
+                      <td className="pr-2 pt-2.5 text-right tabular-nums">{drive.students.academy}</td>
+                      <td className="pr-2 pt-2.5 text-right tabular-nums">{academy?.shared ?? 0}</td>
+                      <td className="pr-2 pt-2.5 text-right tabular-nums">{academy?.interviewed ?? 0}</td>
+                      <td className="pr-2 pt-2.5 text-right tabular-nums">{academy?.inProcess ?? 0}</td>
+                      <td className="pr-2 pt-2.5 text-right tabular-nums font-medium text-emerald-700">{academy?.selected ?? 0}</td>
+                      <td className="pr-2 pt-2.5 text-right tabular-nums">{drive.students.pool}</td>
+                      <td className="pr-3 pt-2.5 text-right tabular-nums">{drive.students.shared}</td>
+                      <td className="max-w-xs pr-3 pt-2.5 text-xs text-slate-600">
+                        {drive.lastCrmRemark ? <><span className="text-slate-400">{dateText(drive.lastCrmRemark.on)}:</span> <span className="line-clamp-2">{drive.lastCrmRemark.remark}</span></> : <span className="text-slate-400">None</span>}
+                        <Link to={`/job-requests/${drive.jobRequestId}?tab=notes`} className="text-indigo-700 hover:underline">{drive.crmRemarkCount ? `All ${drive.crmRemarkCount}` : "Add"}</Link>
+                      </td>
+                      <td className="pt-2.5 text-xs">{drive.hasRsaReview ? <span className="text-emerald-700">Written</span> : <span className="text-slate-400">Not yet</span>}</td>
+                    </tr>
+                    {open && drive.stages && (
+                      <tr><td colSpan={13} className="pb-4 pt-1"><DriveStagesTable stages={drive.stages} /></td></tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>

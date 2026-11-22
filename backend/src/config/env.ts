@@ -26,6 +26,11 @@ const envSchema = z.object({
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
   FRONTEND_ORIGIN: z.string().url().default("http://localhost:5173"),
+  // The "Ask the data" assistant. Without a key the assistant reports it is not set up.
+  GEMINI_API_KEY: z.string().min(1).optional(),
+  GEMINI_MODEL: z.string().regex(/^[a-z0-9.-]+$/).default("gemini-3.5-flash"),
+  // Tried when the main model is overloaded or unavailable.
+  GEMINI_FALLBACK_MODEL: z.string().regex(/^[a-z0-9.-]+$/).default("gemini-2.5-flash"),
 });
 
 export const env = envSchema.parse(process.env);
