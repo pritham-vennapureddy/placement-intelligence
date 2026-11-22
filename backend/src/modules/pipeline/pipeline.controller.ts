@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { sendCreated, sendData, sendNoContent } from "../../utils/http.js";
 import { auditContextFrom } from "../audit/audit.service.js";
 import { pipelineService } from "./pipeline.service.js";
-import type { CreateRoundInput, DirectShareInput, InterviewInput, NominateInput, PipelineStatusInput, ProcessDatesInput, UpdateRoundInput } from "./pipeline.validators.js";
+import type { BulkProcessDatesInput, CreateRoundInput, DirectShareInput, InterviewInput, NominateInput, PipelineStatusInput, ProcessDatesInput, UpdateRoundInput } from "./pipeline.validators.js";
 
 const jobOf = (request: Request) => request.params.jobRequestId as string;
 const param = (request: Request, name: string) => request.params[name] as string;
@@ -36,6 +36,9 @@ export const pipelineController = {
   },
   async setProcessDates(request: Request, response: Response) {
     sendData(response, await pipelineService.setProcessDates(request.user!, jobOf(request), param(request, "nominationId"), request.body as ProcessDatesInput, auditContextFrom(request)));
+  },
+  async setProcessDatesBulk(request: Request, response: Response) {
+    sendData(response, await pipelineService.setProcessDatesBulk(request.user!, jobOf(request), request.body as BulkProcessDatesInput, auditContextFrom(request)));
   },
   async setDirectShare(request: Request, response: Response) {
     sendData(response, await pipelineService.setDirectShare(request.user!, jobOf(request), request.body as DirectShareInput, auditContextFrom(request)));

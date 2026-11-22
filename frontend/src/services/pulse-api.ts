@@ -22,7 +22,7 @@ export const monthlyPipelineApi = {
   async month(month: string): Promise<MonthlyPipeline> {
     return (await request<Data<MonthlyPipeline>>(`/monthly-pipeline${toQueryString({ month })}`)).data;
   },
-  async create(input: PipelineEntryInput & { month: string; companyName: string }): Promise<void> {
+  async create(input: PipelineEntryInput & { month: string; jobRequestId: string }): Promise<void> {
     await request("/monthly-pipeline/entries", json("POST", input, newIdempotencyKey()));
   },
   async update(entryId: string, input: PipelineEntryInput): Promise<void> {

@@ -1086,8 +1086,8 @@ model MonthlyPipelineEntry {
   id                String                   @id @default(uuid()) @db.Uuid
   month             DateTime                 @db.Date
   companyId         String                   @db.Uuid
-  // The job drive, once one exists.
-  jobRequestId      String?                  @db.Uuid
+  // The job drive (by its job ID); the company comes from it.
+  jobRequestId      String                   @db.Uuid
   roleHint          String?
   expectedOpenings  Int?
   expectedStartDate DateTime?                @db.Date
@@ -1099,13 +1099,14 @@ model MonthlyPipelineEntry {
   createdAt         DateTime                 @default(now())
   updatedAt         DateTime                 @updatedAt
   company           Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  jobRequest        JobRequest?              @relation(fields: [jobRequestId], references: [id], onDelete: SetNull)
+  jobRequest        JobRequest               @relation(fields: [jobRequestId], references: [id], onDelete: Cascade)
   crmOwner          User?                    @relation("PipelineEntryOwner", fields: [crmOwnerId], references: [id], onDelete: SetNull)
   createdBy         User                     @relation("PipelineEntryCreator", fields: [createdById], references: [id], onDelete: Restrict)
   carriedFrom       MonthlyPipelineEntry?    @relation("PipelineCarry", fields: [carriedFromId], references: [id], onDelete: SetNull)
   carriedTo         MonthlyPipelineEntry?    @relation("PipelineCarry")
   history           MonthlyPipelineHistory[]
 
+  @@unique([month, jobRequestId])
   @@index([month, status])
   @@index([companyId, month])
 }
@@ -1172,7 +1173,10 @@ model ImportBatch {
   sourceUrl           String?
   sourceChecksum      String
   snapshotSize        Int
+  // Older imports keep the snapshot as JSON; new ones store it gzipped (about 5x
+  // smaller, so reading it back from the database is far quicker).
   sourceSnapshot      Json?
+  sourceSnapshotGz    Bytes?
   sheets              Json // [{ name, rowCount, columnCount }]
   mapping             Json? // the PSM's choices, reused for the next upload
   summary             Json? // validation counts shown during review

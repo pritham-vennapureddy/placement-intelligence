@@ -1,8 +1,19 @@
+import { gunzipSync, gzipSync } from "node:zlib";
 import { randomUUID } from "node:crypto";
 import { prisma, type Db } from "../../db.js";
 import { Prisma, type ImportTarget } from "../../generated/prisma/client.js";
 import { ApiError } from "../../utils/api-error.js";
 import type { PlanIssue, StagedRow } from "./internal-plan.js";
+
+/** Snapshots are mostly repeated text; gzip makes them about 5x smaller to store and load. */
+export function packSnapshot(snapshot: Prisma.InputJsonValue): Uint8Array<ArrayBuffer> {
+  const zipped = gzipSync(Buffer.from(JSON.stringify(snapshot)), { level: 6 });
+  return new Uint8Array(zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength) as ArrayBuffer);
+}
+
+export function unpackSnapshot(stored: Uint8Array): Prisma.JsonValue {
+  return JSON.parse(gunzipSync(stored).toString("utf8")) as Prisma.JsonValue;
+}
 
 const CHUNK = 500;
 
@@ -51,10 +62,11 @@ export const importsRepository = {
     mapping: Prisma.InputJsonValue | null;
   }) {
     const batchCode = `IMP-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${randomUUID().slice(0, 6).toUpperCase()}`;
-    const { mapping, ...rest } = data;
+    const { mapping, sourceSnapshot, ...rest } = data;
     return prisma.importBatch.create({
       data: {
         ...rest,
+        sourceSnapshotGz: packSnapshot(sourceSnapshot),
         batchCode,
         ...(mapping ? { mapping } : {}),
       },
@@ -66,8 +78,11 @@ export const importsRepository = {
     return prisma.importBatch.findUnique({ where: { id }, select: batchSummarySelect });
   },
 
-  findSnapshot(batchId: string) {
-    return prisma.importBatch.findUnique({ where: { id: batchId }, select: { sourceSnapshot: true } });
+  /** The workbook snapshot, unzipped (new imports) or as stored JSON (older ones). */
+  async findSnapshot(batchId: string): Promise<{ sourceSnapshot: Prisma.JsonValue } | null> {
+    const row = await prisma.importBatch.findUnique({ where: { id: batchId }, select: { sourceSnapshot: true, sourceSnapshotGz: true } });
+    if (!row) return null;
+    return { sourceSnapshot: row.sourceSnapshotGz ? unpackSnapshot(row.sourceSnapshotGz) : row.sourceSnapshot };
   },
 
   /** Most recent committed mapping for this job and target, to pre-fill the wizard. */

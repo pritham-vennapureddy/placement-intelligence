@@ -22,9 +22,9 @@ export interface PipelineEntry {
   updatedAt: string;
   company: { id: string; name: string };
   jobRequest: {
-    id: string; jobId: string; roleTitle: string; processPhase: CompanyProcessPhase; companyProcessStartDate: string | null;
+    id: string; jobId: string; roleTitle: string; openings: number; processPhase: CompanyProcessPhase; companyProcessStartDate: string | null;
     processRound: { name: string } | null; psmOwner: PersonRef | null;
-  } | null;
+  };
   crmOwner: PersonRef | null;
   createdBy: PersonRef;
   carriedFrom: { id: string; month: string; status: PotentialCompanyStatus } | null;
@@ -46,6 +46,7 @@ export interface MonthlyDrive {
   requestDate: string | null;
   processStartDate: string | null;
   processEndDate: string | null;
+  openings: number;
   startsInMonth: boolean;
   endsInMonth: boolean;
   requestedInMonth: boolean;
@@ -94,6 +95,25 @@ export interface MonthlyStudent {
   lastRoundOutcome: string | null;
 }
 
+export interface MonthlyPlacement {
+  applicationId: string;
+  candidateId: string;
+  fullName: string;
+  candidateCode: string | null;
+  category: string;
+  inPool: boolean;
+  jobRequestId: string;
+  jobCode: string;
+  roleTitle: string;
+  companyId: string;
+  companyName: string;
+  ctcLpa: number | null;
+  pipelineStatus: PipelineStatus;
+  hiredOn: string;
+  /** STUDENT: the hired date entered; ROUND: last company round; JOB: the job's process end; REQUEST: no date, the job's request date. */
+  hiredOnSource: "STUDENT" | "ROUND" | "JOB" | "REQUEST";
+}
+
 export interface MonthlyPipeline {
   month: string;
   potential: {
@@ -105,17 +125,19 @@ export interface MonthlyPipeline {
   };
   drives: {
     items: MonthlyDrive[];
-    summary: { live: number; companies: number; startingThisMonth: number; startingCompanies: number; endingThisMonth: number; requestedThisMonth: number };
+    summary: { live: number; companies: number; startingThisMonth: number; startingCompanies: number; endingThisMonth: number; requestedThisMonth: number; openings: number };
   };
   students: { academy: MonthlyStudentGroup; pool: MonthlyStudentGroup; people: MonthlyStudent[] };
+  /** Students hired in the month (interview done date), on any drive. */
+  placements: { total: number; academy: number; intensive: number; external: number; pool: number; companies: number; people: MonthlyPlacement[] };
 }
 
 export interface PipelineEntryInput {
   month?: string;
-  companyName?: string;
+  /** Required when adding: the job drive, picked by its job ID. */
+  jobRequestId?: string;
   status?: PotentialCompanyStatus;
   note?: string;
-  jobRequestId?: string | null;
   roleHint?: string | null;
   expectedOpenings?: number | null;
   expectedStartDate?: string | null;

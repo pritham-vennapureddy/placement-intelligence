@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { HiredDateNotice } from "./hired-date-notice";
 import { dashboardApi } from "../services/api";
 import type { PlacementKpiValues, PlacementSegmentKey } from "../types/api";
 import { cn } from "../utils/cn";
@@ -36,15 +37,15 @@ const KPI_COLUMNS: {
   },
   {
     label: "KPI 2 · % Positions closed",
-    hint: "Fulfilment rate: openings filled ÷ openings. Each job counts at most its own openings.",
+    hint: "Fulfilment rate on jobs whose company process ended in the period: openings filled ÷ openings. Jobs not started or still running are left out. Each job counts at most its own openings.",
     value: (kpis) => percent(kpis.positionsClosedPct),
-    detail: (kpis) => `${numberFormat.format(kpis.positionsClosed)} of ${numberFormat.format(kpis.positions)} positions`,
+    detail: (kpis) => `${numberFormat.format(kpis.positionsClosed)} of ${numberFormat.format(kpis.positions)} positions (process ended)`,
   },
   {
     label: "KPI 3 · % Hired conversion",
-    hint: "Companies that hired at least one candidate ÷ companies worked with.",
+    hint: "Companies whose process ended in the period that hired at least one student ÷ companies whose process ended. Process end = the company process end date, else the day the process was marked done, else the day a filled/closed job was last changed.",
     value: (kpis) => percent(kpis.hiredConversionPct),
-    detail: (kpis) => `${numberFormat.format(kpis.companiesHired)} of ${numberFormat.format(kpis.companies)} companies`,
+    detail: (kpis) => `${numberFormat.format(kpis.companiesEndedHired)} of ${numberFormat.format(kpis.companiesProcessEnded)} process-ended companies`,
   },
   {
     label: "KPI 4 · Profiles → hired",
@@ -117,7 +118,8 @@ export function PlacementKpiPanel() {
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Placement KPIs</h2>
           <p className="mt-1 text-xs text-slate-500">
-            Jobs are grouped by request month. A job is in the &lt; {allTime.data?.ctcThresholdLpa ?? 8} LPA band when its CTC is set and below that figure.
+            Placements count in the month the student was hired (interview done); positions and profiles in the month the job was requested.
+            {" "}A job is in the &lt; {allTime.data?.ctcThresholdLpa ?? 8} LPA band when its CTC is set and below that figure.
           </p>
         </div>
         <label className="w-full space-y-1 sm:w-52">
@@ -133,6 +135,8 @@ export function PlacementKpiPanel() {
           </Select>
         </label>
       </div>
+
+      {data && <HiredDateNotice hiredDates={data.hiredDates} />}
 
       {data && data.coverage.jobsWithoutCtc > 0 && (
         <div className="flex gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
@@ -170,7 +174,7 @@ export function PlacementKpiPanel() {
         </tbody>
       </TableShell>
 
-      <TableShell title={`Monthly · ${segmentLabel}`} subtitle="Every month with job requests, newest first.">
+      <TableShell title={`Monthly · ${segmentLabel}`} subtitle="Every month with job requests or hires, newest first.">
         <thead className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400">
           <tr><th className="px-5 py-3 font-semibold">Month</th><KpiHeaderCells /></tr>
         </thead>

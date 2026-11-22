@@ -44,6 +44,9 @@ export interface PlacementKpiValues {
   positionsClosedPct: number | null;
   companies: number;
   companiesHired: number;
+  companiesProcessEnded: number;
+  companiesEndedHired: number;
+  /** Process-ended companies that hired ÷ process-ended companies. */
   hiredConversionPct: number | null;
   profilesConsidered: number;
   profileToHirePct: number | null;
@@ -55,10 +58,15 @@ export interface PlacementOverviewFigures {
   jobRequests: number;
   companies: number;
   openings: number;
+  /** Openings on jobs whose company process ended in the period. */
+  positions: number;
   positionsClosed: number;
   positionsClosedPct: number | null;
   placements: number;
   placementsByCategory: Record<"ACADEMY" | "ACADEMY_INTENSIVE" | "EXTERNAL", number>;
+  companiesProcessEnded: number;
+  companiesEndedHired: number;
+  hiredCompaniesPct: number | null;
 }
 
 export interface PlacementKpis {
@@ -67,11 +75,25 @@ export interface PlacementKpis {
   ctcThresholdLpa: number;
   segments: { key: PlacementSegmentKey; label: string; detail: string }[];
   totals: PlacementKpiSet;
-  /** Every CTC level, by job request month. */
+  /** Every CTC level: openings by job request month, placements by hired month. */
   overview: { totals: PlacementOverviewFigures; monthly: ({ month: string } & PlacementOverviewFigures)[] };
   monthly: { month: string; kpis: PlacementKpiSet }[];
   companies: { id: string; name: string; kpis: PlacementKpiSet }[];
   coverage: { jobs: number; jobsWithoutCtc: number; jobsAtOrAboveThreshold: number };
+  /** Where each placement's hired date came from; undated ones count in the job's request month. */
+  hiredDates: PlacementHiredDates;
+}
+
+export interface PlacementHiredDates {
+  placements: number;
+  STUDENT: number;
+  ROUND: number;
+  JOB: number;
+  missing: number;
+  undated: {
+    applicationId: string | null; candidateName: string | null; jobRequestId: string; jobCode: string | null; roleTitle: string | null;
+    companyName: string; requestDate: string;
+  }[];
 }
 
 export interface CompanyAnalytics {

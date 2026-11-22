@@ -14,7 +14,7 @@ import {
   type RoundType,
 } from "@placement/shared";
 import { format } from "date-fns";
-import { ArrowDown, ArrowUp, ChevronDown, CornerDownRight, Plus, Send, Tag, Trash2, UploadCloud } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, CornerDownRight, Plus, Send, Tag, Trash2, UploadCloud } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -214,11 +214,24 @@ function InterviewDialog({ jobRequestId, target, onClose }: { jobRequestId: stri
   );
 }
 
+/** The student's interview-done date if known: their process end date, else their latest round date. */
+function knownHiredDate(nomination: Nomination): string | null {
+  if (nomination.processEndDate) return nomination.processEndDate.slice(0, 10);
+  const rounds = nomination.interviews.map((entry) => entry.scheduledAt?.slice(0, 10)).filter((value): value is string => Boolean(value)).sort();
+  return rounds.at(-1) ?? null;
+}
+
+const PLACED_STATUSES: readonly PipelineStatus[] = ["SELECTED", "OFFER_RELEASED", "OFFER_ACCEPTED", "JOINED"];
+
 function StatusDialog({ jobRequestId, target, onClose }: { jobRequestId: string; target: { nomination: Nomination; to: PipelineStatus } | null; onClose: () => void }) {
   const refresh = useRefresh(jobRequestId);
   const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [notes, setNotes] = useState("");
-  useEffect(() => { setDate(format(new Date(), "yyyy-MM-dd")); setNotes(""); }, [target]);
+  const hiring = target?.to === "SELECTED";
+  useEffect(() => {
+    setDate((target?.to === "SELECTED" ? knownHiredDate(target.nomination) : null) ?? format(new Date(), "yyyy-MM-dd"));
+    setNotes("");
+  }, [target]);
   const save = useMutation({
     mutationFn: () => pipelineApi.changeStatus(jobRequestId, target!.nomination.id, target!.to, date, notes.trim() || undefined),
     onSuccess: async () => { await refresh(); toast.success("Status updated"); onClose(); },
@@ -232,7 +245,10 @@ function StatusDialog({ jobRequestId, target, onClose }: { jobRequestId: string;
           <DialogDescription>{target?.nomination.application.candidate.fullName} · currently {target ? PIPELINE_STATUS_LABELS[target.nomination.pipelineStatus].toLowerCase() : ""}.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
-          <FormField id="status-date" label={dated ? "Date" : "Date of the change"}><Input id="status-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></FormField>
+          <FormField id="status-date" label={hiring ? "Interview done date (hired date)" : dated ? "Date" : "Date of the change"}>
+            <Input id="status-date" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+            {hiring && <p className="mt-1 text-xs text-slate-500">The placement counts in this month. It is saved as the student's process end date.</p>}
+          </FormField>
           <FormField id="status-notes" label="Notes"><Textarea id="status-notes" rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} /></FormField>
         </div>
         {save.error && <p role="alert" className="text-sm text-rose-600">{save.error.message}</p>}
@@ -283,6 +299,8 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
   const [showWithdrawn, setShowWithdrawn] = useState(false);
   const [datesTarget, setDatesTarget] = useState<Nomination | null>(null);
   const [directTarget, setDirectTarget] = useState<Nomination[] | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [bulkDates, setBulkDates] = useState<Nomination[] | null>(null);
   const [filter, setFilter] = useState<PipelineFilter>({ segment: "ALL", product: "ALL" });
   const pipeline = useQuery({ queryKey: ["pipeline", jobRequestId], queryFn: () => pipelineApi.get(jobRequestId) });
 
@@ -297,6 +315,20 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
   const withdrawnCount = nominations.length - nominations.filter((nomination) => nomination.status === "NOMINATED").length;
   const direct = nominations.filter((nomination) => nomination.status === "NOMINATED" && isDirectShare(nomination));
   const untagged = direct.filter((nomination) => !nomination.directShareReason);
+  const pickable = visible.filter((nomination) => nomination.status === "NOMINATED");
+  const pickedList = nominations.filter((nomination) => picked.has(nomination.id) && nomination.status === "NOMINATED");
+  const allPicked = pickable.length > 0 && pickable.every((nomination) => picked.has(nomination.id));
+  const togglePick = (id: string) => setPicked((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const shared = active.filter((nomination) => nomination.pipelineStatus !== "NOT_SUBMITTED");
+  const sharedWithoutEnd = shared.filter((nomination) => !nomination.processEndDate);
+  const starts = active.map((nomination) => nomination.processStartDate?.slice(0, 10)).filter((value): value is string => Boolean(value)).sort();
+  const ends = shared.map((nomination) => nomination.processEndDate?.slice(0, 10)).filter((value): value is string => Boolean(value)).sort();
+  const companyStart = starts[0] ?? null;
+  const companyEnd = shared.length > 0 && sharedWithoutEnd.length === 0 ? ends.at(-1) ?? null : null;
 
   return (
     <div className="space-y-4">
@@ -329,6 +361,11 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
             {filterLabel && <span className="ml-2 text-xs font-normal text-indigo-700">showing {visible.length} · {filterLabel}</span>}
           </p>
           <div className="ml-auto flex flex-wrap items-center gap-3">
+          {canEdit && sharedWithoutEnd.length > 0 && (
+            <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setPicked(new Set(sharedWithoutEnd.filter(matchesFilter).map((nomination) => nomination.id)))}>
+              Select {sharedWithoutEnd.filter(matchesFilter).length} without end date
+            </Button>
+          )}
           <Select value={filter.segment} onValueChange={(value) => setFilter({ segment: value as Segment | "ALL", product: "ALL" })}>
             <SelectTrigger className="h-8 w-44 text-xs" aria-label="Filter by segment"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -345,6 +382,23 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
           )}
           </div>
         </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-slate-100 bg-slate-50/50 px-4 py-2 text-xs text-slate-600">
+          <span>
+            <span className="font-medium text-slate-700">Company process:</span>{" "}
+            {companyStart || companyEnd ? <ProcessDates start={companyStart} end={companyEnd} /> : <span className="text-slate-400">no student dates yet</span>}
+          </span>
+          <span className="text-slate-400">
+            Calculated from the students' dates.
+            {sharedWithoutEnd.length > 0 && shared.length > 0 && ` Ends once all ${shared.length} shared students have an end date (${sharedWithoutEnd.length} missing).`}
+          </span>
+        </div>
+        {canEdit && pickedList.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-indigo-100 bg-indigo-50/70 px-4 py-2 text-xs text-indigo-900">
+            <span className="font-medium">{pickedList.length} selected</span>
+            <Button size="sm" className="h-7" onClick={() => setBulkDates(pickedList)}><CalendarDays size={13} /> Set process dates</Button>
+            <Button size="sm" variant="ghost" className="h-7" onClick={() => setPicked(new Set())}>Clear</Button>
+          </div>
+        )}
         {visible.length === 0 ? (
           filterLabel
             ? <EmptyState icon={Send} title={`No ${filterLabel} students here`} description="Clear the filter to see everyone." />
@@ -354,6 +408,12 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
             <table className="w-full text-sm">
               <thead className="bg-slate-50/60 text-left text-xs text-slate-500">
                 <tr>
+                  {canEdit && (
+                    <th className="w-8 py-2 pl-4">
+                      <Checkbox aria-label="Select all shown" checked={allPicked}
+                        onCheckedChange={() => setPicked(allPicked ? new Set() : new Set(pickable.map((nomination) => nomination.id)))} />
+                    </th>
+                  )}
                   <th className="px-4 py-2">Candidate</th>
                   {rounds.map((round) => <th key={round.id} className="whitespace-nowrap px-3 py-2">{round.name}</th>)}
                   <th className="px-4 py-2">Status</th><th className="whitespace-nowrap px-4 py-2">Process dates</th><th className="px-4 py-2">Offer / joining</th><th className="px-4 py-2" />
@@ -364,7 +424,13 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
                   const next = PIPELINE_TRANSITIONS[nomination.pipelineStatus];
                   const withdrawn = nomination.status === "WITHDRAWN";
                   return (
-                    <tr key={nomination.id} className="border-t border-slate-100 align-top">
+                    <tr key={nomination.id} className={`border-t border-slate-100 align-top ${picked.has(nomination.id) ? "bg-indigo-50/40" : ""}`}>
+                      {canEdit && (
+                        <td className="py-3 pl-4">
+                          <Checkbox aria-label={`Select ${nomination.application.candidate.fullName}`} disabled={withdrawn}
+                            checked={picked.has(nomination.id) && !withdrawn} onCheckedChange={() => togglePick(nomination.id)} />
+                        </td>
+                      )}
                       <td className="px-4 py-2.5">
                         <Link to={`/candidates/${nomination.application.candidate.id}`} className="font-medium text-slate-800 hover:text-indigo-700">{nomination.application.candidate.fullName}</Link>
                         <p className="text-xs text-slate-400">{nomination.application.product?.name ?? ""}{nomination.source === "IMPORT" ? " · from company sheet" : ""}</p>
@@ -398,6 +464,9 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
                         <button type="button" disabled={!canEdit} onClick={() => setDatesTarget(nomination)}
                           className="rounded-md p-0.5 text-left hover:bg-slate-100 disabled:cursor-default disabled:hover:bg-transparent" title={canEdit ? "Set process dates" : undefined}>
                           <ProcessDates start={nomination.processStartDate} end={nomination.processEndDate} />
+                          {!withdrawn && PLACED_STATUSES.includes(nomination.pipelineStatus) && !nomination.processEndDate && (
+                            <p className="mt-0.5 whitespace-nowrap text-[10px] font-medium text-amber-700">Add hired date</p>
+                          )}
                         </button>
                       </td>
                       <td className="px-4 py-2.5 text-xs text-slate-600">
@@ -437,8 +506,61 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
       <StatusDialog jobRequestId={jobRequestId} target={statusTarget} onClose={() => setStatusTarget(null)} />
       <WithdrawDialog jobRequestId={jobRequestId} nomination={withdrawing} onClose={() => setWithdrawing(null)} />
       <StudentProcessDatesDialog jobRequestId={jobRequestId} nomination={datesTarget} onClose={() => setDatesTarget(null)} />
+      <BulkProcessDatesDialog jobRequestId={jobRequestId} targets={bulkDates} onClose={(saved) => { setBulkDates(null); if (saved) setPicked(new Set()); }} />
       <DirectShareDialog jobRequestId={jobRequestId} targets={directTarget} untagged={untagged} onClose={() => setDirectTarget(null)} />
     </div>
+  );
+}
+
+/**
+ * The same process start and/or end date for many students at once. A date left
+ * blank keeps each student's own; the job's company process dates follow.
+ */
+function BulkProcessDatesDialog({ jobRequestId, targets, onClose }: { jobRequestId: string; targets: Nomination[] | null; onClose: (saved: boolean) => void }) {
+  const refresh = useRefresh(jobRequestId);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [clearStart, setClearStart] = useState(false);
+  const [clearEnd, setClearEnd] = useState(false);
+  useEffect(() => { setStartDate(""); setEndDate(""); setClearStart(false); setClearEnd(false); }, [targets]);
+  const hired = (targets ?? []).filter((nomination) => PLACED_STATUSES.includes(nomination.pipelineStatus)).length;
+  const invalid = Boolean(startDate && endDate && endDate < startDate);
+  const nothing = !startDate && !endDate && !clearStart && !clearEnd;
+  const save = useMutation({
+    mutationFn: () => pipelineApi.setProcessDatesBulk(jobRequestId, {
+      nominationIds: (targets ?? []).map((nomination) => nomination.id),
+      ...(clearStart ? { startDate: null } : startDate ? { startDate } : {}),
+      ...(clearEnd ? { endDate: null } : endDate ? { endDate } : {}),
+    }),
+    onSuccess: async () => { await refresh(); toast.success(`Process dates saved for ${targets?.length ?? 0} students`); onClose(true); },
+  });
+  return (
+    <Dialog open={Boolean(targets)} onOpenChange={(open) => !open && !save.isPending && onClose(false)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Set process dates</DialogTitle>
+          <DialogDescription>For {targets?.length ?? 0} selected students. Leave a date blank to keep each student's own.</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <FormField id="bulk-process-start" label="Start date">
+            <Input id="bulk-process-start" type="date" value={startDate} disabled={clearStart} onChange={(event) => setStartDate(event.target.value)} />
+            <label className="mt-1 flex items-center gap-1.5 text-xs text-slate-500"><Checkbox checked={clearStart} onCheckedChange={(checked) => { setClearStart(checked === true); setStartDate(""); }} /> Clear start dates</label>
+          </FormField>
+          <FormField id="bulk-process-end" label="End date (interview done)">
+            <Input id="bulk-process-end" type="date" value={endDate} min={startDate || undefined} disabled={clearEnd} onChange={(event) => setEndDate(event.target.value)} />
+            <label className="mt-1 flex items-center gap-1.5 text-xs text-slate-500"><Checkbox checked={clearEnd} onCheckedChange={(checked) => { setClearEnd(checked === true); setEndDate(""); }} /> Clear end dates</label>
+          </FormField>
+        </div>
+        {hired > 0 && endDate && <p className="text-xs text-slate-500">{hired} of them {hired === 1 ? "is" : "are"} hired: the end date is their hired date, so the placement counts in that month.</p>}
+        <p className="text-xs text-slate-500">The company process start and end are recalculated from all students' dates.</p>
+        {invalid && <p className="text-xs text-rose-600">The end date cannot be before the start date.</p>}
+        {save.error && <p role="alert" className="text-sm text-rose-600">{save.error.message}</p>}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onClose(false)} disabled={save.isPending}>Cancel</Button>
+          <Button onClick={() => save.mutate()} disabled={save.isPending || invalid || nothing}>Save for {targets?.length ?? 0}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -451,6 +573,7 @@ function StudentProcessDatesDialog({ jobRequestId, nomination, onClose }: { jobR
     if (nomination) { setStartDate(nomination.processStartDate?.slice(0, 10) ?? ""); setEndDate(nomination.processEndDate?.slice(0, 10) ?? ""); }
   }, [nomination]);
   const invalid = Boolean(startDate && endDate && endDate < startDate);
+  const placed = Boolean(nomination && nomination.status !== "WITHDRAWN" && PLACED_STATUSES.includes(nomination.pipelineStatus));
   const save = useMutation({
     mutationFn: () => pipelineApi.setProcessDates(jobRequestId, nomination!.id, { startDate: startDate || null, endDate: endDate || null }),
     onSuccess: async () => { await refresh(); toast.success("Process dates saved"); onClose(); },
@@ -466,10 +589,11 @@ function StudentProcessDatesDialog({ jobRequestId, nomination, onClose }: { jobR
           <FormField id="student-process-start" label="Start date">
             <Input id="student-process-start" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
           </FormField>
-          <FormField id="student-process-end" label="End date">
+          <FormField id="student-process-end" label={placed ? "End date (interview done / hired)" : "End date"}>
             <Input id="student-process-end" type="date" value={endDate} min={startDate || undefined} onChange={(event) => setEndDate(event.target.value)} />
           </FormField>
         </div>
+        {placed && <p className="text-xs text-slate-500">This student was hired: the placement counts in the month of the end date.</p>}
         {invalid && <p className="text-xs text-rose-600">The end date cannot be before the start date.</p>}
         {save.error && <p role="alert" className="text-sm text-rose-600">{save.error.message}</p>}
         <DialogFooter>

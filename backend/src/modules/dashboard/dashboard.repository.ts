@@ -2,7 +2,35 @@ import { prisma } from "../../db.js";
 import { assumedSharedWhere, companySheetPendingSelect, isCompanySheetPending, shareStatusOf } from "../tracking/tracking.service.js";
 import { companyProcessLabel, type DecisionStage, type StageOutcome } from "@placement/shared";
 import type { Prisma } from "../../generated/prisma/client.js";
-import type { KpiJob } from "./placement-kpis.js";
+import type { HiredOnSource, KpiJob } from "./placement-kpis.js";
+
+const dayOf = (date: Date) => new Date(`${date.toISOString().slice(0, 10)}T00:00:00Z`);
+
+/**
+ * The day a student was hired, for counting placements by month: the student's
+ * interview-done (process end) date, else their last company round's date, else
+ * the job's company process end date.
+ */
+/**
+ * When the company's process on a job ended: the hand-entered process end date,
+ * else the day it was marked done (hired / not hired), else the day a filled or
+ * closed job was last changed. Null while the process is still running.
+ */
+export function processEndOf(job: {
+  companyProcessEndDate: Date | null; processPhase: string; processPhaseAt: Date | null; status: string; updatedAt: Date;
+}): Date | null {
+  if (job.companyProcessEndDate) return dayOf(job.companyProcessEndDate);
+  if ((job.processPhase === "PROCESS_DONE_HIRED" || job.processPhase === "PROCESS_DONE_NOT_HIRED") && job.processPhaseAt) return dayOf(job.processPhaseAt);
+  if (job.status === "FILLED" || job.status === "CLOSED") return dayOf(job.updatedAt);
+  return null;
+}
+
+export function hiredDateOf(studentEnd: Date | null, lastRound: Date | null, jobEnd: Date | null): { on: Date; source: HiredOnSource } | null {
+  if (studentEnd) return { on: dayOf(studentEnd), source: "STUDENT" };
+  if (lastRound) return { on: dayOf(lastRound), source: "ROUND" };
+  if (jobEnd) return { on: dayOf(jobEnd), source: "JOB" };
+  return null;
+}
 
 /** Guidance / RSA status and every contributor's name (team members first, then outside names). */
 function supportCell(row: { status: { label: string; tone: string }; doneOn: Date | null; otherContributors: string | null; contributors: { user: { fullName: string } }[] } | undefined) {
@@ -16,39 +44,68 @@ function supportCell(row: { status: { label: string; tone: string }; doneOn: Dat
 }
 
 export const dashboardRepository = {
-  /** Jobs that carry positions to fill (not draft or cancelled), with each live application's category and company outcome. */
+  /**
+   * Jobs that carry positions to fill (not draft or cancelled), with each live
+   * application's category, company outcome and hired date.
+   */
   async placementKpiJobs(filter: Prisma.JobRequestWhereInput): Promise<KpiJob[]> {
     const jobs = await prisma.jobRequest.findMany({
       where: { ...filter, archivedAt: null, status: { notIn: ["DRAFT", "CANCELLED"] } },
       select: {
         id: true,
+        jobId: true,
+        roleTitle: true,
         companyId: true,
         openings: true,
         requestDate: true,
         ctcLpa: true,
+        companyProcessEndDate: true,
+        processPhase: true,
+        processPhaseAt: true,
+        status: true,
+        updatedAt: true,
         company: { select: { name: true } },
         applications: {
           where: { status: { not: "WITHDRAWN" } },
           select: {
+            id: true,
             product: { select: { category: true } },
-            candidate: { select: { category: true } },
-            nomination: { select: { status: true, pipelineStatus: true } },
+            candidate: { select: { category: true, fullName: true } },
+            nomination: {
+              select: {
+                status: true,
+                pipelineStatus: true,
+                processEndDate: true,
+                interviews: { where: { scheduledAt: { not: null } }, select: { scheduledAt: true }, orderBy: { scheduledAt: "desc" }, take: 1 },
+              },
+            },
           },
         },
       },
     });
     return jobs.map((job) => ({
       id: job.id,
+      jobCode: job.jobId,
+      roleTitle: job.roleTitle,
       companyId: job.companyId,
       companyName: job.company.name,
       openings: job.openings,
       requestDate: job.requestDate,
       ctcLpa: job.ctcLpa,
-      applications: job.applications.map((application) => ({
-        productCategory: application.product?.category ?? null,
-        candidateCategory: application.candidate.category,
-        nomination: application.nomination,
-      })),
+      processEndedOn: processEndOf(job),
+      applications: job.applications.map((application) => {
+        const nomination = application.nomination;
+        const hired = nomination ? hiredDateOf(nomination.processEndDate, nomination.interviews[0]?.scheduledAt ?? null, job.companyProcessEndDate) : null;
+        return {
+          id: application.id,
+          candidateName: application.candidate.fullName,
+          productCategory: application.product?.category ?? null,
+          candidateCategory: application.candidate.category,
+          nomination: nomination ? { status: nomination.status, pipelineStatus: nomination.pipelineStatus } : null,
+          hiredOn: hired?.on ?? null,
+          hiredOnSource: hired?.source ?? null,
+        };
+      }),
     }));
   },
 

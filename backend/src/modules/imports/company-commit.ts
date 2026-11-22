@@ -1,5 +1,6 @@
 // Writes an approved company-sheet import: rounds, nominations, round outcomes,
 // pipeline status changes (with history) and the job's tech stack on profiles.
+import { syncJobProcessDates } from "../pipeline/job-process-dates.js";
 import { markPoolStudentsAcademy } from "./pool-category.js";
 import type { PipelineStatus } from "@placement/shared";
 import type { Db } from "../../db.js";
@@ -214,5 +215,7 @@ export async function commitCompanyImport(
 
   // Students found by mobile in the assessed pool are Academy, whatever the sheets said.
   if (additions.length > 0) await markPoolStudentsAcademy(db);
+  // Students newly shared without an end date keep the company process open.
+  await syncJobProcessDates(db, input.jobRequestId);
   return { studentsCreated, addedToJob, roundsCreated, nominationsCreated: toNominate.length, outcomesWritten, statusChanges: changes.length, skillsAdded };
 }

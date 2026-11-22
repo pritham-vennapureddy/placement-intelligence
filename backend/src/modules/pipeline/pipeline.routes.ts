@@ -4,7 +4,7 @@ import { requirePermission } from "../../middleware/authorize.js";
 import { idempotency } from "../../middleware/idempotency.js";
 import { validateBody, validateParams } from "../../middleware/validate.js";
 import { pipelineController } from "./pipeline.controller.js";
-import {
+import { bulkProcessDatesSchema,
   createRoundSchema,
   directShareSchema,
   interviewParamsSchema,
@@ -35,6 +35,7 @@ pipelineRouter.delete("/rounds/:roundId", write, validateParams(roundParamsSchem
 pipelineRouter.post("/nominations", write, validateParams(jobParamsSchema), validateBody(nominateSchema), pipelineController.nominate);
 pipelineRouter.post("/nominations/:nominationId/status", write, validateParams(nominationParamsSchema), validateBody(pipelineStatusSchema), pipelineController.changeStatus);
 pipelineRouter.put("/nominations/:nominationId/process-dates", write, validateParams(nominationParamsSchema), validateBody(processDatesSchema), pipelineController.setProcessDates);
+pipelineRouter.put("/process-dates", write, validateParams(jobParamsSchema), validateBody(bulkProcessDatesSchema), pipelineController.setProcessDatesBulk);
 pipelineRouter.put("/direct-share", write, validateParams(jobParamsSchema), validateBody(directShareSchema), pipelineController.setDirectShare);
 pipelineRouter.post("/nominations/:nominationId/withdraw", write, validateParams(nominationParamsSchema), validateBody(withdrawSchema), pipelineController.withdraw);
 pipelineRouter.put(

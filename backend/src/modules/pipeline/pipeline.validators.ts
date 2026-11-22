@@ -35,6 +35,19 @@ export const processDatesSchema = z
   .refine(({ startDate, endDate }) => !startDate || !endDate || endDate >= startDate, { message: "The end date cannot be before the start date.", path: ["endDate"] });
 
 /**
+ * The same process dates for many students at once. A date left out keeps each
+ * student's current value; null clears it.
+ */
+export const bulkProcessDatesSchema = z
+  .object({
+    nominationIds: z.array(z.uuid()).min(1).max(500),
+    startDate: z.iso.date().nullable().optional(),
+    endDate: z.iso.date().nullable().optional(),
+  })
+  .refine(({ startDate, endDate }) => startDate !== undefined || endDate !== undefined, { message: "Enter a start or an end date.", path: ["startDate"] })
+  .refine(({ startDate, endDate }) => !startDate || !endDate || endDate >= startDate, { message: "The end date cannot be before the start date.", path: ["endDate"] });
+
+/**
  * Why these profiles reached the company without the internal shortlist.
  * One or many nominations at once (a company that never takes our shortlisting);
  * a null reason clears the tag, and the note is optional.
@@ -59,6 +72,7 @@ export type CreateRoundInput = z.infer<typeof createRoundSchema>;
 export type UpdateRoundInput = z.infer<typeof updateRoundSchema>;
 export type NominateInput = z.infer<typeof nominateSchema>;
 export type PipelineStatusInput = z.infer<typeof pipelineStatusSchema>;
+export type BulkProcessDatesInput = z.infer<typeof bulkProcessDatesSchema>;
 export type InterviewInput = z.infer<typeof interviewSchema>;
 export type ProcessDatesInput = z.infer<typeof processDatesSchema>;
 export type DirectShareInput = z.infer<typeof directShareSchema>;

@@ -116,8 +116,10 @@ export const dashboardService = {
 
   async getPlacementKpis(user: AuthenticatedUser, query: PlacementKpisQuery) {
     const scope = await resolveDataScope(user);
-    const jobs = await dashboardRepository.placementKpiJobs({ ...jobRequestScopeFilter(scope), ...jobRequestFilterFrom(query) });
-    return { from: query.from ?? null, to: query.to ?? null, ...buildPlacementKpis(jobs) };
+    // Every job in scope: an older job's hire can land in the period, so the period
+    // is applied per figure (request date for openings, hired date for placements).
+    const jobs = await dashboardRepository.placementKpiJobs(jobRequestScopeFilter(scope));
+    return { from: query.from ?? null, to: query.to ?? null, ...buildPlacementKpis(jobs, { from: query.from, to: query.to }) };
   },
 
   async getSummary(user: AuthenticatedUser, query: SummaryQuery) {

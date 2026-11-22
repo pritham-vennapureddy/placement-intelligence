@@ -16,12 +16,8 @@ export const processStatusSchema = z
     /** Required for the round phases: which of the job's rounds. */
     roundId: z.uuid().nullable().optional(),
     notes: z.string().trim().max(1000).optional(),
-    /** Company process start / end dates, entered by hand. Omitted = unchanged, null = cleared. */
-    startDate: z.iso.date().nullable().optional(),
-    endDate: z.iso.date().nullable().optional(),
   })
-  .refine(({ phase, roundId }) => !isRoundPhase(phase) || Boolean(roundId), { message: "Choose the company round.", path: ["roundId"] })
-  .refine(({ startDate, endDate }) => !startDate || !endDate || endDate >= startDate, { message: "The end date cannot be before the start date.", path: ["endDate"] });
+  .refine(({ phase, roundId }) => !isRoundPhase(phase) || Boolean(roundId), { message: "Choose the company round.", path: ["roundId"] });
 
 const givenOn = z.iso.date().refine((value) => value <= new Date().toISOString().slice(0, 10), { message: "The date cannot be in the future." });
 

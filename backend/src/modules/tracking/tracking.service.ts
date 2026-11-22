@@ -206,38 +206,21 @@ export const trackingService = {
     const { job } = await loadJobForUser(user, jobRequestId, "pipeline:write");
     const current = await prisma.jobRequest.findUniqueOrThrow({
       where: { id: job.id },
-      select: { processPhase: true, processRoundId: true, companyProcessStartDate: true, companyProcessEndDate: true },
+      select: { processPhase: true, processRoundId: true },
     });
     let round: { id: string; name: string } | null = null;
     if (isRoundPhase(input.phase)) {
       round = await prisma.companyInterviewRound.findFirst({ where: { id: input.roundId!, jobRequestId: job.id }, select: { id: true, name: true } });
       if (!round) throw new ApiError(400, "ROUND_NOT_FOUND", "Choose one of this job's company rounds.");
     }
-    const isoDay = (value: Date | null) => value?.toISOString().slice(0, 10) ?? null;
-    const nextStart = input.startDate === undefined ? isoDay(current.companyProcessStartDate) : input.startDate;
-    const nextEnd = input.endDate === undefined ? isoDay(current.companyProcessEndDate) : input.endDate;
-    if (nextStart && nextEnd && nextEnd < nextStart) throw new ApiError(400, "INVALID_PROCESS_DATES", "The end date cannot be before the start date.");
-    const datesChanged = nextStart !== isoDay(current.companyProcessStartDate) || nextEnd !== isoDay(current.companyProcessEndDate);
+    // The company process start / end dates are calculated from the students' dates (pipeline tab).
     const phaseChanged = current.processPhase !== input.phase || current.processRoundId !== (round?.id ?? null);
-    if (!phaseChanged && !datesChanged && !input.notes) return { ok: true };
+    if (!phaseChanged && !input.notes) return { ok: true };
     await inTransaction(async (transaction) => {
       await transaction.jobRequest.update({
         where: { id: job.id },
-        data: {
-          ...(phaseChanged || input.notes ? { processPhase: input.phase, processRoundId: round?.id ?? null, processPhaseAt: new Date() } : {}),
-          companyProcessStartDate: nextStart ? new Date(`${nextStart}T00:00:00Z`) : null,
-          companyProcessEndDate: nextEnd ? new Date(`${nextEnd}T00:00:00Z`) : null,
-        },
+        data: { processPhase: input.phase, processRoundId: round?.id ?? null, processPhaseAt: new Date() },
       });
-      if (!phaseChanged && !input.notes) {
-        await recordAudit(transaction, audit, {
-          action: "COMPANY_PROCESS_DATES_CHANGED",
-          entityType: "JobRequest",
-          entityId: job.id,
-          metadata: { startDate: nextStart, endDate: nextEnd },
-        });
-        return;
-      }
       await transaction.companyProcessHistory.create({
         data: {
           jobRequestId: job.id,
@@ -253,7 +236,7 @@ export const trackingService = {
         action: "COMPANY_PROCESS_STATUS_CHANGED",
         entityType: "JobRequest",
         entityId: job.id,
-        metadata: { from: current.processPhase, to: input.phase, round: round?.name ?? null, notes: input.notes ?? null, startDate: nextStart, endDate: nextEnd },
+        metadata: { from: current.processPhase, to: input.phase, round: round?.name ?? null, notes: input.notes ?? null },
       });
     });
     return { ok: true };

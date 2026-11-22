@@ -15,7 +15,6 @@ import { academyFacts } from "../insights/academy-insights.service.js";
 import { ROUND_LABELS } from "../insights/company-rounds.js";
 import { ownerFilter } from "../insights/insights.service.js";
 import type { AcademyQuery } from "../insights/insights.validators.js";
-import { jobRequestsRepository } from "../job-requests/job-requests.repository.js";
 import type { CarryForwardInput, CreateEntryInput, UpdateEntryInput } from "./pulse.validators.js";
 
 /** "2026-11" → 2026-11-01 (UTC, stored as a date). */
@@ -62,7 +61,7 @@ const entrySelect = {
   company: { select: { id: true, name: true } },
   jobRequest: {
     select: {
-      id: true, jobId: true, roleTitle: true, processPhase: true, companyProcessStartDate: true,
+      id: true, jobId: true, roleTitle: true, openings: true, processPhase: true, companyProcessStartDate: true,
       processRound: { select: { name: true } }, psmOwner: { select: { id: true, fullName: true } },
     },
   },
@@ -83,7 +82,7 @@ function present(entry: EntryRow, firstListed: Map<string, Date>) {
     ...entry,
     month: monthKey(entry.month),
     expectedStartDate: day(entry.expectedStartDate),
-    jobRequest: entry.jobRequest ? { ...entry.jobRequest, companyProcessStartDate: day(entry.jobRequest.companyProcessStartDate) } : null,
+    jobRequest: { ...entry.jobRequest, companyProcessStartDate: day(entry.jobRequest.companyProcessStartDate) },
     carriedFrom: entry.carriedFrom ? { ...entry.carriedFrom, month: monthKey(entry.carriedFrom.month) } : null,
     carriedTo: entry.carriedTo ? { ...entry.carriedTo, month: monthKey(entry.carriedTo.month) } : null,
     /** First month this company appeared on the list (any entry). */
@@ -91,22 +90,9 @@ function present(entry: EntryRow, firstListed: Map<string, Date>) {
   };
 }
 
-async function assertJobOfCompany(db: Db, jobRequestId: string, companyId: string) {
-  const job = await db.jobRequest.findUnique({ where: { id: jobRequestId }, select: { companyId: true, archivedAt: true } });
-  if (!job || job.archivedAt) throw new ApiError(400, "JOB_REQUEST_NOT_FOUND", "The job drive was not found.");
-  if (job.companyId !== companyId) throw new ApiError(400, "JOB_OF_OTHER_COMPANY", "That job drive belongs to another company.");
-}
-
-async function assertNoDuplicate(db: Db, month: Date, companyId: string, jobRequestId: string | null, exceptId?: string) {
-  const clash = await db.monthlyPipelineEntry.findFirst({
-    where: { month, companyId, jobRequestId, ...(exceptId ? { id: { not: exceptId } } : {}) },
-    select: { id: true },
-  });
-  if (clash) {
-    throw new ApiError(409, "ALREADY_ON_LIST", jobRequestId
-      ? "This job drive is already on this month's list."
-      : "This company is already on this month's list. Edit that row, or link a job drive to tell them apart.");
-  }
+async function assertNoDuplicate(db: Db, month: Date, jobRequestId: string) {
+  const clash = await db.monthlyPipelineEntry.findFirst({ where: { month, jobRequestId }, select: { id: true } });
+  if (clash) throw new ApiError(409, "ALREADY_ON_LIST", "This job ID is already on this month's list.");
 }
 
 async function crmOwnerCheck(id: string | null | undefined) {
@@ -235,7 +221,7 @@ async function drives(month: string, owners: Prisma.Sql) {
   const rows = await prisma.$queryRaw<{
     id: string; job_code: string; role_title: string; company_id: string; company_name: string; psm: string | null; status: string; phase: string; round_name: string | null;
     request_date: Date; start_date: Date | null; end_date: Date | null; starts_in_month: boolean; ends_in_month: boolean; requested_in_month: boolean;
-    academy: number; pool: number; shared: number; interviewed: number; selected: number;
+    openings: number; academy: number; pool: number; shared: number; interviewed: number; selected: number;
     crm_count: number; crm_last_on: Date | null; crm_last: string | null; rsa_review: boolean; on_list: boolean;
   }[]>`
     ${academyFacts(query, owners, liveInMonth(month))},
@@ -254,7 +240,7 @@ async function drives(month: string, owners: Prisma.Sql) {
       COALESCE(j."companyProcessStartDate" >= ${start}::date AND j."companyProcessStartDate" < ${end}::date, FALSE) AS starts_in_month,
       COALESCE(j."companyProcessEndDate" >= ${start}::date AND j."companyProcessEndDate" < ${end}::date, FALSE) AS ends_in_month,
       (j."requestDate" >= ${start}::date) AS requested_in_month,
-      COALESCE(stu.academy, 0) AS academy, COALESCE(stu.pool, 0) AS pool, COALESCE(stu.shared, 0) AS shared,
+      j.openings, COALESCE(stu.academy, 0) AS academy, COALESCE(stu.pool, 0) AS pool, COALESCE(stu.shared, 0) AS shared,
       COALESCE(stu.interviewed, 0) AS interviewed, COALESCE(stu.selected, 0) AS selected,
       (SELECT COUNT(*)::int FROM "JobCrmRemark" r WHERE r."jobRequestId" = j.id) AS crm_count,
       lc."interactionOn" AS crm_last_on, lc.remark AS crm_last,
@@ -287,6 +273,7 @@ async function drives(month: string, owners: Prisma.Sql) {
     startsInMonth: row.starts_in_month,
     endsInMonth: row.ends_in_month,
     requestedInMonth: row.requested_in_month,
+    openings: row.openings,
     students: { academy: row.academy, pool: row.pool, shared: row.shared, interviewed: row.interviewed, selected: row.selected },
     crmRemarkCount: row.crm_count,
     lastCrmRemark: row.crm_last ? { on: day(row.crm_last_on), remark: row.crm_last } : null,
@@ -295,15 +282,81 @@ async function drives(month: string, owners: Prisma.Sql) {
   }));
 }
 
+/**
+ * Students hired in the month, on any drive: the month of their interview-done
+ * date (process end date), else their last company round, else the job's
+ * process end, else (no date at all) the job's request date. Matches how the
+ * placement KPIs date a placement.
+ */
+async function placements(month: string, owners: Prisma.Sql) {
+  const start = `${month}-01`;
+  const end = `${nextMonthKey(month)}-01`;
+  const rows = await prisma.$queryRaw<{
+    application_id: string; candidate_id: string; full_name: string; candidate_code: string | null; category: string; in_pool: boolean;
+    job_id: string; job_code: string; role_title: string; company_id: string; company_name: string; ctc: number | null;
+    pipeline: string; hired_on: Date; source: "STUDENT" | "ROUND" | "JOB" | "REQUEST";
+  }[]>`
+    SELECT a.id AS application_id, c.id AS candidate_id, c."fullName" AS full_name, c."candidateCode" AS candidate_code,
+      COALESCE(p.category::text, c.category::text, 'EXTERNAL') AS category,
+      EXISTS (SELECT 1 FROM "AssessedPoolRecord" r WHERE r.mobile = c.mobile) AS in_pool,
+      j.id AS job_id, j."jobId" AS job_code, j."roleTitle" AS role_title, co.id AS company_id, co.name AS company_name, j."ctcLpa" AS ctc,
+      n."pipelineStatus"::text AS pipeline, h.hired_on, h.source
+    FROM "CompanyNomination" n
+    JOIN "Application" a ON a.id = n."applicationId"
+    JOIN "Candidate" c ON c.id = a."candidateId"
+    LEFT JOIN "Product" p ON p.id = a."productId"
+    JOIN "JobRequest" j ON j.id = n."jobRequestId"
+    JOIN "Company" co ON co.id = j."companyId"
+    LEFT JOIN LATERAL (SELECT MAX(i."scheduledAt")::date AS last_round FROM "CompanyInterview" i WHERE i."nominationId" = n.id) lr ON TRUE
+    CROSS JOIN LATERAL (
+      SELECT COALESCE(n."processEndDate", lr.last_round, j."companyProcessEndDate", j."requestDate") AS hired_on,
+        CASE WHEN n."processEndDate" IS NOT NULL THEN 'STUDENT' WHEN lr.last_round IS NOT NULL THEN 'ROUND'
+          WHEN j."companyProcessEndDate" IS NOT NULL THEN 'JOB' ELSE 'REQUEST' END AS source
+    ) h
+    WHERE n.status = 'NOMINATED' AND n."pipelineStatus" IN ('SELECTED', 'OFFER_RELEASED', 'OFFER_ACCEPTED', 'JOINED')
+      AND a.status <> 'WITHDRAWN' AND j."archivedAt" IS NULL AND j.status NOT IN ('DRAFT', 'CANCELLED')
+      AND h.hired_on >= ${start}::date AND h.hired_on < ${end}::date ${owners}
+    ORDER BY h.hired_on, co.name, c."fullName"`;
+
+  const people = rows.map((row) => ({
+    applicationId: row.application_id,
+    candidateId: row.candidate_id,
+    fullName: row.full_name,
+    candidateCode: row.candidate_code,
+    category: row.category,
+    inPool: row.in_pool,
+    jobRequestId: row.job_id,
+    jobCode: row.job_code,
+    roleTitle: row.role_title,
+    companyId: row.company_id,
+    companyName: row.company_name,
+    ctcLpa: row.ctc,
+    pipelineStatus: row.pipeline,
+    hiredOn: day(row.hired_on)!,
+    hiredOnSource: row.source,
+  }));
+  const count = (category: string) => people.filter((person) => person.category === category).length;
+  return {
+    total: people.length,
+    academy: count("ACADEMY"),
+    intensive: count("ACADEMY_INTENSIVE"),
+    external: count("EXTERNAL"),
+    pool: people.filter((person) => person.inPool).length,
+    companies: new Set(people.map((person) => person.companyId)).size,
+    people,
+  };
+}
+
 export const monthlyPipelineService = {
   /** Everything the Monthly page shows for one month. */
   async month(user: AuthenticatedUser, month: string) {
     const date = monthDate(month);
     const owners = await ownerFilter(user);
-    const [entries, driveRows, studentData] = await Promise.all([
+    const [entries, driveRows, studentData, placed] = await Promise.all([
       prisma.monthlyPipelineEntry.findMany({ where: { month: date }, select: entrySelect, orderBy: [{ company: { name: "asc" } }, { createdAt: "asc" }] }),
       drives(month, owners),
       students(month, owners),
+      placements(month, owners),
     ]);
     const companyIds = [...new Set(entries.map((entry) => entry.company.id))];
     const firsts = companyIds.length
@@ -340,9 +393,12 @@ export const monthlyPipelineService = {
           startingCompanies: new Set(driveRows.filter((row) => row.startsInMonth).map((row) => row.companyId)).size,
           endingThisMonth: driveRows.filter((row) => row.endsInMonth).length,
           requestedThisMonth: driveRows.filter((row) => row.requestedInMonth).length,
+          openings: driveRows.reduce((sum, row) => sum + row.openings, 0),
         },
       },
       students: studentData,
+      /** Placements of the month by hired (interview done) date. */
+      placements: placed,
     };
   },
 
@@ -351,20 +407,19 @@ export const monthlyPipelineService = {
     await crmOwnerCheck(input.crmOwnerId);
     const month = monthDate(input.month);
     return inTransaction(async (transaction) => {
-      let company = input.jobRequestId
-        ? await transaction.jobRequest.findUnique({ where: { id: input.jobRequestId }, select: { company: { select: { id: true, name: true, status: true } } } }).then((job) => job?.company ?? null)
-        : null;
-      if (input.jobRequestId && !company) throw new ApiError(400, "JOB_REQUEST_NOT_FOUND", "The job drive was not found.");
-      company ??= await jobRequestsRepository.findCompanyByName(transaction, input.companyName);
-      company ??= await jobRequestsRepository.createCompany(transaction, input.companyName, user.id);
-      if (input.jobRequestId) await assertJobOfCompany(transaction, input.jobRequestId, company.id);
-      await assertNoDuplicate(transaction, month, company.id, input.jobRequestId ?? null);
+      const job = await transaction.jobRequest.findUnique({
+        where: { id: input.jobRequestId },
+        select: { jobId: true, archivedAt: true, company: { select: { id: true, name: true } } },
+      });
+      if (!job || job.archivedAt) throw new ApiError(400, "JOB_REQUEST_NOT_FOUND", "No job request with that job ID.");
+      const company = job.company;
+      await assertNoDuplicate(transaction, month, input.jobRequestId);
 
       const entry = await transaction.monthlyPipelineEntry.create({
         data: {
           month,
           companyId: company.id,
-          jobRequestId: input.jobRequestId ?? null,
+          jobRequestId: input.jobRequestId,
           roleHint: input.roleHint || null,
           expectedOpenings: input.expectedOpenings ?? null,
           expectedStartDate: input.expectedStartDate ? toDate(input.expectedStartDate) : null,
@@ -376,27 +431,22 @@ export const monthlyPipelineService = {
         },
         select: { id: true },
       });
-      await recordAudit(transaction, audit, { action: "PIPELINE_ENTRY_ADDED", entityType: "MonthlyPipelineEntry", entityId: entry.id, metadata: { month: input.month, company: company.name, status: input.status } });
+      await recordAudit(transaction, audit, { action: "PIPELINE_ENTRY_ADDED", entityType: "MonthlyPipelineEntry", entityId: entry.id, metadata: { month: input.month, company: company.name, jobId: job.jobId, status: input.status } });
       return entry;
     });
   },
 
   async update(user: AuthenticatedUser, entryId: string, input: UpdateEntryInput, audit: AuditContext) {
     assertCanWrite(user);
-    const entry = await prisma.monthlyPipelineEntry.findUnique({ where: { id: entryId }, select: { id: true, month: true, companyId: true, jobRequestId: true, status: true } });
+    const entry = await prisma.monthlyPipelineEntry.findUnique({ where: { id: entryId }, select: { id: true, status: true } });
     if (!entry) throw new ApiError(404, "PIPELINE_ENTRY_NOT_FOUND", "The list entry was not found.");
     await crmOwnerCheck(input.crmOwnerId);
     return inTransaction(async (transaction) => {
-      if (input.jobRequestId !== undefined && input.jobRequestId !== entry.jobRequestId) {
-        if (input.jobRequestId) await assertJobOfCompany(transaction, input.jobRequestId, entry.companyId);
-        await assertNoDuplicate(transaction, entry.month, entry.companyId, input.jobRequestId, entry.id);
-      }
       const statusChanged = input.status !== undefined && input.status !== entry.status;
       await transaction.monthlyPipelineEntry.update({
         where: { id: entry.id },
         data: {
           ...(input.status !== undefined ? { status: input.status } : {}),
-          ...(input.jobRequestId !== undefined ? { jobRequestId: input.jobRequestId } : {}),
           ...(input.roleHint !== undefined ? { roleHint: input.roleHint || null } : {}),
           ...(input.expectedOpenings !== undefined ? { expectedOpenings: input.expectedOpenings } : {}),
           ...(input.expectedStartDate !== undefined ? { expectedStartDate: input.expectedStartDate ? toDate(input.expectedStartDate) : null } : {}),
@@ -449,7 +499,7 @@ export const monthlyPipelineService = {
       let carried = 0;
       let skipped = 0;
       for (const source of sources) {
-        const clash = await transaction.monthlyPipelineEntry.findFirst({ where: { month: to, companyId: source.companyId, jobRequestId: source.jobRequestId }, select: { id: true } });
+        const clash = await transaction.monthlyPipelineEntry.findFirst({ where: { month: to, jobRequestId: source.jobRequestId }, select: { id: true } });
         if (clash) {
           skipped++;
           continue;

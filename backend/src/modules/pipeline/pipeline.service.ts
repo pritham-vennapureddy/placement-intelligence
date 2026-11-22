@@ -7,7 +7,8 @@ import { ApiError } from "../../utils/api-error.js";
 import { definedOnly } from "../../utils/object.js";
 import { recordAudit, type AuditContext } from "../audit/audit.service.js";
 import { candidateSummarySelect } from "../screening/screening.repository.js";
-import type { CreateRoundInput, DirectShareInput, InterviewInput, NominateInput, PipelineStatusInput, ProcessDatesInput, UpdateRoundInput } from "./pipeline.validators.js";
+import { syncJobProcessDates } from "./job-process-dates.js";
+import type { BulkProcessDatesInput, CreateRoundInput, DirectShareInput, InterviewInput, NominateInput, PipelineStatusInput, ProcessDatesInput, UpdateRoundInput } from "./pipeline.validators.js";
 
 /** Date fields each status records. */
 const STATUS_DATES: Partial<Record<PipelineStatus, "submittedAt" | "offerReleasedAt" | "offerAcceptedAt" | "joinedAt">> = {
@@ -202,7 +203,12 @@ export const pipelineService = {
     await inTransaction(async (transaction) => {
       await transaction.companyNomination.update({
         where: { id: nomination.id },
-        data: { pipelineStatus: input.status, ...(dateField ? { [dateField]: at } : {}) },
+        data: {
+          pipelineStatus: input.status,
+          ...(dateField ? { [dateField]: at } : {}),
+          // Selected: the date is the interview-done (hired) date, which decides the placement's month.
+          ...(input.status === "SELECTED" && input.date ? { processEndDate: at } : {}),
+        },
       });
       await transaction.companyStageHistory.create({
         data: {
@@ -220,6 +226,7 @@ export const pipelineService = {
         entityId: nomination.applicationId,
         metadata: { from: nomination.pipelineStatus, to: input.status, date: input.date ?? null, notes: input.notes ?? null },
       });
+      await syncJobProcessDates(transaction, job.id);
     });
     return { ok: true };
   },
@@ -240,8 +247,49 @@ export const pipelineService = {
         entityId: nomination.applicationId,
         metadata: { startDate: input.startDate, endDate: input.endDate },
       });
+      await syncJobProcessDates(transaction, job.id);
     });
     return { ok: true };
+  },
+
+  /**
+   * The same start and/or end date for many students at once; a date left out
+   * keeps each student's own. The job's company process dates follow.
+   */
+  async setProcessDatesBulk(user: AuthenticatedUser, jobRequestId: string, input: BulkProcessDatesInput, audit: AuditContext) {
+    const { job } = await loadJobForUser(user, jobRequestId, "pipeline:write");
+    const ids = [...new Set(input.nominationIds)];
+    const nominations = await prisma.companyNomination.findMany({
+      where: { jobRequestId: job.id, id: { in: ids } },
+      select: { id: true, processStartDate: true, processEndDate: true, application: { select: { candidate: { select: { fullName: true } } } } },
+    });
+    if (nominations.length !== ids.length) throw new ApiError(404, "NOMINATION_NOT_FOUND", "Some of these students are not on this job.");
+    const toDay = (value: string | null) => (value ? new Date(`${value}T00:00:00Z`) : null);
+    const start = input.startDate === undefined ? undefined : toDay(input.startDate);
+    const end = input.endDate === undefined ? undefined : toDay(input.endDate);
+    const clash = nominations.filter((nomination) => {
+      const nextStart = start === undefined ? nomination.processStartDate : start;
+      const nextEnd = end === undefined ? nomination.processEndDate : end;
+      return nextStart && nextEnd && nextEnd < nextStart;
+    });
+    if (clash.length > 0) {
+      const names = clash.slice(0, 3).map((nomination) => nomination.application.candidate.fullName).join(", ");
+      throw new ApiError(400, "INVALID_PROCESS_DATES", `The end date would be before the start date for ${names}${clash.length > 3 ? ` and ${clash.length - 3} more` : ""}.`);
+    }
+    await inTransaction(async (transaction) => {
+      await transaction.companyNomination.updateMany({
+        where: { id: { in: ids } },
+        data: { ...(start !== undefined ? { processStartDate: start } : {}), ...(end !== undefined ? { processEndDate: end } : {}) },
+      });
+      await recordAudit(transaction, audit, {
+        action: "STUDENT_PROCESS_DATES_CHANGED",
+        entityType: "JobRequest",
+        entityId: job.id,
+        metadata: { students: ids.length, startDate: input.startDate ?? "unchanged", endDate: input.endDate ?? "unchanged" },
+      });
+      await syncJobProcessDates(transaction, job.id);
+    });
+    return { updated: ids.length };
   },
 
   /** Tags why profiles went to the company without the internal shortlist (one or many at once). */
@@ -275,6 +323,7 @@ export const pipelineService = {
     await inTransaction(async (transaction) => {
       await transaction.companyNomination.update({ where: { id: nomination.id }, data: { status: "WITHDRAWN", remarks: notes } });
       await recordAudit(transaction, audit, { action: "NOMINATION_WITHDRAWN", entityType: "Application", entityId: nomination.applicationId, metadata: { notes } });
+      await syncJobProcessDates(transaction, job.id);
     });
     return { ok: true };
   },
@@ -312,6 +361,7 @@ export const pipelineService = {
         entityId: nomination.applicationId,
         metadata: { round: round.name, outcome: input.outcome },
       });
+      await syncJobProcessDates(transaction, job.id);
     });
     return { ok: true };
   },

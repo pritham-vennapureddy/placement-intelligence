@@ -17,7 +17,6 @@ export const remarkParamsSchema = z.object({ jobRequestId: z.uuid(), remarkId: z
 export const applicationParamsSchema = z.object({ applicationId: z.uuid() });
 
 const entryFields = {
-  jobRequestId: z.uuid().nullable().optional(),
   roleHint: optionalText(200),
   expectedOpenings: z.number().int().min(1).max(10000).nullable().optional(),
   expectedStartDate: z.iso.date().nullable().optional(),
@@ -25,10 +24,10 @@ const entryFields = {
   remarks: optionalText(2000),
 };
 
-/** Adds a company to a month's potential list; the company is found by name or created. */
+/** Adds a job drive (picked by its job ID) to a month's potential list; the company comes from the job. */
 export const createEntrySchema = z.object({
   month,
-  companyName: z.string().trim().min(1).max(200),
+  jobRequestId: z.uuid(),
   status: z.enum(POTENTIAL_COMPANY_STATUSES).default("POTENTIAL"),
   ...entryFields,
 });

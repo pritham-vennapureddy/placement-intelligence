@@ -47,26 +47,17 @@ export function ProcessStatusDialog({
   const [phase, setPhase] = useState<CompanyProcessPhase>(job.phase);
   const [roundId, setRoundId] = useState<string>(job.roundId ?? "");
   const [notes, setNotes] = useState("");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  // Current process dates come from the job's tracking record, whichever page opened the dialog.
+  // The process dates are calculated from the students' dates; shown here for reference.
   const tracking = useQuery({ queryKey: ["tracking", job.id], queryFn: () => trackingApi.job(job.id), enabled: open });
-  const datesLoaded = tracking.isSuccess;
   useEffect(() => {
     if (open) { setPhase(job.phase); setRoundId(job.roundId ?? job.rounds[0]?.id ?? ""); setNotes(""); }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (open && tracking.data) { setStartDate(tracking.data.process.startDate ?? ""); setEndDate(tracking.data.process.endDate ?? ""); }
-  }, [open, tracking.data]);
   const needsRound = isRoundPhase(phase);
-  const datesInvalid = Boolean(startDate && endDate && endDate < startDate);
   const save = useMutation({
     mutationFn: () => trackingApi.setProcessStatus(job.id, {
       phase,
       roundId: needsRound ? roundId : null,
       ...(notes.trim() ? { notes: notes.trim() } : {}),
-      // Only send dates once the current ones are loaded, so a slow load never clears them.
-      ...(datesLoaded ? { startDate: startDate || null, endDate: endDate || null } : {}),
     }),
     onSuccess: async () => { await refresh(); toast.success("Company status updated"); onOpenChange(false); },
   });
@@ -101,21 +92,16 @@ export function ProcessStatusDialog({
               )}
             </FormField>
           )}
-          <div className="grid grid-cols-2 gap-3">
-            <FormField id="process-start" label="Process start date">
-              <Input id="process-start" type="date" value={startDate} disabled={!datesLoaded} onChange={(event) => setStartDate(event.target.value)} />
-            </FormField>
-            <FormField id="process-end" label="Process end date">
-              <Input id="process-end" type="date" value={endDate} min={startDate || undefined} disabled={!datesLoaded} onChange={(event) => setEndDate(event.target.value)} />
-            </FormField>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            <p className="font-medium text-slate-700">Process dates: {tracking.data ? <ProcessDates start={tracking.data.process.startDate} end={tracking.data.process.endDate} /> : "…"}</p>
+            <p className="mt-0.5 text-slate-500">Calculated from the students' dates: the earliest start, and the latest end once every shared student has an end date. Set them on the Company pipeline tab (select students, then "Set process dates").</p>
           </div>
-          {datesInvalid && <p className="-mt-2 text-xs text-rose-600">The end date cannot be before the start date.</p>}
           <FormField id="process-notes" label="Notes"><Textarea id="process-notes" rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="e.g. TR1 scheduled for Friday" /></FormField>
         </div>
         {save.error && <p role="alert" className="text-sm text-rose-600">{save.error.message}</p>}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={save.isPending}>Cancel</Button>
-          <Button onClick={() => save.mutate()} disabled={save.isPending || (needsRound && !roundId) || datesInvalid}>Save</Button>
+          <Button onClick={() => save.mutate()} disabled={save.isPending || (needsRound && !roundId)}>Save</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

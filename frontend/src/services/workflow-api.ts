@@ -116,6 +116,10 @@ export const pipelineApi = {
   async setProcessDates(jobRequestId: string, nominationId: string, input: { startDate: string | null; endDate: string | null }) {
     await request(`/job-requests/${jobRequestId}/pipeline/nominations/${nominationId}/process-dates`, json("PUT", input));
   },
+  /** The same dates for many students; a date left out keeps each student's own, null clears it. */
+  async setProcessDatesBulk(jobRequestId: string, input: { nominationIds: string[]; startDate?: string | null; endDate?: string | null }) {
+    await request(`/job-requests/${jobRequestId}/pipeline/process-dates`, json("PUT", input));
+  },
   async setDirectShare(jobRequestId: string, input: { nominationIds: string[]; reason: DirectShareReason | null; note: string | null }) {
     await request(`/job-requests/${jobRequestId}/pipeline/direct-share`, json("PUT", input));
   },
