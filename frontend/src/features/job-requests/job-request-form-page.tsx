@@ -55,7 +55,7 @@ type FormValues = z.output<typeof schema>;
 
 const CATEGORY_LABELS: Record<ProductOption["category"], string> = {
   ACADEMY: "Academy",
-  ACADEMY_INTENSIVE: "Academy Intensive",
+  ACADEMY_INTENSIVE: "Intensive",
   EXTERNAL: "External",
 };
 const TIMELINES = ["Immediate", "1 Week", "2 Weeks", "1 Month"];

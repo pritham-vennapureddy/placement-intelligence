@@ -2,16 +2,47 @@ import { Prisma } from "../../generated/prisma/client.js";
 import { prisma } from "../../db.js";
 import type { AuthenticatedUser } from "../../middleware/authenticate.js";
 import { ownerFilter } from "./insights.service.js";
-import { academyFacts } from "./academy-insights.service.js";
+import { academyFacts, APPLICATION_PRODUCT } from "./academy-insights.service.js";
 import { ROUND_LABELS } from "./company-rounds.js";
 import type { AcademyQuery } from "./insights.validators.js";
 
-/** Label for company rejections nobody has tagged with a reason yet. */
+/** Label for students not selected whom nobody has tagged with a reason yet. */
 export const UNTAGGED = "No reason tagged";
 
 /**
- * Company-round rejections in the Academy filters (period, students, segment),
- * grouped by the reason tag: the "why are students rejected" analytics.
+ * Joins, for each row of a facts CTE (alias `x`, needs the `rounds` CTE), why the
+ * company did not select that student on that drive: the reason the RSA team
+ * tagged on the student, else the reason on the round they were rejected in.
+ * Adds `rr` (last rejected round), `rt` (the reason tag), `ra` (the application),
+ * `rj` (its job request) and `rs` (the RSA record).
+ */
+export const APPLICATION_REASON = (x: Prisma.Sql) => Prisma.sql`
+  JOIN "Application" ra ON ra.id = ${x}.application_id
+  JOIN "JobRequest" rj ON rj.id = ra."jobRequestId"
+  LEFT JOIN LATERAL (
+    SELECT rounds.label, rounds.sort, cr.name AS round_name, ci."rejectionTagId" AS tag_id,
+      NULLIF(TRIM(ci."rejectionReason"), '') AS note, ci."rejectionDocUrl" AS doc_url
+    FROM "CompanyInterview" ci
+    JOIN "CompanyInterviewRound" cr ON cr.id = ci."roundId"
+    JOIN rounds ON rounds.id = ci."roundId"
+    WHERE ci."nominationId" = ${x}.nomination_id AND ci.outcome = 'REJECTED'
+    ORDER BY rounds.sort DESC
+    LIMIT 1
+  ) rr ON TRUE
+  LEFT JOIN "RejectionReasonTag" rt ON rt.id = COALESCE(ra."rejectionTagId", rr.tag_id)
+  LEFT JOIN "StudentSupport" rs ON rs."applicationId" = ${x}.application_id AND rs.kind = 'RSA'`;
+
+/**
+ * A student counts as not selected on a drive once rejected / dropped, once given
+ * a reason, or when they were shared and the drive ended without selecting them.
+ */
+export const NOT_SELECTED = (x: Prisma.Sql) => Prisma.sql`(NOT ${x}.selected AND (
+  ra."rejectionTagId" IS NOT NULL OR rr.label IS NOT NULL OR ${x}.pipeline IN ('REJECTED', 'DROPPED')
+  OR (${x}.shared AND (rj."processPhase" IN ('PROCESS_DONE_HIRED', 'PROCESS_DONE_NOT_HIRED') OR rj."companyProcessEndDate" IS NOT NULL))))`;
+
+/**
+ * Students the companies did not select, in the Academy filters (period,
+ * students, segment), grouped by reason: the "why are students rejected" analytics.
  */
 export const companyReasonsService = {
   async overview(user: AuthenticatedUser, query: AcademyQuery & { tagId?: string | undefined }) {
@@ -20,14 +51,13 @@ export const companyReasonsService = {
     const rejections = Prisma.sql`
       ${facts}, ${ROUND_LABELS},
       rej AS (
-        SELECT af.application_id, af.candidate_id, af.job_id, af.in_pool, rounds.label AS round, rounds.sort,
-          cr.name AS round_name, ci."rejectionTagId" AS tag_id, COALESCE(t.label, ${UNTAGGED}) AS tag,
-          t."archivedAt" IS NOT NULL AS tag_removed, NULLIF(TRIM(ci."rejectionReason"), '') AS note, ci."rejectionDocUrl" AS doc_url
+        SELECT af.application_id, af.candidate_id, af.job_id, af.in_pool,
+          COALESCE(rr.label, 'Round not recorded') AS round, COALESCE(rr.sort, 9999) AS sort, COALESCE(rr.round_name, 'Round not recorded') AS round_name,
+          rt.id AS tag_id, COALESCE(rt.label, ${UNTAGGED}) AS tag, rt."archivedAt" IS NOT NULL AS tag_removed,
+          COALESCE(rr.note, NULLIF(TRIM(rs."reportSummary"), '')) AS note, COALESCE(rr.doc_url, rs."reportUrl") AS doc_url
         FROM af
-        JOIN "CompanyInterview" ci ON ci."nominationId" = af.nomination_id AND ci.outcome = 'REJECTED'
-        JOIN "CompanyInterviewRound" cr ON cr.id = ci."roundId"
-        JOIN rounds ON rounds.id = ci."roundId"
-        LEFT JOIN "RejectionReasonTag" t ON t.id = ci."rejectionTagId"
+        ${APPLICATION_REASON(Prisma.sql`af`)}
+        WHERE ${NOT_SELECTED(Prisma.sql`af`)}
       )`;
     const tagFilter = query.tagId === "untagged" ? Prisma.sql`tag_id IS NULL` : query.tagId ? Prisma.sql`tag_id = ${query.tagId}::uuid` : Prisma.sql`TRUE`;
 
@@ -50,7 +80,7 @@ export const companyReasonsService = {
         company_name: string; role_title: string; job_code: string | null; round_name: string; tag: string; note: string | null; doc_url: string | null }[]>`
         ${rejections}
         SELECT rej.application_id, rej.candidate_id, c."fullName" AS full_name, c."candidateCode" AS candidate_code,
-          COALESCE(p.name, (SELECT string_agg(pp.name, ', ' ORDER BY pp.name) FROM "CandidateProduct" cp JOIN "Product" pp ON pp.id = cp."productId" WHERE cp."candidateId" = c.id)) AS product,
+          ${APPLICATION_PRODUCT(Prisma.sql`rej.application_id`, Prisma.sql`c.id`)} AS product,
           rej.in_pool, co.name AS company_name, j."roleTitle" AS role_title, j."jobId" AS job_code, rej.round_name, rej.tag, rej.note, rej.doc_url
         FROM rej
         JOIN "Application" a ON a.id = rej.application_id

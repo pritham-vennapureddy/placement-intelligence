@@ -19,6 +19,7 @@ import { PlacementKpiPanel } from "../components/placement-kpi-panel";
 import { useDashboardFilters } from "../hooks/use-dashboard-filters";
 import { ProcessBadge, ProcessStatusDialog } from "../features/tracking/tracking-dialogs";
 import { usePermissions } from "../hooks/use-permissions";
+import { SheetSyncCard } from "../features/imports/sheet-sync-card";
 import { dashboardApi } from "../services/api";
 import type { DashboardSummary } from "../types/api";
 
@@ -80,6 +81,7 @@ function CompanyTable({ onSelect }: { onSelect: (companyId: string) => void }) {
             <CardTitle>Companies and their job requests</CardTitle>
             <p className="mt-1 text-xs text-slate-400">{companies.length} companies · {jdCount} job requests. Each job request has its own hiring status{canChange ? "; click Change to update it" : ""}. Click a company name to open it.</p>
           </div>
+          <SheetSyncCard compact />
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-left">

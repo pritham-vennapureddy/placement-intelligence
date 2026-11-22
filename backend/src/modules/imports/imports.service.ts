@@ -540,6 +540,63 @@ export const importsService = {
     return { batch: await importsService.get(user, result.batch.id), duplicateOf: result.duplicateOf, checked };
   },
 
+  /**
+   * The background / "Sync all" step for one drive's company sheet. Reads the
+   * sheet; when it is unchanged since the last approved import nothing is
+   * created. Otherwise the last mapping is re-applied and the import is approved
+   * straight away when the layout still matches and no row has an error. If not,
+   * it is left on the Imports page for a PSM to review.
+   */
+  async autoSyncCompanySheet(user: AuthenticatedUser, jobRequestId: string, recruitmentBatchId: string, audit: AuditContext): Promise<
+    { outcome: "APPLIED" | "UNCHANGED" | "NEEDS_REVIEW"; batchId?: string; batchCode?: string; reason?: string }
+  > {
+    const target = "COMPANY_PIPELINE" as const;
+    const linked = await linkedSheetUrl(jobRequestId, recruitmentBatchId, target);
+    const latest = linked ? null : await importsRepository.findLatestGoogleBatch(jobRequestId, recruitmentBatchId, target);
+    const spreadsheetId = linked ? extractSpreadsheetId(linked) : latest?.sourceSpreadsheetId;
+    if (!spreadsheetId) return { outcome: "NEEDS_REVIEW", reason: "No company sheet link on this drive." };
+    const grid = await fetchSpreadsheetGrid(spreadsheetId);
+    if (grid.sheets.every((sheet) => sheet.rows.length === 0)) return { outcome: "NEEDS_REVIEW", reason: "The company sheet is empty." };
+    const checksum = gridChecksum(grid);
+    if (await importsRepository.findDuplicateUpload(jobRequestId, recruitmentBatchId, checksum)) return { outcome: "UNCHANGED" };
+
+    // An earlier automatic import still waiting for review is replaced by this newer read.
+    await prisma.importBatch.updateMany({
+      where: { jobRequestId, recruitmentBatchId, target, importedById: user.id, status: { in: ["UPLOADED", "VALIDATED"] } },
+      data: { status: "CANCELLED" },
+    });
+    const { batch } = await createBatch(user, jobRequestId, recruitmentBatchId, target, audit, {
+      workbook: workbookFromGrid(grid),
+      fileName: `${grid.title.replace(/[\\/:*?"<>|]/g, " ").trim().slice(0, 200) || "Google Sheet"}.xlsx`,
+      sourceType: "GOOGLE_SHEETS",
+      checksum,
+      spreadsheetId,
+      url: linked ?? latest?.sourceUrl ?? `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+    });
+    const review = (reason: string) => ({ outcome: "NEEDS_REVIEW" as const, batchId: batch.id, batchCode: batch.batchCode, reason });
+    const previous = await importsRepository.findPreviousMapping(jobRequestId, recruitmentBatchId, target);
+    if (!batch.mapping || !previous?.mapping) return review("No approved import to copy the columns from yet. Map it once by hand.");
+    try {
+      await importsService.validate(user, batch.id, batch.mapping, audit);
+    } catch (error) {
+      return review(`The sheet's layout changed (${error instanceof Error ? error.message : "check failed"}). Open it and check the tabs and columns.`);
+    }
+    const [invalidRows, blocking] = await Promise.all([
+      prisma.importStagingRecord.count({ where: { batchId: batch.id, validationStatus: "INVALID" } }),
+      prisma.dataQualityIssue.count({ where: { batchId: batch.id, severity: "ERROR" } }),
+    ]);
+    if (invalidRows > 0 || blocking > 0) {
+      const count = invalidRows || blocking;
+      return review(`${count} ${count === 1 ? "row has" : "rows have"} errors to fix before it can be applied.`);
+    }
+    try {
+      await importsService.approve(user, batch.id, "Applied automatically by the company sheet sync.", audit);
+    } catch (error) {
+      return review(error instanceof Error ? error.message : "Could not apply it.");
+    }
+    return { outcome: "APPLIED", batchId: batch.id, batchCode: batch.batchCode };
+  },
+
   googleInfo() {
     return { serviceAccountEmail: getGoogleServiceAccountEmail() };
   },

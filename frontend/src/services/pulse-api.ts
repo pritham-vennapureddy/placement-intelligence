@@ -58,6 +58,10 @@ export const rsaApi = {
   async students(filters: RsaFilters): Promise<RsaWorklist> {
     return (await request<Data<RsaWorklist>>(`/rsa/students${toQueryString({ ...filters })}`)).data;
   },
+  /** The RSA team's reason why the company did not select the student; null clears it. */
+  async setReason(applicationId: string, rejectionTagId: string | null): Promise<void> {
+    await request(`/rsa/applications/${applicationId}/reason`, json("PUT", { rejectionTagId }));
+  },
   async saveReport(applicationId: string, input: RsaReportInput): Promise<void> {
     await request(`/rsa/applications/${applicationId}/report`, json("PUT", input));
   },

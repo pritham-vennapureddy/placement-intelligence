@@ -22,6 +22,10 @@ async function loadVisible(user: AuthenticatedUser, candidateId: string) {
   return candidate;
 }
 
+async function productCategory(productId: string) {
+  return (await prisma.product.findUnique({ where: { id: productId }, select: { category: true } }))?.category;
+}
+
 export const candidatesService = {
   async list(user: AuthenticatedUser, query: ListCandidatesQuery) {
     const where: Prisma.CandidateWhereInput = {
@@ -39,7 +43,8 @@ export const candidatesService = {
             ],
           }
           : {},
-        query.productId ? { products: { some: { productId: query.productId } } } : {},
+        // A universal product (Academy / Intensive / External) matches every plan in its category.
+        query.productId ? { products: { some: { product: { category: (await productCategory(query.productId)) ?? "EXTERNAL" } } } } : {},
         query.category ? { category: query.category } : {},
         query.poolOnly || query.poolType
           ? { poolMemberships: { some: query.poolType ? { poolType: query.poolType } : {} } }

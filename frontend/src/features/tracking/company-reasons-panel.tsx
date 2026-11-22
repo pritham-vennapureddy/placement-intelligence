@@ -41,9 +41,9 @@ export function CompanyReasonsPanel({ filters }: { filters: AcademyFilters }) {
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 px-4 py-3">
           <div>
-            <p className="text-sm font-semibold text-slate-800">Why companies rejected our students</p>
+            <p className="text-sm font-semibold text-slate-800">Why students were not selected</p>
             <p className="mt-0.5 text-xs text-slate-500">
-              Every company-round rejection in these filters, by the reason the team picked when recording the result.{" "}
+              One count per student per drive they were not selected on, by the reason the RSA team tagged (else the reason on the rejected round).{" "}
               {data.totals.rejections > 0 && <>{data.totals.tagged} of {data.totals.rejections} have a reason ({pct(data.totals.tagged, data.totals.rejections)}).</>}
             </p>
           </div>
@@ -53,13 +53,13 @@ export function CompanyReasonsPanel({ filters }: { filters: AcademyFilters }) {
           </div>
         </div>
         {data.totals.rejections === 0 ? (
-          <EmptyState icon={Tags} title="No company rejections in these filters" description="When a company rejects a student, record it on the job's Company pipeline tab and pick a reason. It shows up here." />
+          <EmptyState icon={Tags} title="No company rejections in these filters" description="Students appear here once a company rejects them or their drive ends without selecting them. Tag the reason on the RSA team page." />
         ) : (
           <ReasonBars data={data} picked={picked} onPick={(key) => setPicked(picked === key ? null : key)} />
         )}
         {data.totals.untagged > 0 && (
           <p className="border-t border-amber-100 bg-amber-50/60 px-4 py-2 text-xs text-amber-900">
-            {data.totals.untagged} rejections have no reason yet. Open the job's Company pipeline tab, click the rejected round and pick a reason, or select several students and use “Record round result”.
+            {data.totals.untagged} students have no reason yet. Tag them on the RSA team page.
           </p>
         )}
       </Card>
@@ -76,7 +76,7 @@ export function CompanyReasonsPanel({ filters }: { filters: AcademyFilters }) {
       {data.totals.rejections > 0 && (
         <Card className="overflow-hidden">
           <div className="border-b border-slate-100 px-4 py-3">
-            <p className="text-sm font-semibold text-slate-800">{pickedLabel ? `Students rejected for “${pickedLabel}”` : "Students rejected by companies"} ({data.students.length}{data.students.length === 1000 ? "+" : ""})</p>
+            <p className="text-sm font-semibold text-slate-800">{pickedLabel ? `Students not selected for “${pickedLabel}”` : "Students not selected"} ({data.students.length}{data.students.length === 1000 ? "+" : ""})</p>
             <p className="mt-0.5 text-xs text-slate-500">{pickedLabel ? "Click the reason again above to see everyone." : "Click a reason above to see only those students."}</p>
           </div>
           <div className="max-h-[32rem] overflow-auto">

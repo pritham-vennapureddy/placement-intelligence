@@ -73,4 +73,4 @@ export const InterviewBadge = ({ outcome }: { outcome: InterviewOutcome }) => (
   <Pill color={interviewTone[outcome]}>{outcome === "SCHEDULED" ? "In progress" : INTERVIEW_OUTCOME_LABELS[outcome]}</Pill>
 );
 
-export const CATEGORY_LABELS = { ACADEMY: "Academy", ACADEMY_INTENSIVE: "Academy Intensive", EXTERNAL: "External" } as const;
+export const CATEGORY_LABELS = { ACADEMY: "Academy", ACADEMY_INTENSIVE: "Intensive", EXTERNAL: "External" } as const;

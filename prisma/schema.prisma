@@ -292,6 +292,7 @@ model User {
   crmRemarks             JobCrmRemark[]              @relation("CrmRemarkAuthor")
   rsaReviewsUpdated      JobRsaReview[]              @relation("RsaReviewUpdater")
   rejectionTagsCreated   RejectionReasonTag[]        @relation("RejectionTagCreator")
+  sheetSyncRuns          SheetSyncRun[]              @relation("SheetSyncStarter")
 }
 
 model Role {
@@ -453,20 +454,20 @@ model RefreshToken {
 }
 
 model Company {
-  id               String        @id @default(uuid()) @db.Uuid
+  id               String                 @id @default(uuid()) @db.Uuid
   // Entered manually for now; filled from HubSpot later. Name is not a key.
-  hubspotCompanyId String?       @unique
+  hubspotCompanyId String?                @unique
   name             String
-  status           CompanyStatus @default(ACTIVE)
+  status           CompanyStatus          @default(ACTIVE)
   notes            String?
   website          String?
   industry         String?
   location         String?
   archivedAt       DateTime?
-  createdById      String        @db.Uuid
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
-  createdBy        User          @relation("CompanyCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdById      String                 @db.Uuid
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  createdBy        User                   @relation("CompanyCreator", fields: [createdById], references: [id], onDelete: Restrict)
   jobRequests      JobRequest[]
   pipelineEntries  MonthlyPipelineEntry[]
 
@@ -749,11 +750,15 @@ model Application {
   stageOutcomes       InternalStageCandidate[]
   nomination          CompanyNomination?
   support             StudentSupport[]
+  // Why the company did not select the student on this drive, tagged by the RSA team.
+  rejectionTagId      String?                  @db.Uuid
+  rejectionTag        RejectionReasonTag?      @relation(fields: [rejectionTagId], references: [id], onDelete: SetNull)
 
   @@unique([candidateId, jobRequestId, recruitmentBatchId])
   @@unique([id, jobRequestId])
   @@index([jobRequestId, status])
   @@index([productId])
+  @@index([rejectionTagId])
 }
 
 // ─────────────────────────── Internal PSM screening ───────────────────────────
@@ -968,16 +973,17 @@ model CompanyInterview {
 /// Why the company rejected a student in a round. Built-in reasons are seeded;
 /// the team adds its own from the dashboard. Archived tags stay on old results.
 model RejectionReasonTag {
-  id          String             @id @default(uuid()) @db.Uuid
-  label       String
-  builtIn     Boolean            @default(false)
-  sortOrder   Int                @default(100)
-  archivedAt  DateTime?
-  createdById String?            @db.Uuid
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
-  createdBy   User?              @relation("RejectionTagCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  interviews  CompanyInterview[]
+  id           String             @id @default(uuid()) @db.Uuid
+  label        String
+  builtIn      Boolean            @default(false)
+  sortOrder    Int                @default(100)
+  archivedAt   DateTime?
+  createdById  String?            @db.Uuid
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  createdBy    User?              @relation("RejectionTagCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  interviews   CompanyInterview[]
+  applications Application[]
 
   @@index([archivedAt, sortOrder])
 }
@@ -1286,4 +1292,36 @@ model ImportApproval {
   decidedBy   User        @relation("ImportApprover", fields: [decidedById], references: [id], onDelete: Restrict)
 
   @@index([batchId])
+}
+
+enum SheetSyncTrigger {
+  SCHEDULED
+  MANUAL
+}
+
+enum SheetSyncStatus {
+  RUNNING
+  DONE
+  FAILED
+}
+
+/// One run of "sync every company sheet": from the schedule or the Sync all button.
+/// results holds one entry per drive: applied, unchanged, needs review or failed.
+model SheetSyncRun {
+  id          String           @id @default(uuid()) @db.Uuid
+  trigger     SheetSyncTrigger
+  status      SheetSyncStatus  @default(RUNNING)
+  startedById String?          @db.Uuid
+  startedAt   DateTime         @default(now())
+  finishedAt  DateTime?
+  total       Int              @default(0)
+  applied     Int              @default(0)
+  unchanged   Int              @default(0)
+  needsReview Int              @default(0)
+  failed      Int              @default(0)
+  results     Json             @default("[]")
+  error       String?
+  startedBy   User?            @relation("SheetSyncStarter", fields: [startedById], references: [id], onDelete: SetNull)
+
+  @@index([startedAt])
 }

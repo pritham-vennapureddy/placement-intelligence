@@ -6,6 +6,7 @@ import { maskMobile } from "../../services/pii.js";
 import { bucketRejectionReason, REJECTION_BUCKETS } from "./rejection-buckets.js";
 import { dateColumn, jobFilter, ownerFilter } from "./insights.service.js";
 import { round, ROUND_LABELS, ROUND_METRICS, ROUND_STAGE, type RoundRow } from "./company-rounds.js";
+import { APPLICATION_REASON, NOT_SELECTED } from "./company-reasons.service.js";
 import type { AcademyCandidatesQuery, AcademyCandidateView, AcademyQuery, AcademySegment, AcademyStageFilter } from "./insights.validators.js";
 
 /**
@@ -45,12 +46,17 @@ export const POOL_SOURCE = (r: Prisma.Sql) => Prisma.sql`
   END`;
 
 /** The student's product(s) by name, e.g. "CCBP Academy Smart". */
-export const PRODUCT_NAMES = (candidateId: Prisma.Sql) => Prisma.sql`
-  (SELECT string_agg(pr.name, ', ' ORDER BY pr.name) FROM "CandidateProduct" cp JOIN "Product" pr ON pr.id = cp."productId" WHERE cp."candidateId" = ${candidateId})`;
+/** The universal product (Academy / Intensive / External) for a product category column. */
+export const PRODUCT_LABEL = (category: Prisma.Sql) => Prisma.sql`
+  (CASE ${category}::text WHEN 'ACADEMY' THEN 'Academy' WHEN 'ACADEMY_INTENSIVE' THEN 'Intensive' WHEN 'EXTERNAL' THEN 'External' END)`;
 
-/** The product the student applied under, else their product(s) on record. */
+/** The student's universal product(s), e.g. "Academy" or "Academy, Intensive". */
+export const PRODUCT_NAMES = (candidateId: Prisma.Sql) => Prisma.sql`
+  (SELECT string_agg(DISTINCT ${PRODUCT_LABEL(Prisma.sql`pr.category`)}, ', ') FROM "CandidateProduct" cp JOIN "Product" pr ON pr.id = cp."productId" WHERE cp."candidateId" = ${candidateId})`;
+
+/** The universal product the student applied under, else their product(s) on record. */
 export const APPLICATION_PRODUCT = (applicationId: Prisma.Sql, candidateId: Prisma.Sql) => Prisma.sql`
-  COALESCE((SELECT ap.name FROM "Application" ax JOIN "Product" ap ON ap.id = ax."productId" WHERE ax.id = ${applicationId}), ${PRODUCT_NAMES(candidateId)})`;
+  COALESCE((SELECT ${PRODUCT_LABEL(Prisma.sql`ap.category`)} FROM "Application" ax JOIN "Product" ap ON ap.id = ax."productId" WHERE ax.id = ${applicationId}), ${PRODUCT_NAMES(candidateId)})`;
 
 const SEGMENT_CONDITIONS: Record<AcademySegment, Prisma.Sql> = {
   ALL: Prisma.sql`TRUE`,
@@ -584,12 +590,13 @@ export const academyInsightsService = {
         GROUP BY candidate_id
       ),
       -- Company-round rejections and the reason each was tagged with.
+      -- Drives where the company did not select them, and why (RSA tag, else the rejected round's tag).
       company_rej AS (
         SELECT f.candidate_id, COUNT(*)::int AS company_rejected,
-          jsonb_agg(jsonb_build_object('tagId', ci."rejectionTagId", 'label', COALESCE(t.label, 'No reason tagged'))) AS reasons
+          jsonb_agg(jsonb_build_object('tagId', rt.id, 'label', COALESCE(rt.label, 'No reason tagged'))) AS reasons
         FROM f
-        JOIN "CompanyInterview" ci ON ci."nominationId" = f.nomination_id AND ci.outcome = 'REJECTED'
-        LEFT JOIN "RejectionReasonTag" t ON t.id = ci."rejectionTagId"
+        ${APPLICATION_REASON(Prisma.sql`f`)}
+        WHERE ${NOT_SELECTED(Prisma.sql`f`)}
         GROUP BY f.candidate_id
       ),
       listed AS (

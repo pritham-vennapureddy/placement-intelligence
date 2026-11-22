@@ -22,7 +22,7 @@ import { CompanyReasonsPanel } from "./company-reasons-panel";
 
 const BAR = "#2a78d6";
 
-const CATEGORY_OPTIONS: Record<AcademyCategory, string> = { ACADEMY: "Academy", ACADEMY_INTENSIVE: "Academy Intensive", ALL_ACADEMY: "Academy + Intensive" };
+const CATEGORY_OPTIONS: Record<AcademyCategory, string> = { ACADEMY: "Academy", ACADEMY_INTENSIVE: "Intensive", ALL_ACADEMY: "Academy + Intensive" };
 const SEGMENT_OPTIONS: Record<AcademySegment, string> = {
   ALL: "All students",
   ASSESSED_POOL: "Assessed pool",

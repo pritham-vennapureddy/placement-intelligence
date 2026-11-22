@@ -12,6 +12,7 @@ import { candidatesApi } from "../../services/workflow-api";
 import type { CandidateListItem } from "../../types/workflow";
 import { CATEGORY_LABELS } from "../screening/badges";
 import { ProductBadge } from "../../components/student-tags";
+import { universalProductLabel } from "@placement/shared";
 
 const ALL = "__all__";
 
@@ -42,7 +43,7 @@ const columns: ColumnDef<CandidateListItem>[] = [
     header: "Product · category",
     cell: ({ row }) => (
       <div className="text-xs">
-        <p className="text-slate-700">{row.original.products.map((product) => product.name).join(", ") || "—"}</p>
+        <p className="text-slate-700">{[...new Set(row.original.products.map((product) => universalProductLabel(product.name)))].join(", ") || "—"}</p>
         <p className="text-slate-400">{row.original.category ? CATEGORY_LABELS[row.original.category] : ""}</p>
       </div>
     ),

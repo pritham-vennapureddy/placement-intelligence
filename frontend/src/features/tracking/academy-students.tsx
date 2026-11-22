@@ -11,7 +11,6 @@ import { Card } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { useDebouncedValue } from "../../hooks/use-debounced-value";
-import { catalogApi } from "../../services/api";
 import { academyInsightsApi } from "../../services/tracking-api";
 import type { AcademyCandidate, AcademyCandidateFilters, AcademyCandidateView, AcademyCompanyStage, AcademyFilters, AcademyPoolFilter, AcademyStageFilter, StageResult } from "../../types/academy";
 import { downloadCsv } from "../../utils/csv";
@@ -92,7 +91,6 @@ export function StudentsPanel({ filters, initial }: { filters: AcademyFilters; i
   const [page, setPage] = useState(1);
   const q = useDebouncedValue(search.trim(), 300);
   const set = (patch: Partial<AcademyCandidateFilters>) => { setList((current) => ({ ...current, ...patch })); setPage(1); };
-  const products = useQuery({ queryKey: ["catalog", "products"], queryFn: catalogApi.products, staleTime: 5 * 60_000 });
   const reasons = useRejectionReasons();
   const students = useQuery({
     queryKey: ["academy-insights", "candidates", filters, list, q],
@@ -143,7 +141,7 @@ export function StudentsPanel({ filters, initial }: { filters: AcademyFilters; i
           onChange={(value) => set({ view: value ?? "ALL" })} />
         <FilterSelect label="Assessed pool" value={list.poolSource} options={Object.entries(POOL_LABELS) as [AcademyPoolFilter, string][]} onChange={(value) => set({ poolSource: value })} />
         <FilterSelect label="Product" width="w-52" value={list.product}
-          options={[...(products.data ?? []).map((product): [string, string] => [product.name, product.name]), ["NONE", "No product on record"]]}
+          options={[["Academy", "Academy"], ["Intensive", "Intensive"], ["External", "External"], ["NONE", "No product on record"]]}
           onChange={(value) => set({ product: value })} />
         <FilterSelect label="Where they got to" width="w-64" value={list.stage} options={Object.entries(STAGE_FILTER_LABELS) as [AcademyStageFilter, string][]} onChange={(value) => set({ stage: value })} />
         <FilterSelect label="Company rejection reason" width="w-56" value={list.reasonTagId} options={reasonOptions} onChange={(value) => set({ reasonTagId: value })} />

@@ -16,6 +16,7 @@ import type { ImportBatch, JobProgress } from "../../types/workflow";
 import { StageStatusBadge } from "../screening/badges";
 import { toast } from "sonner";
 import { usePermissions } from "../../hooks/use-permissions";
+import { SheetSyncCard } from "../imports/sheet-sync-card";
 
 function ProgressTable({ view }: { view: "screening" | "pipeline" }) {
   const jobs = useQuery({ queryKey: ["job-requests", "progress"], queryFn: progressApi.jobs });
@@ -146,6 +147,7 @@ export function ImportCentrePage() {
   return (
     <div className="space-y-6">
       <PageHeader eyebrow="Google Sheets" title="Import a job spreadsheet" description="Choose a company and job, connect its workbook, then select the tabs for applications, products, RS, screening, AS and SP." />
+      <SheetSyncCard />
       <Card className="space-y-4 p-5">
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block space-y-1.5 text-xs font-semibold text-slate-600">

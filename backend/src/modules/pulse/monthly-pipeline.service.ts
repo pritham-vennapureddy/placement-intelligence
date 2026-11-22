@@ -11,10 +11,11 @@ import { Prisma } from "../../generated/prisma/client.js";
 import type { AuthenticatedUser } from "../../middleware/authenticate.js";
 import { ApiError } from "../../utils/api-error.js";
 import { recordAudit, type AuditContext } from "../audit/audit.service.js";
-import { academyFacts, APPLICATION_PRODUCT, POOL_SOURCE, PRODUCT_NAMES } from "../insights/academy-insights.service.js";
+import { academyFacts, APPLICATION_PRODUCT, POOL_SOURCE, PRODUCT_LABEL, PRODUCT_NAMES } from "../insights/academy-insights.service.js";
 import { ROUND_LABELS } from "../insights/company-rounds.js";
 import { ownerFilter } from "../insights/insights.service.js";
 import type { AcademyQuery } from "../insights/insights.validators.js";
+import { companyAndOpeningCounts, notSelectedReasons, studentPositions, type MonthJob } from "./month-big-picture.js";
 import type { CarryForwardInput, CreateEntryInput, UpdateEntryInput } from "./pulse.validators.js";
 
 /** "2026-11" → 2026-11-01 (UTC, stored as a date). */
@@ -61,7 +62,7 @@ const entrySelect = {
   company: { select: { id: true, name: true } },
   jobRequest: {
     select: {
-      id: true, jobId: true, roleTitle: true, openings: true, processPhase: true, companyProcessStartDate: true,
+      id: true, jobId: true, roleTitle: true, openings: true, processPhase: true, companyProcessStartDate: true, companyProcessEndDate: true, companyId: true,
       processRound: { select: { name: true } }, psmOwner: { select: { id: true, fullName: true } },
     },
   },
@@ -82,7 +83,7 @@ function present(entry: EntryRow, firstListed: Map<string, Date>) {
     ...entry,
     month: monthKey(entry.month),
     expectedStartDate: day(entry.expectedStartDate),
-    jobRequest: { ...entry.jobRequest, companyProcessStartDate: day(entry.jobRequest.companyProcessStartDate) },
+    jobRequest: { ...entry.jobRequest, companyProcessStartDate: day(entry.jobRequest.companyProcessStartDate), companyProcessEndDate: day(entry.jobRequest.companyProcessEndDate) },
     carriedFrom: entry.carriedFrom ? { ...entry.carriedFrom, month: monthKey(entry.carriedFrom.month) } : null,
     carriedTo: entry.carriedTo ? { ...entry.carriedTo, month: monthKey(entry.carriedTo.month) } : null,
     /** First month this company appeared on the list (any entry). */
@@ -149,7 +150,7 @@ async function students(month: string, owners: Prisma.Sql) {
       product: string | null; pool_source: string | null;
       job_id: string; job_code: string; role_title: string; company_id: string; company_name: string;
       rs_rej: boolean; sc_rej: boolean; as_rej: boolean; sc_no_show: boolean; sp: boolean; shared: boolean; interviewed: boolean; selected: boolean; pipeline: string | null;
-      last_round: string | null; last_outcome: string | null;
+      last_round: string | null; last_outcome: string | null; student_ended: boolean;
     }[]>`
       ${people}
       SELECT ppl.application_id, ppl.candidate_id, c."fullName" AS full_name, c."candidateCode" AS candidate_code, ppl.category, ppl.academy, ppl.in_pool, ppl.tier,
@@ -157,7 +158,8 @@ async function students(month: string, owners: Prisma.Sql) {
         (SELECT ${POOL_SOURCE(Prisma.sql`r`)} FROM "AssessedPoolRecord" r WHERE r.mobile = c.mobile LIMIT 1) AS pool_source,
         ppl.job_id, j."jobId" AS job_code, j."roleTitle" AS role_title, co.id AS company_id, co.name AS company_name,
         ppl.rs_rej, ppl.sc_rej, ppl.as_rej, ppl.sc_no_show, ppl.sp, ppl.shared, ppl.interviewed, ppl.selected, ppl.pipeline,
-        lr.label AS last_round, lr.outcome AS last_outcome
+        lr.label AS last_round, lr.outcome AS last_outcome,
+        COALESCE((SELECT n."processEndDate" IS NOT NULL FROM "CompanyNomination" n WHERE n.id = ppl.nomination_id), FALSE) AS student_ended
       FROM ppl
       JOIN "Candidate" c ON c.id = ppl.candidate_id
       JOIN "JobRequest" j ON j.id = ppl.job_id
@@ -214,6 +216,7 @@ async function students(month: string, owners: Prisma.Sql) {
       selected: Boolean(row.selected),
       pipelineStatus: row.pipeline,
       lastRound: row.last_round,
+      processEnded: row.student_ended,
       lastRoundOutcome: row.last_outcome,
     })),
   };
@@ -379,7 +382,7 @@ async function placements(month: string, owners: Prisma.Sql) {
     SELECT a.id AS application_id, c.id AS candidate_id, c."fullName" AS full_name, c."candidateCode" AS candidate_code,
       COALESCE(p.category::text, c.category::text, 'EXTERNAL') AS category,
       EXISTS (SELECT 1 FROM "AssessedPoolRecord" r WHERE r.mobile = c.mobile) AS in_pool,
-      COALESCE(p.name, ${PRODUCT_NAMES(Prisma.sql`c.id`)}) AS product,
+      COALESCE(${PRODUCT_LABEL(Prisma.sql`p.category`)}, ${PRODUCT_NAMES(Prisma.sql`c.id`)}) AS product,
       j.id AS job_id, j."jobId" AS job_code, j."roleTitle" AS role_title, co.id AS company_id, co.name AS company_name, j."ctcLpa" AS ctc,
       n."pipelineStatus"::text AS pipeline, h.hired_on, h.source
     FROM "CompanyNomination" n
@@ -450,8 +453,35 @@ export const monthlyPipelineService = {
     const active = entries.filter((entry) => ACTIVE_POTENTIAL_STATUSES.includes(entry.status));
     const companies = (list: typeof entries) => new Set(list.map((entry) => entry.company.id)).size;
 
+    // The month's drives: on CRM's list (not dropped / no response) plus everything running this month.
+    const monthJobs = new Map<string, MonthJob>();
+    for (const row of driveRows) {
+      monthJobs.set(row.jobRequestId, {
+        jobRequestId: row.jobRequestId, companyId: row.companyId, phase: row.phase, openings: row.openings,
+        processStartDate: row.processStartDate, processEndDate: row.processEndDate, onList: row.onPotentialList, running: true,
+      });
+    }
+    for (const entry of active) {
+      const job = entry.jobRequest;
+      const known = monthJobs.get(job.id);
+      if (known) { known.onList = true; continue; }
+      monthJobs.set(job.id, {
+        jobRequestId: job.id, companyId: job.companyId, phase: job.processPhase, openings: job.openings,
+        processStartDate: day(job.companyProcessStartDate), processEndDate: day(job.companyProcessEndDate), onList: true, running: false,
+      });
+    }
+    const jobsOfMonth = [...monthJobs.values()];
+    const bigPicture = {
+      ...companyAndOpeningCounts(jobsOfMonth),
+      droppedFromList: companies(entries.filter((entry) => entry.status === "DROPPED" || entry.status === "NO_RESPONSE")),
+      students: await studentPositions(jobsOfMonth.map((job) => job.jobRequestId), owners),
+      notSelectedReasons: await notSelectedReasons(jobsOfMonth.map((job) => job.jobRequestId), owners),
+    };
+
     return {
       month,
+      /** Companies, drives, openings and where unique students stand, for the whole month. */
+      bigPicture,
       potential: {
         entries: entries.map((entry) => present(entry, firstListed)),
         summary: {

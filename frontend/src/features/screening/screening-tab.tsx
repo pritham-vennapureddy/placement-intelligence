@@ -27,6 +27,7 @@ import { RefreshFromGoogleButton } from "../imports/refresh-button";
 import { RecruitmentBatchesPanel } from "./recruitment-batches";
 import { ScreeningSkipDialog, useUndoScreeningSkip } from "./screening-dialogs";
 import { ProductBadge } from "../../components/student-tags";
+import { universalProductLabel } from "@placement/shared";
 
 const ALL = "__all__";
 
@@ -142,8 +143,7 @@ function StageCandidates({ jobRequestId, stage }: { jobRequestId: string; stage:
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-xs text-slate-600">
-                    {row.application.product?.name ?? "—"}
-                    {row.application.candidate.category && <p className="text-slate-400">{CATEGORY_LABELS[row.application.candidate.category]}</p>}
+                    {universalProductLabel(row.application.product?.name) ?? (row.application.candidate.category ? CATEGORY_LABELS[row.application.candidate.category] : "—")}
                   </td>
                   {isTotal ? (
                     <td className="px-4 py-2.5 text-xs text-slate-600">
@@ -308,9 +308,8 @@ function CategoryRows({ group, cell }: {
   group: { label: string; products: ScreeningProcess["stageAnalytics"]["byProduct"]; totals: Record<AnalyticsStage, number> };
   cell: StageCell;
 }) {
-  // Academy plans (Smart, Genius, Edge…) are reported as one Academy row; a category
-  // with one product of the same name (e.g. External) needs no sub-row either.
-  const single = group.label === CATEGORY_LABELS.ACADEMY || (group.products.length === 1 && group.products[0]!.name === group.label);
+  // Only the three universal products are shown; plans (Smart, Genius, College Plus…) are not listed.
+  const single = true;
   return (
     <>
       <tr className="bg-slate-50/70 font-semibold text-slate-800">

@@ -23,7 +23,7 @@ import { CompanyStatusCell } from "./tracking-dialogs";
 import { ProductBadge } from "../../components/student-tags";
 
 const ALL = "__all__";
-const CATEGORY_LABELS: Record<string, string> = { ACADEMY: "Academy", ACADEMY_INTENSIVE: "Academy Intensive", EXTERNAL: "External", UNKNOWN: "Unknown" };
+const CATEGORY_LABELS: Record<string, string> = { ACADEMY: "Academy", ACADEMY_INTENSIVE: "Intensive", EXTERNAL: "External", UNKNOWN: "Unknown" };
 const STATUS_LABELS: Record<StudentStatusFilter, string> = {
   INTERNAL_REJECTED: "Rejected in our shortlisting",
   FINAL_SHORTLIST: "Made our final shortlist",
@@ -268,7 +268,7 @@ function StudentsTable({ filters, companyName, onClearCompany }: { filters: Insi
                     <div className="mt-0.5"><ProductBadge products={row.productName} /></div>
                     <p className="text-xs text-slate-400">{row.mobile ?? row.candidateCode}</p>
                   </td>
-                  <td className="px-3 py-2 text-xs text-slate-600">{CATEGORY_LABELS[row.category] ?? row.category}{row.productName && row.category !== "ACADEMY" && <p className="text-slate-400">{row.productName}</p>}</td>
+                  <td className="px-3 py-2 text-xs text-slate-600">{CATEGORY_LABELS[row.category] ?? row.category}</td>
                   <td className="px-3 py-2 text-xs"><Link to={`/companies/${row.companyId}`} className="font-medium text-slate-700 hover:text-indigo-700">{row.companyName}</Link><p className="text-slate-500">{row.roleTitle}</p></td>
                   <td className="whitespace-nowrap px-3 py-2 text-xs text-slate-500">{monthLabel(row.month)}</td>
                   <td className="px-3 py-2 text-xs">
@@ -345,7 +345,7 @@ export function InsightsPage() {
             <SelectContent>
               <SelectItem value={ALL}>All categories</SelectItem>
               <SelectItem value="ACADEMY">Academy</SelectItem>
-              <SelectItem value="ACADEMY_INTENSIVE">Academy Intensive</SelectItem>
+              <SelectItem value="ACADEMY_INTENSIVE">Intensive</SelectItem>
               <SelectItem value="EXTERNAL">External</SelectItem>
             </SelectContent>
           </Select>

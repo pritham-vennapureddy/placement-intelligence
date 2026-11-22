@@ -26,3 +26,14 @@ test("one round result can be saved for several students at once", () => {
   assert.equal(bulkInterviewSchema.safeParse({ nominationIds: [], outcome: "REJECTED" }).success, false);
   assert.equal(bulkInterviewSchema.safeParse({ nominationIds: ids, outcome: "PASSED" }).success, false);
 });
+
+test("every product shows as Academy, Intensive or External", async () => {
+  const { universalProductLabel } = await import("@placement/shared");
+  assert.equal(universalProductLabel("CCBP Academy Smart"), "Academy");
+  assert.equal(universalProductLabel("CCBP Academy Genius Career Plus"), "Academy");
+  assert.equal(universalProductLabel("Intensive College Plus"), "Intensive");
+  assert.equal(universalProductLabel("CCBP Intensive NSDC Skill India"), "Intensive");
+  assert.equal(universalProductLabel("ACADEMY_INTENSIVE"), "Intensive");
+  assert.equal(universalProductLabel("External"), "External");
+  assert.equal(universalProductLabel(null), null);
+});

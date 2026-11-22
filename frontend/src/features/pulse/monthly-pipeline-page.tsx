@@ -8,13 +8,12 @@ import {
   type PotentialCompanyStatus,
 } from "@placement/shared";
 import { format } from "date-fns";
-import { ArrowRightLeft, Award, BriefcaseBusiness, Building2, CalendarClock, Download, GraduationCap, History, Pencil, Plus, Rocket, Trash2, UserRoundCheck } from "lucide-react";
+import { ArrowRightLeft, Award, BriefcaseBusiness, Building2, Download, History, Pencil, Plus, Trash2 } from "lucide-react";
 import { Fragment, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ConfirmDialog } from "../../components/confirm-dialog";
 import { FormField } from "../../components/form-field";
-import { KpiCard } from "../../components/kpi-card";
 import { PageHeader } from "../../components/page-header";
 import { EmptyState, ErrorState, LoadingRows } from "../../components/states";
 import { Badge } from "../../components/ui/badge";
@@ -34,6 +33,7 @@ import type { DriveStages, DriveStepCounts, MonthlyPipeline, MonthlyStudent, Mon
 import { cn } from "../../utils/cn";
 import { downloadCsv } from "../../utils/csv";
 import { PoolBadge, ProductBadge } from "../../components/student-tags";
+import { MonthBigPictureCard } from "./month-big-picture";
 
 const currentMonth = () => format(new Date(), "yyyy-MM");
 const monthText = (month: string) => format(new Date(`${month}-01T00:00:00`), "MMMM yyyy");
@@ -378,9 +378,13 @@ function DriveStagesTable({ stages }: { stages: DriveStages }) {
 }
 
 function Drives({ data }: { data: MonthlyPipeline }) {
+  const [params, setParams] = useSearchParams();
+  const process = (params.get("process") as ProcessState | null) ?? null;
+  const setProcess = (value: string) => setParams((current) => { const next = new URLSearchParams(current); if (value === "ALL") next.delete("process"); else next.set("process", value); return next; });
   const [onlyStarting, setOnlyStarting] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const rows = onlyStarting ? data.drives.items.filter((drive) => drive.startsInMonth) : data.drives.items;
+  const rows = data.drives.items.filter((drive) => (!onlyStarting || drive.startsInMonth) && (!process || processState(drive) === process));
+  const countBy = (state: ProcessState) => data.drives.items.filter((drive) => processState(drive) === state).length;
   const toggle = (id: string) => setExpanded((current) => {
     const next = new Set(current);
     if (next.has(id)) next.delete(id); else next.add(id);
@@ -395,6 +399,13 @@ function Drives({ data }: { data: MonthlyPipeline }) {
           <p className="mt-0.5 text-xs text-slate-500">Drives requested by the month's end that had not finished before it started. Academy columns are unique Academy students on that drive; open "Stages" for every step and company round.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          <Select value={process ?? "ALL"} onValueChange={setProcess}>
+            <SelectTrigger className={cn("h-8 w-52 text-xs", process && "border-indigo-300 bg-indigo-50/50")} aria-label="Company process"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">Company process: all ({data.drives.items.length})</SelectItem>
+              {(Object.keys(PROCESS_LABELS) as ProcessState[]).map((state) => <SelectItem key={state} value={state}>{PROCESS_LABELS[state]} ({countBy(state)})</SelectItem>)}
+            </SelectContent>
+          </Select>
           <label className="flex items-center gap-2 text-xs text-slate-600">
             <input type="checkbox" checked={onlyStarting} onChange={(event) => setOnlyStarting(event.target.checked)} /> Only drives starting this month ({data.drives.summary.startingThisMonth})
           </label>
@@ -580,10 +591,28 @@ function GroupFunnel({ title, group, tone }: { title: string; group: MonthlyStud
 const INTERNAL_LABELS: Record<MonthlyStudent["internal"], string> = {
   SP: "On our final shortlist", AS_REJECTED: "Rejected at our assignment", SC_REJECTED: "Rejected at our screening", SC_NO_SHOW: "Missed our screening", RS_REJECTED: "Rejected at our resume shortlist", IN_PROGRESS: "In our shortlisting",
 };
-type PeopleView = "ALL" | "SHARED" | "INTERVIEWED" | "SELECTED" | "INTERNAL_REJECTED" | "COMPANY_REJECTED";
-const VIEW_LABELS: Record<PeopleView, string> = { ALL: "Everyone", SHARED: "Shared with company", INTERVIEWED: "Got an interview", SELECTED: "Selected", INTERNAL_REJECTED: "Rejected internally", COMPANY_REJECTED: "Rejected by company" };
-const inView = (person: MonthlyStudent, view: PeopleView) =>
-  view === "ALL" || (view === "SHARED" && person.shared) || (view === "INTERVIEWED" && person.interviewed) || (view === "SELECTED" && person.selected)
+type PeopleView = "ALL" | "IN_PROCESS" | "IN_SHORTLISTING" | "SHARED" | "INTERVIEWED" | "SELECTED" | "INTERNAL_REJECTED" | "COMPANY_REJECTED";
+const VIEW_LABELS: Record<PeopleView, string> = {
+  ALL: "Everyone",
+  IN_PROCESS: "In company process (prepare them)",
+  IN_SHORTLISTING: "In our shortlisting (drive running)",
+  SHARED: "Shared with company",
+  INTERVIEWED: "Got an interview",
+  SELECTED: "Selected",
+  INTERNAL_REJECTED: "Rejected internally",
+  COMPANY_REJECTED: "Rejected by company",
+};
+type ProcessState = "STARTED" | "YET_TO_START" | "ENDED";
+const PROCESS_LABELS: Record<ProcessState, string> = { STARTED: "In progress", YET_TO_START: "Yet to start", ENDED: "Ended" };
+/** Same rule as the big picture: ended when done or dated; started once CVs reach the company or a start date is set. */
+const processState = (drive: { phase: string; processStartDate: string | null; processEndDate: string | null }): ProcessState =>
+  drive.phase === "PROCESS_DONE_HIRED" || drive.phase === "PROCESS_DONE_NOT_HIRED" || drive.processEndDate ? "ENDED"
+    : drive.phase !== "YET_TO_SHARE_CVS" || drive.processStartDate ? "STARTED" : "YET_TO_START";
+const inView = (person: MonthlyStudent, view: PeopleView, driveState: (jobRequestId: string) => ProcessState | undefined) =>
+  view === "ALL"
+  || (view === "IN_PROCESS" && person.shared && !person.selected && !person.processEnded && !["REJECTED", "DROPPED"].includes(person.pipelineStatus ?? "") && driveState(person.jobRequestId) !== "ENDED")
+  || (view === "IN_SHORTLISTING" && !person.shared && !person.internal.endsWith("REJECTED") && driveState(person.jobRequestId) !== "ENDED")
+  || (view === "SHARED" && person.shared) || (view === "INTERVIEWED" && person.interviewed) || (view === "SELECTED" && person.selected)
   || (view === "INTERNAL_REJECTED" && person.internal.endsWith("REJECTED")) || (view === "COMPANY_REJECTED" && person.pipelineStatus === "REJECTED");
 
 /**
@@ -624,13 +653,18 @@ function uniqueStudents(people: MonthlyStudent[]): UniqueStudent[] {
 }
 
 function Students({ data }: { data: MonthlyPipeline }) {
-  const [group, setGroup] = useState<"ALL" | "ACADEMY" | "POOL">("ALL");
-  const [view, setView] = useState<PeopleView>("ALL");
+  const [params, setParams] = useSearchParams();
+  const setParam = (key: string, value: string) => setParams((current) => { const next = new URLSearchParams(current); if (value === "ALL") next.delete(key); else next.set(key, value); return next; });
+  const group = (params.get("group") as "ALL" | "ACADEMY" | "POOL" | null) ?? "ALL";
+  const view = (params.get("view") as PeopleView | null) ?? "ALL";
+  const setGroup = (value: "ALL" | "ACADEMY" | "POOL") => setParam("group", value);
+  const setView = (value: PeopleView) => setParam("view", value);
+  const driveStates = new Map(data.drives.items.map((drive) => [drive.jobRequestId, processState(drive)]));
   const [layout, setLayout] = useState<"STUDENT" | "APPLICATION">("STUDENT");
   const [q, setQ] = useState("");
   const { academy, pool, people } = data.students;
   const rows = people.filter((person) =>
-    (group === "ALL" || (group === "ACADEMY" ? person.academy : person.inPool)) && inView(person, view)
+    (group === "ALL" || (group === "ACADEMY" ? person.academy : person.inPool)) && inView(person, view, (id) => driveStates.get(id))
     && (!q || `${person.fullName} ${person.candidateCode ?? ""} ${person.companyName}`.toLowerCase().includes(q.toLowerCase())));
   const students = uniqueStudents(rows);
   const segmentText = (person: { academy: boolean; inPool: boolean; tier: string | null }) => [person.academy ? "Academy" : null, person.inPool ? `Pool${person.tier ? ` ${person.tier}` : ""}` : null].filter(Boolean).join(" + ");
@@ -749,15 +783,8 @@ export function MonthlyPipelinePage() {
       />
       {query.error ? <Card><ErrorState error={query.error} onRetry={() => void query.refetch()} /></Card> : (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
-            <KpiCard label="Potential companies (active)" value={data?.potential.summary.active} hint={data ? `${data.potential.summary.listed} on the list in total` : ""} icon={Building2} loading={loading} />
-            <KpiCard label="Confirmed / started" value={data?.potential.summary.starting} hint="From CRM's list" icon={Rocket} tone="emerald" loading={loading} />
-            <KpiCard label="Drives in pipeline" value={data?.drives.summary.live} hint={data ? `${data.drives.summary.companies} companies · ${data.drives.summary.openings} openings` : ""} icon={BriefcaseBusiness} tone="sky" loading={loading} />
-            <KpiCard label="Drives starting this month" value={data?.drives.summary.startingThisMonth} hint={data ? `${data.drives.summary.startingCompanies} companies · ${data.drives.summary.endingThisMonth} ending` : ""} icon={CalendarClock} tone="amber" loading={loading} />
-            <KpiCard label="Placements (by hired date)" value={data?.placements.total} hint={data ? `${data.placements.academy} Academy · ${data.placements.pool} pool · ${data.placements.companies} companies` : ""} icon={Award} tone="emerald" loading={loading} />
-            <KpiCard label="Academy students (unique)" value={data?.students.academy.students} hint={data ? `${data.students.academy.applications} applications · ${data.students.academy.interviewed} interviewed · ${data.students.academy.selected} selected` : ""} icon={GraduationCap} tone="indigo" loading={loading} />
-            <KpiCard label="Assessed-pool students (unique)" value={data?.students.pool.students} hint={data ? `${data.students.pool.applications} applications · ${data.students.pool.interviewed} interviewed · ${data.students.pool.selected} selected` : ""} icon={UserRoundCheck} tone="emerald" loading={loading} />
-          </div>
+          {loading || !data ? null : <MonthBigPictureCard data={data.bigPicture} placements={data.placements}
+            link={(extra) => `/monthly?${new URLSearchParams({ month, ...extra }).toString()}`} />}
           {loading || !data ? <Card><LoadingRows rows={8} /></Card> : (
             <>
               <Tabs value={tab} onValueChange={(value) => setParams((current) => { const next = new URLSearchParams(current); next.set("tab", value); return next; })}>

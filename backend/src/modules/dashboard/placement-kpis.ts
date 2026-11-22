@@ -7,11 +7,11 @@ export const PLACED_STATUSES: readonly CompanyPipelineStatus[] = ["SELECTED", "O
 export const CTC_THRESHOLD_LPA = 8;
 
 export const KPI_SEGMENTS = [
-  { key: "TEAM_BELOW_8", label: "Team < 8 LPA", detail: "Academy, Intensive Online and External", categories: null, ctc: "BELOW_THRESHOLD" },
-  { key: "ACADEMY_BELOW_8", label: "Academy < 8 LPA", detail: "Academy products", categories: ["ACADEMY"], ctc: "BELOW_THRESHOLD" },
-  { key: "INTENSIVE_BELOW_8", label: "Intensive Online < 8 LPA", detail: "Intensive products", categories: ["ACADEMY_INTENSIVE"], ctc: "BELOW_THRESHOLD" },
+  { key: "TEAM_BELOW_8", label: "Team < 8 LPA", detail: "Academy, Intensive and External", categories: null, ctc: "BELOW_THRESHOLD" },
+  { key: "ACADEMY_BELOW_8", label: "Academy < 8 LPA", detail: "Academy", categories: ["ACADEMY"], ctc: "BELOW_THRESHOLD" },
+  { key: "INTENSIVE_BELOW_8", label: "Intensive < 8 LPA", detail: "Intensive", categories: ["ACADEMY_INTENSIVE"], ctc: "BELOW_THRESHOLD" },
   { key: "EXTERNAL_BELOW_8", label: "External < 8 LPA", detail: "Candidates outside our products", categories: ["EXTERNAL"], ctc: "BELOW_THRESHOLD" },
-  { key: "ACADEMY_ALL", label: "Academy (all LPA)", detail: "Academy products at any CTC", categories: ["ACADEMY"], ctc: "ANY" },
+  { key: "ACADEMY_ALL", label: "Academy (all LPA)", detail: "Academy at any CTC", categories: ["ACADEMY"], ctc: "ANY" },
 ] as const satisfies readonly {
   key: string;
   label: string;

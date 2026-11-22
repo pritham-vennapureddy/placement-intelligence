@@ -23,6 +23,7 @@ import { CompanyFormDialog } from "./company-form-dialog";
 import { CATEGORY_LABELS, OutcomeBadge } from "../screening/badges";
 import { mergeAcademyProducts } from "../../utils/products";
 import { PIPELINE_STATUS_LABELS, SCREENING_SKIP_REASON_LABELS, STAGE_LABELS, STAGE_OUTCOME_LABELS, STAGE_OUTCOMES, type DecisionStage, type PipelineStatus, type ScreeningSkipReason, type StageOutcome } from "@placement/shared";
+import { universalProductLabel } from "@placement/shared";
 
 function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -154,8 +155,7 @@ function CandidateRows({ data, page, setPage }: { data: CompanyJobCandidates; pa
             <p className="text-[10px] text-slate-400">{candidate.recruitmentBatchName}</p>
           </td>
           <td className="px-3 py-3 text-xs text-slate-600">
-            {candidate.product?.name ?? "—"}
-            {category && <p className="text-[10px] text-slate-400">{category}</p>}
+            {universalProductLabel(candidate.product?.name) ?? category ?? "—"}
           </td>
           <td className="px-3 py-3"><PoolCell pool={candidate.assessedPool} /></td>
           <td className="px-3 py-3"><Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">Applied</Badge></td>
@@ -374,7 +374,7 @@ function CompanyAnalytics({ companyId, canViewCandidates }: { companyId: string;
                       : data?.selected ?? 0}
                   </td>;
                 })}
-                <td className="px-4 py-3 text-xs text-slate-600">{job.products.map((product) => `${product.name} (${product.applicants})`).join(", ") || "—"}</td>
+                <td className="px-4 py-3 text-xs text-slate-600">{mergeAcademyProducts(job.products.map((product) => ({ ...product, id: product.name, category: null })), ["applicants"]).map((product) => `${product.name} (${product.applicants})`).join(", ") || "—"}</td>
               </tr>
             ))}
             {jobs.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-slate-500">No visible job requests yet. Create a role and import its Google Sheet to see analytics.</td></tr>}

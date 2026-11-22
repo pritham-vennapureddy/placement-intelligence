@@ -1,4 +1,5 @@
 import { cn } from "../utils/cn";
+import { universalProductLabel } from "@placement/shared";
 
 /** Which assessed-pool tab a student came from. */
 export type PoolSource = "OFFLINE" | "COMPETENCY" | "BOTH";
@@ -9,15 +10,14 @@ export const POOL_SOURCE_LABELS: Record<PoolSource, string> = {
   BOTH: "Assessed pool · Offline + Competency",
 };
 
-/** Products from any of the shapes the API returns, as plain names. */
+/** Products from any of the shapes the API returns, as universal names (Academy / Intensive / External). */
 export function productNames(products: string | null | undefined | { product: { name: string } }[] | { name: string }[]): string[] {
   if (!products) return [];
-  if (typeof products === "string") return products.split(", ").filter(Boolean);
-  return products.map((item) => ("product" in item ? item.product.name : item.name));
+  const names = typeof products === "string"
+    ? products.split(", ").filter(Boolean)
+    : products.map((item) => ("product" in item ? item.product.name : item.name));
+  return [...new Set(names.map((name) => universalProductLabel(name) ?? name))];
 }
-
-/** "CCBP Academy Smart" → "Academy Smart": the CCBP prefix adds nothing in a badge. */
-const shortProduct = (name: string) => name.replace(/^CCBP\s+/i, "");
 
 /** The student's product, shown next to their name everywhere. */
 export function ProductBadge({ products, className }: { products: Parameters<typeof productNames>[0]; className?: string }) {
@@ -28,10 +28,10 @@ export function ProductBadge({ products, className }: { products: Parameters<typ
   return (
     <span className={cn("inline-flex flex-wrap gap-1", className)}>
       {names.map((name) => (
-        <span key={name} title={name} className={cn(
+        <span key={name} className={cn(
           "inline-flex rounded-full px-1.5 py-px text-[10px] font-medium",
           /external/i.test(name) ? "bg-slate-100 text-slate-600" : /intensive/i.test(name) ? "bg-sky-50 text-sky-700" : "bg-violet-50 text-violet-700",
-        )}>{shortProduct(name)}</span>
+        )}>{name}</span>
       ))}
     </span>
   );

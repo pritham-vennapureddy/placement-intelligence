@@ -82,6 +82,9 @@ function nameValueColumn(rows: SheetAnalysis["rows"], headerRow: number): number
   for (let column = 0; column < width; column++) {
     const values = data.map((row) => row.cells[column]?.trim()).filter((value): value is string => Boolean(value));
     if (!values.length) continue;
+    // People's names are mostly different; a column repeating one value (e.g. the
+    // company a Google Form asked about, "Miracle Systems") is not a name column.
+    if (values.length >= 3 && new Set(values.map((value) => value.toLowerCase())).size / values.length < 0.6) continue;
     const ratio = values.filter((value) =>
       /^[a-z][a-z .'-]{1,60}$/i.test(value) && value.trim().split(/\s+/).length >= 2,
     ).length / values.length;
@@ -177,7 +180,8 @@ function analyzeSheets(workbook: Workbook): SheetAnalysis[] {
     const headers = rows.find((row) => row.rowNumber === headerRow)?.cells ?? [];
     const email = headerColumn(headers, /e ?mail|email address/);
     const mobile = headerColumn(headers, /mobile|phone|contact\s*(?:number|no\.?)|telephone/);
-    const fullName = headerColumn(headers, /^(?:(?:full|student|candidate|applicant)\s+)?name$|^(?:name\s+(?:of\s+)?(?:the\s+)?(?:student|candidate|applicant))$/);
+    // "Name", "Full name", "Your Name", "Student's name", "Name of the candidate"…
+    const fullName = headerColumn(headers, /^(?:(?:full|student|candidate|applicant|your)(?:['’]s)?\s+)?(?:full\s+)?name$|^(?:name\s+(?:of\s+)?(?:the\s+)?(?:student|candidate|applicant))$/);
     const candidateId = headerColumn(headers, /user id|candidate id|^uid$|uuid/);
     const columns: Record<string, number> = {
       ...(email !== undefined ? { email } : {}),

@@ -65,6 +65,32 @@ describe("Google Sheets tab analysis", () => {
     assert.equal(suggested.tabs[0]?.rounds.length, 1);
   });
 
+  test("a Google Form company sheet takes names from \"Your Name\", not the repeated drive answer", () => {
+    const form = (name: string, mobile: string) => [mobile, `${mobile}@example.com`, "Miracle Systems", name, "Selected"];
+    const suggested = inferGoogleMapping(workbook({
+      "JD-1.": [
+        ["Primary Mobile Number", "Mail ID", "Which company drive are you here for?", "Your Name", "TR Round 1"],
+        form("Kurakula Sudheendra", "9000000001"),
+        form("Syed Uzair Mohiuddin", "9000000002"),
+        form("Pavani Kethineni", "9000000003"),
+        form("Pulkanti Dhanalaxmi", "9000000004"),
+      ],
+    }), "COMPANY_PIPELINE") as { tabs: { columns: { fullName?: number } }[] };
+    assert.equal(suggested.tabs[0]?.columns.fullName, 3);
+  });
+
+  test("without a name header, a column repeating one value is never taken as names", () => {
+    const suggested = inferGoogleMapping(workbook({
+      "JD-1": [
+        ["Phone", "Drive", "Student", "TR Round 1"],
+        ["9000000001", "Miracle Systems", "Asha Rao", "Selected"],
+        ["9000000002", "Miracle Systems", "Ravi Kumar", "Rejected"],
+        ["9000000003", "Miracle Systems", "Neha Singh", "Selected"],
+      ],
+    }), "COMPANY_PIPELINE") as { tabs: { columns: { fullName?: number } }[] };
+    assert.equal(suggested.tabs[0]?.columns.fullName, 2);
+  });
+
   test("an SP tab with only Remarks is still mapped, with Remarks as the selection basis", () => {
     const suggested = inferGoogleMapping(workbook({
       "Applied Users": [["Asha Rao", "9876543210", "asha@example.com", "CCBP Intensive"]],

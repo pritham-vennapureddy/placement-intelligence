@@ -60,6 +60,8 @@ export const rsaReviewSchema = z.object({
 
 export const RSA_SEGMENTS = ["ACADEMY_OR_POOL", "ACADEMY", "POOL", "EVERYONE"] as const;
 export const RSA_PROGRESS = ["ALL", "NOT_STARTED", "IN_PROGRESS", "DONE"] as const;
+/** The company's result for the student: not known yet, not selected, or selected. */
+export const RSA_RESULTS = ["ALL", "UNKNOWN", "NOT_SELECTED", "SELECTED"] as const;
 
 /** Students the RSA team reviews: shared with the company and not selected. */
 export const rsaStudentsQuerySchema = z
@@ -70,11 +72,8 @@ export const rsaStudentsQuerySchema = z
     companyId: z.uuid().optional(),
     segment: z.enum(RSA_SEGMENTS).default("ACADEMY_OR_POOL"),
     progress: z.enum(RSA_PROGRESS).default("ALL"),
-    /** Also list students rejected in drives that are still running. */
-    includeOngoing: z
-      .enum(["true", "false"])
-      .default("true")
-      .transform((value) => value === "true"),
+    result: z.enum(RSA_RESULTS).default("ALL"),
+    reasonTagId: z.union([z.uuid(), z.literal("untagged")]).optional(),
     q: z.string().trim().min(1).max(100).optional(),
   })
   .refine(({ from, to }) => !from || !to || from <= to, { message: "`from` must be on or before `to`.", path: ["to"] });
@@ -97,3 +96,7 @@ export type CrmRemarkInput = z.infer<typeof crmRemarkSchema>;
 export type RsaReviewInput = z.infer<typeof rsaReviewSchema>;
 export type RsaStudentsQuery = z.infer<typeof rsaStudentsQuerySchema>;
 export type RsaReportInput = z.infer<typeof rsaReportSchema>;
+
+/** The RSA team's reason for one student on one drive; null clears it. */
+export const rsaReasonSchema = z.object({ rejectionTagId: z.uuid().nullable() });
+export type RsaReasonInput = z.infer<typeof rsaReasonSchema>;

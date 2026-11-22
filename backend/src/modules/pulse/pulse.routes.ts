@@ -16,6 +16,7 @@ import {
   jobParamsSchema,
   monthQuerySchema,
   remarkParamsSchema,
+  rsaReasonSchema,
   rsaReportSchema,
   rsaReviewSchema,
   rsaStudentsQuerySchema,
@@ -23,6 +24,7 @@ import {
   type CarryForwardInput,
   type CreateEntryInput,
   type CrmRemarkInput,
+  type RsaReasonInput,
   type RsaReportInput,
   type RsaReviewInput,
   type RsaStudentsQuery,
@@ -77,6 +79,9 @@ export const rsaRouter = Router();
 rsaRouter.use(authenticate, idempotency, requirePermission("candidate:read"));
 rsaRouter.get("/students", validateQuery(rsaStudentsQuerySchema), async (request: Request, response: Response) => {
   sendData(response, await rsaReportsService.students(request.user!, request.query as unknown as RsaStudentsQuery));
+});
+rsaRouter.put("/applications/:applicationId/reason", validateParams(applicationParamsSchema), validateBody(rsaReasonSchema), async (request: Request, response: Response) => {
+  sendData(response, await rsaReportsService.setReason(request.user!, param(request, "applicationId"), (request.body as RsaReasonInput).rejectionTagId, auditContextFrom(request)));
 });
 rsaRouter.put("/applications/:applicationId/report", validateParams(applicationParamsSchema), validateBody(rsaReportSchema), async (request: Request, response: Response) => {
   sendData(response, await rsaReportsService.setReport(request.user!, param(request, "applicationId"), request.body as RsaReportInput, auditContextFrom(request)));

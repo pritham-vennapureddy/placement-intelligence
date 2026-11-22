@@ -106,6 +106,8 @@ export interface MonthlyStudent {
   pipelineStatus: PipelineStatus | null;
   lastRound: string | null;
   lastRoundOutcome: string | null;
+  /** The student's own process end (interview done) date is set. */
+  processEnded: boolean;
 }
 
 export interface MonthlyPlacement {
@@ -128,8 +130,25 @@ export interface MonthlyPlacement {
   hiredOnSource: "STUDENT" | "ROUND" | "JOB" | "REQUEST";
 }
 
+export type ProcessSplit = { total: number; YET_TO_START: number; STARTED: number; ENDED: number };
+export type StudentPositionCounts = {
+  students: number; SELECTED: number; IN_PROCESS: number; ENDED_NOT_SELECTED: number; IN_SHORTLISTING: number; REJECTED_INTERNALLY: number; NOT_SHARED_DRIVE_OVER: number;
+};
+export interface MonthBigPicture {
+  companies: ProcessSplit;
+  drives: ProcessSplit;
+  openings: ProcessSplit;
+  onList: number;
+  notOnList: number;
+  droppedFromList: number;
+  students: { academy: StudentPositionCounts; pool: StudentPositionCounts };
+  /** Why students were not selected on the month's drives (one per student per drive). */
+  notSelectedReasons: { tagId: string | null; label: string; academy: number; pool: number; total: number }[];
+}
+
 export interface MonthlyPipeline {
   month: string;
+  bigPicture: MonthBigPicture;
   potential: {
     entries: PipelineEntry[];
     summary: {
@@ -193,6 +212,7 @@ export interface CrmRemarkInput {
 
 export type RsaSegment = "ACADEMY_OR_POOL" | "ACADEMY" | "POOL" | "EVERYONE";
 export type RsaProgress = "ALL" | "NOT_STARTED" | "IN_PROGRESS" | "DONE";
+export type RsaResult = "ALL" | "UNKNOWN" | "NOT_SELECTED" | "SELECTED";
 
 export interface RsaFilters {
   from?: string | undefined;
@@ -200,7 +220,8 @@ export interface RsaFilters {
   dateBy?: "requested" | "processEnd" | undefined;
   segment?: RsaSegment | undefined;
   progress?: RsaProgress | undefined;
-  includeOngoing?: "true" | "false" | undefined;
+  result?: RsaResult | undefined;
+  reasonTagId?: string | undefined;
   q?: string | undefined;
 }
 
@@ -222,8 +243,12 @@ export interface RsaStudent {
   month: string;
   processEndDate: string | null;
   pipelineStatus: PipelineStatus | null;
+  /** The company's result so far. */
+  result: Exclude<RsaResult, "ALL">;
   rejectedRound: string | null;
   rejectionReason: string | null;
+  /** Why not selected: the RSA team's tag (fromRsa), else the tag on the rejected round. */
+  reason: { id: string; label: string; fromRsa: boolean } | null;
   rsa: {
     statusId: string;
     statusLabel: string;
@@ -242,7 +267,11 @@ export interface RsaStudent {
 
 export interface RsaWorklist {
   items: RsaStudent[];
-  summary: { total: number; notStarted: number; inProgress: number; done: number; withLink: number };
+  summary: {
+    total: number; notStarted: number; inProgress: number; done: number; withLink: number;
+    byResult: Record<Exclude<RsaResult, "ALL">, number>;
+    byReason: { tagId: string | null; label: string; students: number }[];
+  };
 }
 
 export interface RsaReportInput {

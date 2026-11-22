@@ -20,7 +20,9 @@ import { useDebouncedValue } from "../../hooks/use-debounced-value";
 import { catalogApi } from "../../services/api";
 import { rsaApi } from "../../services/pulse-api";
 import { guidanceApi } from "../../services/tracking-api";
-import type { RsaFilters, RsaProgress, RsaSegment, RsaStudent } from "../../types/pulse";
+import type { RsaFilters, RsaProgress, RsaResult, RsaSegment, RsaStudent, RsaWorklist } from "../../types/pulse";
+import { ManageReasonsDialog, useRejectionReasons } from "../pipeline/rejection-reason-fields";
+import { cn } from "../../utils/cn";
 import { downloadCsv } from "../../utils/csv";
 import { ManageStatusesDialog, SupportBadge } from "../tracking/student-support";
 import { ProductBadge } from "../../components/student-tags";
@@ -28,10 +30,86 @@ import { ProductBadge } from "../../components/student-tags";
 const today = () => format(new Date(), "yyyy-MM-dd");
 const SEGMENT_LABELS: Record<RsaSegment, string> = { ACADEMY_OR_POOL: "Academy + assessed pool", ACADEMY: "Academy", POOL: "Assessed pool", EVERYONE: "Everyone (incl. external)" };
 const PROGRESS_LABELS: Record<RsaProgress, string> = { ALL: "Any RSA status", NOT_STARTED: "Not started", IN_PROGRESS: "Started, not done", DONE: "Done" };
+const RESULT_LABELS: Record<RsaResult, string> = { ALL: "Any result", UNKNOWN: "Result not known yet", NOT_SELECTED: "Not selected", SELECTED: "Selected" };
+const RESULT_TONE: Record<Exclude<RsaResult, "ALL">, string> = { UNKNOWN: "bg-slate-100 text-slate-600", NOT_SELECTED: "bg-rose-50 text-rose-700", SELECTED: "bg-emerald-50 text-emerald-700" };
+const NO_REASON = "__none__";
+const ADD_REASON = "__add__";
 const segmentText = (student: RsaStudent) =>
   [student.category === "ACADEMY" || student.category === "ACADEMY_INTENSIVE" ? (student.category === "ACADEMY" ? "Academy" : "Intensive") : null, student.inPool ? `Pool${student.tier ? ` ${student.tier}` : ""}` : null].filter(Boolean).join(" + ") || "External";
 const whereRejected = (student: RsaStudent) =>
-  student.rejectedRound ?? (student.pipelineStatus ? PIPELINE_STATUS_LABELS[student.pipelineStatus] : "Not selected (drive closed)");
+  student.result === "SELECTED" ? "Selected"
+    : student.result === "UNKNOWN" ? (student.pipelineStatus ? PIPELINE_STATUS_LABELS[student.pipelineStatus] : "Shared, no result yet")
+      : student.rejectedRound ?? (student.pipelineStatus ? PIPELINE_STATUS_LABELS[student.pipelineStatus] : "Not selected (drive closed)");
+
+/** The reason dropdown on each row: saves straight away. */
+function ReasonCell({ student, onAdd }: { student: RsaStudent; onAdd: () => void }) {
+  const queryClient = useQueryClient();
+  const reasons = useRejectionReasons();
+  const save = useMutation({
+    mutationFn: (tagId: string | null) => rsaApi.setReason(student.applicationId, tagId),
+    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["rsa"] }); toast.success("Reason saved"); },
+    onError: (error) => toast.error(error.message),
+  });
+  // The student's own RSA tag; a round tag shows as a suggestion until the RSA team confirms one.
+  const value = student.reason?.fromRsa ? student.reason.id : NO_REASON;
+  const options = (reasons.data ?? []).filter((reason) => !reason.archivedAt || reason.id === value);
+  return (
+    <div className="w-48">
+      <Select value={value} disabled={save.isPending} onValueChange={(next) => (next === ADD_REASON ? onAdd() : save.mutate(next === NO_REASON ? null : next))}>
+        <SelectTrigger className={cn("h-8 text-xs", value === NO_REASON ? "text-slate-400" : "border-rose-200 bg-rose-50/50 text-rose-800")} aria-label={`Reason for ${student.fullName}`}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={NO_REASON}>No reason yet</SelectItem>
+          {options.map((reason) => <SelectItem key={reason.id} value={reason.id}>{reason.label}</SelectItem>)}
+          <SelectItem value={ADD_REASON}><span className="text-indigo-600">+ Add or edit reasons…</span></SelectItem>
+        </SelectContent>
+      </Select>
+      {!student.reason?.fromRsa && student.reason && <p className="mt-0.5 text-[10px] text-slate-500" title="Tagged on the company round">Round says: {student.reason.label}</p>}
+    </div>
+  );
+}
+
+/** The big picture of reasons for students not selected, across the current list. Click a bar to filter. */
+function ReasonChart({ summary, picked, onPick }: { summary: RsaWorklist["summary"]; picked: string | undefined; onPick: (tagId: string | undefined) => void }) {
+  const total = summary.byReason.reduce((sum, row) => sum + row.students, 0);
+  const max = Math.max(0, ...summary.byReason.map((row) => row.students));
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 px-4 py-3">
+        <div>
+          <p className="text-sm font-semibold text-slate-800">Why students were not selected</p>
+          <p className="mt-0.5 text-xs text-slate-500">Reasons the RSA team tagged (else the company round's tag) for every student in this list who was not selected or has no result yet. Click a reason to see those students.</p>
+        </div>
+        <div className="flex gap-2 text-xs">
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-700">{summary.byResult.UNKNOWN} result not known</span>
+          <span className="rounded-full bg-rose-50 px-2 py-0.5 text-rose-700">{summary.byResult.NOT_SELECTED} not selected</span>
+          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">{summary.byResult.SELECTED} selected</span>
+        </div>
+      </div>
+      {total === 0 ? <p className="px-4 py-6 text-center text-xs text-slate-500">Nobody to analyse in this list.</p> : (
+        <ul className="divide-y divide-slate-100">
+          {summary.byReason.map((row) => {
+            const key = row.tagId ?? "untagged";
+            const active = picked === key;
+            return (
+              <li key={key}>
+                <button type="button" onClick={() => onPick(active ? undefined : key)}
+                  className={cn("grid w-full grid-cols-[minmax(0,14rem)_minmax(0,1fr)_5rem] items-center gap-3 px-4 py-2 text-left", active ? "bg-rose-50/70" : "hover:bg-slate-50")}>
+                  <span className={cn("truncate text-sm", row.tagId ? "font-medium text-slate-800" : "text-amber-700")}>{row.label}</span>
+                  <span className="h-2.5 rounded-full bg-slate-100" aria-hidden>
+                    <span className="block h-2.5 rounded-full" style={{ width: `${max ? Math.max(2, (row.students / max) * 100) : 0}%`, background: row.tagId ? "#e0475b" : "#d9a13b" }} />
+                  </span>
+                  <span className="text-right text-sm tabular-nums"><b>{row.students}</b> <span className="text-xs text-slate-400">{Math.round((row.students / total) * 100)}%</span></span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Card>
+  );
+}
 
 function ReportDialog({ student, open, onOpenChange }: { student: RsaStudent | null; open: boolean; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
@@ -142,12 +220,18 @@ export function RsaPage() {
     to: params.get("to") ?? undefined,
     segment: (params.get("segment") as RsaSegment | null) ?? "ACADEMY_OR_POOL",
     progress: (params.get("progress") as RsaProgress | null) ?? "ALL",
-    includeOngoing: params.get("ongoing") === "false" ? "false" : "true",
+    result: (params.get("result") as RsaResult | null) ?? "ALL",
+    reasonTagId: params.get("reason") ?? undefined,
     q: q || undefined,
   };
   const list = useQuery({ queryKey: ["rsa", filters], queryFn: () => rsaApi.students(filters), placeholderData: keepPreviousData });
   const [editing, setEditing] = useState<RsaStudent | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
+  const [reasonsOpen, setReasonsOpen] = useState(false);
+  // The chart counts the list without the reason filter, so picking a reason keeps every bar visible.
+  const chartFilters = { ...filters, reasonTagId: undefined };
+  const chart = useQuery({ queryKey: ["rsa", chartFilters], queryFn: () => rsaApi.students(chartFilters), placeholderData: keepPreviousData, enabled: Boolean(filters.reasonTagId) });
+  const chartSummary = filters.reasonTagId ? chart.data?.summary : list.data?.summary;
   const summary = list.data?.summary;
 
   return (
@@ -155,11 +239,11 @@ export function RsaPage() {
       <PageHeader
         eyebrow="Placements"
         title="RSA team"
-        description="Rejection section analysis for each student who was shared with a company and not selected. Write the summary, attach the report link, and mark it done."
-        actions={<Button variant="outline" size="sm" onClick={() => setManageOpen(true)}><Settings2 size={14} /> RSA statuses</Button>}
+        description="Every student who is in a company sheet, even before the result comes in. Tag why they were not selected, write the summary, attach the report link, and mark it done."
+        actions={<div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setReasonsOpen(true)}><Settings2 size={14} /> Reasons</Button><Button variant="outline" size="sm" onClick={() => setManageOpen(true)}><Settings2 size={14} /> RSA statuses</Button></div>}
       />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Students to review" value={summary?.total} icon={ListTodo} loading={list.isPending} />
+        <KpiCard label="Students in company sheets" value={summary?.total} hint={summary ? `${summary.byResult.UNKNOWN} result not known yet` : ""} icon={ListTodo} loading={list.isPending} />
         <KpiCard label="Not started" value={summary?.notStarted} icon={Timer} tone="rose" loading={list.isPending} />
         <KpiCard label="Done" value={summary?.done} hint={summary ? `${summary.inProgress} started, not done` : ""} icon={CircleCheckBig} tone="emerald" loading={list.isPending} />
         <KpiCard label="With report link" value={summary?.withLink} icon={Link2} tone="sky" loading={list.isPending} />
@@ -180,14 +264,17 @@ export function RsaPage() {
               <SelectContent>{(Object.keys(PROGRESS_LABELS) as RsaProgress[]).map((key) => <SelectItem key={key} value={key}>{PROGRESS_LABELS[key]}</SelectItem>)}</SelectContent>
             </Select>
           </FormField>
+          <FormField id="rsa-result" label="Company result">
+            <Select value={filters.result!} onValueChange={(value) => set("result", value === "ALL" ? undefined : value)}>
+              <SelectTrigger id="rsa-result" className="w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>{(Object.keys(RESULT_LABELS) as RsaResult[]).map((key) => <SelectItem key={key} value={key}>{RESULT_LABELS[key]}</SelectItem>)}</SelectContent>
+            </Select>
+          </FormField>
           <FormField id="rsa-q" label="Search"><Input id="rsa-q" className="w-56" placeholder="Name, code or company" value={search} onChange={(event) => setSearch(event.target.value)} /></FormField>
-          <label className="flex items-center gap-2 pb-2 text-xs text-slate-600">
-            <Checkbox checked={filters.includeOngoing === "true"} onCheckedChange={(checked) => set("ongoing", checked ? undefined : "false")} /> Include rejections in running drives
-          </label>
           <Button
             variant="outline" size="sm" className="ml-auto" disabled={!list.data?.items.length}
-            onClick={() => downloadCsv("rsa-reports", ["Student", "Code", "Segment", "Company", "Role", "Month", "Rejected at", "Company reason", "RSA status", "Summary", "Report link", "Done by", "Done on"],
-              (list.data?.items ?? []).map((student) => [student.fullName, student.candidateCode, segmentText(student), student.companyName, student.roleTitle, student.month, whereRejected(student), student.rejectionReason,
+            onClick={() => downloadCsv("rsa-reports", ["Student", "Code", "Segment", "Company", "Role", "Month", "Result", "Rejected at", "Reason", "Company note", "RSA status", "Summary", "Report link", "Done by", "Done on"],
+              (list.data?.items ?? []).map((student) => [student.fullName, student.candidateCode, segmentText(student), student.companyName, student.roleTitle, student.month, RESULT_LABELS[student.result], whereRejected(student), student.reason?.label ?? "", student.rejectionReason,
                 student.rsa?.statusLabel ?? "Not started", student.rsa?.reportSummary, student.rsa?.reportUrl,
                 student.rsa ? [...student.rsa.contributors.map((person) => person.fullName), student.rsa.otherContributors].filter(Boolean).join(", ") : "", student.rsa?.doneOn]))}
           >
@@ -195,14 +282,15 @@ export function RsaPage() {
           </Button>
         </div>
       </Card>
+      {chartSummary && <ReasonChart summary={chartSummary} picked={filters.reasonTagId} onPick={(key) => set("reason", key)} />}
       <Card className="p-0">
         {list.isPending ? <LoadingRows rows={8} /> : list.error ? <ErrorState error={list.error} onRetry={() => void list.refetch()} /> : list.data.items.length === 0 ? (
-          <EmptyState icon={FileText} title="Nobody to review" description="Students appear here once they are shared with a company and not selected (or rejected in a running drive, when that option is on)." />
+          <EmptyState icon={FileText} title="Nobody here" description="Students appear here once they are in a company sheet (shared with the company). Try widening the filters." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1000px] text-sm">
               <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs text-slate-500">
-                <tr><th className="px-4 py-2 font-medium">Student</th><th className="pr-3 font-medium">Company · role</th><th className="pr-3 font-medium">Rejected at</th><th className="pr-3 font-medium">RSA</th><th className="pr-3 font-medium">Summary</th><th className="pr-3 font-medium">Report</th><th /></tr>
+                <tr><th className="px-4 py-2 font-medium">Student</th><th className="pr-3 font-medium">Company · role</th><th className="pr-3 font-medium">Result</th><th className="pr-3 font-medium">Why not selected</th><th className="pr-3 font-medium">RSA</th><th className="pr-3 font-medium">Summary</th><th className="pr-3 font-medium">Report</th><th /></tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {list.data.items.map((student) => (
@@ -213,7 +301,12 @@ export function RsaPage() {
                       <span className="block text-xs text-slate-500">{segmentText(student)}{student.candidateCode ? ` · ${student.candidateCode}` : ""}</span>
                     </td>
                     <td className="pr-3 pt-2.5 text-xs"><Link to={`/job-requests/${student.jobRequestId}?tab=notes`} className="text-slate-800 hover:text-indigo-700">{student.companyName}</Link><span className="block text-slate-500">{student.roleTitle} · {student.month}</span></td>
-                    <td className="max-w-[200px] pr-3 pt-2.5 text-xs text-slate-700">{whereRejected(student)}{student.rejectionReason && <span className="block text-slate-500">“{student.rejectionReason}”</span>}</td>
+                    <td className="max-w-[200px] pr-3 pt-2.5 text-xs text-slate-700">
+                      <span className={cn("rounded-full px-1.5 py-px text-[10px] font-medium", RESULT_TONE[student.result])}>{RESULT_LABELS[student.result]}</span>
+                      <span className="mt-1 block">{whereRejected(student)}</span>
+                      {student.rejectionReason && <span className="block text-slate-500">“{student.rejectionReason}”</span>}
+                    </td>
+                    <td className="pr-3 pt-1.5">{student.result === "SELECTED" ? <span className="text-xs text-slate-300">—</span> : <ReasonCell student={student} onAdd={() => setReasonsOpen(true)} />}</td>
                     <td className="pr-3 pt-2.5">{student.rsa ? <SupportBadge label={student.rsa.statusLabel} tone={student.rsa.statusTone} /> : <span className="text-xs text-rose-600">Not started</span>}
                       {student.rsa?.contributors.length ? <span className="mt-1 block text-[11px] text-slate-500">{student.rsa.contributors.map((person) => person.fullName).join(", ")}</span> : null}
                     </td>
@@ -229,6 +322,7 @@ export function RsaPage() {
       </Card>
       <ReportDialog student={editing} open={editing !== null} onOpenChange={(open) => !open && setEditing(null)} />
       <ManageStatusesDialog open={manageOpen} onOpenChange={setManageOpen} initialKind="RSA" />
+      <ManageReasonsDialog open={reasonsOpen} onOpenChange={setReasonsOpen} />
     </div>
   );
 }

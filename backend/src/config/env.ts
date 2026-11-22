@@ -31,6 +31,9 @@ const envSchema = z.object({
   GEMINI_MODEL: z.string().regex(/^[a-z0-9.-]+$/).default("gemini-3.5-flash"),
   // Tried when the main model is overloaded or unavailable.
   GEMINI_FALLBACK_MODEL: z.string().regex(/^[a-z0-9.-]+$/).default("gemini-2.5-flash"),
+  // Shared secret the scheduler (GitHub Actions) sends to start the company-sheet sync.
+  // Without it the scheduled endpoint is switched off; the Sync all button still works.
+  SHEET_SYNC_SECRET: z.string().min(24).optional(),
 });
 
 export const env = envSchema.parse(process.env);

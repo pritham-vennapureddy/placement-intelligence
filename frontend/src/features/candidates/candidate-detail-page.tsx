@@ -15,6 +15,7 @@ import { usePermissions } from "../../hooks/use-permissions";
 import { candidatesApi } from "../../services/workflow-api";
 import type { CandidateDetail } from "../../types/workflow";
 import { CATEGORY_LABELS, InterviewBadge, OutcomeBadge, PipelineBadge } from "../screening/badges";
+import { universalProductLabel } from "@placement/shared";
 
 function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -36,7 +37,7 @@ function ApplicationHistory({ application }: { application: CandidateDetail["app
             {application.jobRequest.company.name} · {application.jobRequest.roleTitle}
           </Link>
           <p className="text-xs text-slate-500">
-            Applied {format(new Date(application.appliedAt), "d MMM yyyy")}{application.product ? ` · ${application.product.name}` : ""}
+            Applied {format(new Date(application.appliedAt), "d MMM yyyy")}{application.product ? ` · ${universalProductLabel(application.product.name)}` : ""}
             {application.sourceApplication && ` · re-used from ${application.sourceApplication.jobRequest.company.name} · ${application.sourceApplication.jobRequest.roleTitle}`}
           </p>
         </div>
@@ -123,7 +124,7 @@ export function CandidateDetailPage() {
               <Detail label="College">{data.college}</Detail>
               <Detail label="Degree">{[data.degree, data.department].filter(Boolean).join(" · ")}</Detail>
               <Detail label="Graduation">{[data.graduationYear, data.academicScore !== null ? `${data.academicScore}%` : null].filter(Boolean).join(" · ")}</Detail>
-              <Detail label="Products">{data.products.map(({ product }) => product.name).join(", ")}</Detail>
+              <Detail label="Product">{[...new Set(data.products.map(({ product }) => universalProductLabel(product.category) ?? product.name))].join(", ") || "—"}</Detail>
               <Detail label="Skills">{data.skills.join(", ")}</Detail>
               <Detail label="Location">{[data.currentCity, data.state].filter(Boolean).join(", ")}</Detail>
               <Detail label="Category">

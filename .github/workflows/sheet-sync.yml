@@ -1,0 +1,28 @@
+# Syncs every company Google Sheet into the dashboard every 2 hours, 8am–10pm IST.
+# GitHub cron is in UTC: 02:30–16:30 UTC = 08:00–22:00 IST. Runs can start a few
+# minutes late when GitHub is busy. Needs the repository secret SHEET_SYNC_SECRET
+# (the same value as on the Render service).
+name: Company sheet sync
+
+on:
+  schedule:
+    - cron: "30 2-16/2 * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Start the sync
+        env:
+          SHEET_SYNC_SECRET: ${{ secrets.SHEET_SYNC_SECRET }}
+          APP_URL: https://placement-intelligence-nezy.onrender.com
+        run: |
+          if [ -z "$SHEET_SYNC_SECRET" ]; then echo "SHEET_SYNC_SECRET is not set"; exit 1; fi
+          # The free Render server sleeps when idle; the first call wakes it (up to ~1 minute).
+          curl --fail-with-body --silent --show-error --retry 4 --retry-delay 20 --retry-all-errors --max-time 120 \
+            -X POST "$APP_URL/api/sheet-sync/scheduled" \
+            -H "x-sheet-sync-secret: $SHEET_SYNC_SECRET"

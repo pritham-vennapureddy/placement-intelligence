@@ -6,6 +6,7 @@ import { resolveDataScope } from "../../services/data-scope.service.js";
 import { maskMobile } from "../../services/pii.js";
 import { round, ROUND_LABELS, ROUND_METRICS, type RoundRow } from "./company-rounds.js";
 import type { InsightsQuery, JobScope, StudentInsightsQuery, StudentStatusFilter } from "./insights.validators.js";
+import { PRODUCT_LABEL } from "./academy-insights.service.js";
 
 /**
  * Stakeholders and administrators see the whole workspace here; managers see
@@ -326,7 +327,7 @@ export const insightsService = {
       }[]>`
         ${facts}
         SELECT f.application_id, f.candidate_id, c."fullName" AS full_name, c."candidateCode" AS candidate_code, c.mobile,
-               f.category, p.name AS product_name, f.job_id, j."roleTitle" AS role_title, f.company_id, co.name AS company_name, f.month,
+               f.category, ${PRODUCT_LABEL(Prisma.sql`p.category`)} AS product_name, f.job_id, j."roleTitle" AS role_title, f.company_id, co.name AS company_name, f.month,
                f.rs_rejected, f.sc_rejected, f.as_rejected, f.sc_no_show, f.sp, f.pipeline, f.shared, f.not_shared, f.direct, f.direct_reason, f.co_rejected_round,
                (SELECT string_agg(DISTINCT x."rejectionReason", '; ') FROM "InternalStageCandidate" x
                  WHERE x."applicationId" = f.application_id AND x.outcome = 'REJECTED' AND NULLIF(TRIM(x."rejectionReason"), '') IS NOT NULL) AS rejection_reason,
