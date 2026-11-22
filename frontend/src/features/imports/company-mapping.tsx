@@ -37,6 +37,8 @@ export interface CompanyTabState {
   columns: { fullName?: number | undefined; email?: number | undefined; mobile?: number | undefined };
   rounds: { column: number; roundName: string; roundType: RoundType }[];
   finalStatusColumn?: number | undefined;
+  /** Optional: company feedback / rejection reason. */
+  reasonColumn?: number | undefined;
   guessed?: boolean;
 }
 
@@ -49,6 +51,7 @@ export interface CompanyMappingState {
 
 const ROUND_PATTERN = /round|screen|^tr\b|^mr\b|^hr\b|assign|interview|technical|manager|client|test/i;
 const FINAL_PATTERN = /final|^status$|result|outcome/i;
+const REASON_PATTERN = /reason|remark|feedback|comment/i;
 
 export function guessRoundType(name: string): RoundType {
   if (/assign/i.test(name)) return "ASSIGNMENT";
@@ -122,7 +125,8 @@ function TabSection({ batch, tab, onChange }: { batch: ImportBatch; tab: Company
         return /^[+\d\s().-]+$/.test(value) && digits.length >= 10 && digits.length <= 13;
       });
     const finalStatusColumn = guessColumn(options, FINAL_PATTERN);
-    const taken = [fullName, email, mobile, finalStatusColumn].filter((value): value is number => value !== undefined);
+    const reasonColumn = guessColumn(options, REASON_PATTERN, [fullName, email, mobile, finalStatusColumn].filter((value): value is number => value !== undefined));
+    const taken = [fullName, email, mobile, finalStatusColumn, reasonColumn].filter((value): value is number => value !== undefined);
     const rounds = options
       .filter((option) => ROUND_PATTERN.test(option.header) && !taken.includes(option.index))
       .map((option) => ({ column: option.index, roundName: option.header, roundType: guessRoundType(option.header) }));
@@ -133,10 +137,11 @@ function TabSection({ batch, tab, onChange }: { batch: ImportBatch; tab: Company
       columns: { ...(fullName !== undefined ? { fullName } : {}), ...(email !== undefined ? { email } : {}), ...(mobile !== undefined ? { mobile } : {}) },
       rounds,
       ...(finalStatusColumn !== undefined ? { finalStatusColumn } : {}),
+      ...(reasonColumn !== undefined ? { reasonColumn } : {}),
     });
   }, [preview.data, options]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const identity = [tab.columns.fullName, tab.columns.email, tab.columns.mobile, tab.finalStatusColumn];
+  const identity = [tab.columns.fullName, tab.columns.email, tab.columns.mobile, tab.finalStatusColumn, tab.reasonColumn];
   const toggleRound = (column: number, header: string, on: boolean) =>
     onChange({
       ...tab,
@@ -179,6 +184,9 @@ function TabSection({ batch, tab, onChange }: { batch: ImportBatch; tab: Company
       </div>
       <Field label="Final status column" hint="E.g. “Final Status”: selected, rejected, offer released, joined…">
         <ColumnSelect options={options} value={tab.finalStatusColumn} onChange={(finalStatusColumn) => onChange({ ...tab, finalStatusColumn })} />
+      </Field>
+      <Field label="Reason / feedback column (optional)" hint="Company feedback or rejection reason. Saved with the round the student was rejected in (else their last round) and shown in the company funnel's rejection reasons.">
+        <ColumnSelect options={options} value={tab.reasonColumn} onChange={(reasonColumn) => onChange({ ...tab, reasonColumn })} />
       </Field>
     </Card>
   );

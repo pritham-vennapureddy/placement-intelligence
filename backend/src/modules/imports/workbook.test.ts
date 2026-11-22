@@ -57,3 +57,21 @@ describe("database-backed workbook snapshots", () => {
     assert.deepEqual(restoreWorkbook(snapshot).read("TA", 0).rows[0]!.links, [undefined, "https://resume.example/asha.pdf"]);
   });
 });
+
+describe("unreadable .xlsx uploads", () => {
+  const code = async (buffer: Buffer) => readWorkbook(buffer, "upload.xlsx").then(() => "read", (error: { code: string }) => error.code);
+
+  test("an old .xls or password-protected file says so", async () => {
+    assert.equal(await code(Buffer.concat([Buffer.from("d0cf11e0a1b11ae1", "hex"), Buffer.alloc(64)])), "UNSUPPORTED_XLS");
+  });
+
+  test("a CSV saved with an .xlsx name is read as CSV", async () => {
+    const workbook = await readWorkbook(Buffer.from("Name,Mobile\nAsha,9876543210\n"), "upload.xlsx");
+    assert.deepEqual(workbook.read("CSV", 1).rows[0]!.cells, ["Asha", "9876543210"]);
+  });
+
+  test("a web page or binary junk is rejected", async () => {
+    assert.equal(await code(Buffer.from("<html><table></table></html>")), "UNREADABLE_FILE");
+    assert.equal(await code(Buffer.from([1, 0, 2, 3])), "UNREADABLE_FILE");
+  });
+});

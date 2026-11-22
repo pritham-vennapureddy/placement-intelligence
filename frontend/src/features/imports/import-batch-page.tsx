@@ -112,6 +112,16 @@ function CompanySummaryView({ summary }: { summary: CompanySummary }) {
         <Stat label="Will be nominated now" value={summary.newNominations} tone={summary.newNominations ? "amber" : undefined} />
         <Stat label="Status changes" value={summary.statusChanges} />
       </div>
+      {Boolean(summary.addedToJob) && (
+        <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+          {summary.addedToJob} {summary.addedToJob === 1 ? "student is" : "students are"} in the company sheet but not in this drive's internal sheet (TA).
+          Approving adds them to the job, taking the product from the dashboard or the internal sheet's eligible tab, and tags them as direct to company.
+          {summary.newStudents ? ` ${summary.newStudents} new to the dashboard.` : ""}
+          {summary.fromEligible ? ` ${summary.fromEligible} found on the eligible tab.` : ""}
+          {summary.notInApplicants ? ` ${summary.notInApplicants} not in applicants or the eligible list: tagged “not in applicants”, product not known.` : ""}
+          {" "}Say why on the pipeline tab.
+        </p>
+      )}
       <div className="flex flex-wrap gap-2 text-xs">
         {summary.rounds.map((round) => (
           <Badge key={round.name} variant="outline" className={round.exists ? "border-slate-200 text-slate-600" : "border-indigo-200 bg-indigo-50 text-indigo-700"}>
@@ -146,7 +156,7 @@ function describeRow(row: ImportRow): string {
   return "";
 }
 
-const NEEDS_MATCH = new Set(["NO_MATCH", "AMBIGUOUS_MATCH", "NOT_APPLIED", "INVALID_MATCH"]);
+const NEEDS_MATCH = new Set(["NO_MATCH", "AMBIGUOUS_MATCH", "NOT_APPLIED", "INVALID_MATCH", "NEW_STUDENT", "NOT_IN_APPLICANTS"]);
 
 function ReviewStep({ batch, onEdit }: { batch: ImportBatch; onEdit: () => void }) {
   const queryClient = useQueryClient();
@@ -430,6 +440,7 @@ function DoneStep({ batch }: { batch: ImportBatch }) {
   const counts = queryClient.getQueryData<Record<string, number>>(["imports", batch.id, "counts"]);
   const internalSummary = batch.target === "INTERNAL_SCREENING" ? batch.summary as InternalSummary | null : null;
   const labels: Record<string, string> = {
+    studentsCreated: "Students added from the company sheet", addedToJob: "Added to the job (not in internal sheet)",
     candidatesCreated: "Candidates added", candidatesUpdated: "Profiles filled in", applicationsCreated: "Applications added",
     decisionsWritten: "Stage decisions saved", stagesMarkedNotConducted: "Stages marked not conducted", roundsCreated: "Rounds added",
     nominationsCreated: "Nominated", outcomesWritten: "Round results saved", statusChanges: "Status changes", skillsAdded: "Skills added",

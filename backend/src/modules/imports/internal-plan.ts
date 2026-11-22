@@ -163,12 +163,37 @@ export function collectApplicationKeys(config: InternalMapping, read: Reader) {
   const { rows } = read(config.applications.sheet, config.applications.headerRow);
   const mobiles = new Set<string>();
   const jobIds = new Set<string>();
+  /** User ID → mobiles on the student-detail tabs, for TA rows without a mobile of their own. */
+  let mobilesByUuid: Map<string, Set<string>> | null = null;
+  const uuidMobiles = () => {
+    if (mobilesByUuid) return mobilesByUuid;
+    mobilesByUuid = new Map();
+    for (const lookup of config.profileLookups) {
+      for (const row of read(lookup.sheet, lookup.headerRow).rows) {
+        const rawMobile = cell(row, lookup.columns.mobile);
+        const mobile = rawMobile && !UUID_VALUE.test(rawMobile) ? normalizeMobile(rawMobile) : null;
+        if (!mobile) continue;
+        for (const value of row.cells) {
+          const trimmed = value?.trim().toLowerCase();
+          if (trimmed && UUID_VALUE.test(trimmed)) (mobilesByUuid.get(trimmed) ?? mobilesByUuid.set(trimmed, new Set()).get(trimmed)!).add(mobile);
+        }
+      }
+    }
+    return mobilesByUuid;
+  };
   for (const row of rows) {
     const jobId = lower(cell(row, columns.jobId));
     if (jobId) jobIds.add(jobId);
     const rawMobile = cell(row, columns.mobile);
     const mobile = rawMobile && !UUID_VALUE.test(rawMobile) ? normalizeMobile(rawMobile) : null;
-    if (mobile) mobiles.add(mobile);
+    if (mobile) {
+      mobiles.add(mobile);
+      continue;
+    }
+    for (const value of row.cells) {
+      const trimmed = value?.trim().toLowerCase();
+      if (trimmed && UUID_VALUE.test(trimmed)) for (const found of uuidMobiles().get(trimmed) ?? []) mobiles.add(found);
+    }
   }
   return { mobiles: [...mobiles], jobIds: [...jobIds] };
 }
@@ -274,15 +299,43 @@ export function planInternalImport(config: InternalMapping, read: Reader, contex
    * Stage tabs that list only candidate IDs are matched through it; mobile stays the identity key.
    */
   const mobilesByUuid = new Map<string, Set<string>>();
-  const rememberUuids = (row: SheetRow, mobile: string | null) => {
+  /** The same, per student-detail tab, so the highest-priority tab (Applied Users first) can settle a conflict. */
+  const mobilesByUuidPerSheet = new Map<string, Map<string, Set<string>>>();
+  const rememberUuids = (row: SheetRow, mobile: string | null, sheet?: string) => {
     if (!mobile) return;
     for (const value of row.cells) {
       const trimmed = value?.trim();
       if (trimmed && UUID_VALUE.test(trimmed)) {
         const key = trimmed.toLowerCase();
         (mobilesByUuid.get(key) ?? mobilesByUuid.set(key, new Set()).get(key)!).add(mobile);
+        if (sheet) {
+          const perSheet = mobilesByUuidPerSheet.get(sheet) ?? mobilesByUuidPerSheet.set(sheet, new Map()).get(sheet)!;
+          (perSheet.get(key) ?? perSheet.set(key, new Set()).get(key)!).add(mobile);
+        }
       }
     }
+  };
+  /**
+   * For a TA row with no mobile of its own: the one mobile its User ID has on every
+   * tab, else the one it has on the highest-priority tab (lookups are ordered with
+   * Applied Users first), reported as a conflict so the PSM can check it.
+   */
+  const resolveTaMobile = (row: SheetRow): { mobile: string | null; settledBy?: string; others?: string[] } => {
+    const all = mobileFromUuids(row);
+    if (all) return { mobile: all };
+    const ids = row.cells.map((value) => value?.trim().toLowerCase()).filter((value): value is string => Boolean(value && UUID_VALUE.test(value)));
+    if (ids.length === 0) return { mobile: null };
+    for (const lookup of config.profileLookups) {
+      const perSheet = mobilesByUuidPerSheet.get(lookup.sheet);
+      const found = new Set(ids.flatMap((id) => [...(perSheet?.get(id) ?? [])]));
+      if (found.size === 1) {
+        const mobile = [...found][0]!;
+        const others = new Set(ids.flatMap((id) => [...(mobilesByUuid.get(id) ?? [])]).filter((other) => other !== mobile));
+        return { mobile, settledBy: lookup.sheet, others: [...others] };
+      }
+      if (found.size > 1) return { mobile: null };
+    }
+    return { mobile: null };
   };
   /** The one mobile the row's candidate ID(s) point to, or null when none or several. */
   const mobileFromUuids = (row: SheetRow): string | null => {
@@ -308,7 +361,7 @@ export function planInternalImport(config: InternalMapping, read: Reader, contex
       const rawMobile = cell(row, lookup.columns.mobile);
       const mobile = rawMobile && !UUID_VALUE.test(rawMobile) ? normalizeMobile(rawMobile) : null;
       if (mobile) (rowsByMobile.get(mobile) ?? rowsByMobile.set(mobile, []).get(mobile)!).push(row);
-      rememberUuids(row, mobile);
+      rememberUuids(row, mobile, lookup.sheet);
     }
     const collapsedRowsByMobile = new Map<string, number>();
     const ambiguousMobiles = new Set<string>();
@@ -408,10 +461,10 @@ export function planInternalImport(config: InternalMapping, read: Reader, contex
   }
 
   /** Student-detail data for a TA row, by its own mobile or, failing that, the mobile its candidate ID points to. */
-  const profileForRow = (row: SheetRow): ProfileEntry => {
+  const profileForRow = (row: SheetRow, settledMobile?: string | null): ProfileEntry => {
     const rawMobile = cell(row, config.applications.columns.mobile);
     const ownKey = profileKey(rawMobile);
-    const keys = [ownKey ?? profileKey(mobileFromUuids(row))];
+    const keys = [ownKey ?? profileKey(mobileFromUuids(row) ?? settledMobile ?? null)];
     let profile: ProfileEntry = { candidateCode: null, fields: {}, additionalProfiles: [] };
     for (const key of keys) {
       const match = key && !ambiguousProfileKeys.has(key) ? profileByKey.get(key) : undefined;
@@ -442,12 +495,19 @@ export function planInternalImport(config: InternalMapping, read: Reader, contex
 
   for (const row of sheet.rows) {
     const issues: PlanIssue[] = [];
-    const profile = profileForRow(row);
     const rawMobile = cell(row, columns.mobile);
-    // No usable mobile on the TA row (blank, "#N/A"): its candidate ID can still give one from the student-detail tabs.
-    const mobile = (rawMobile && !UUID_VALUE.test(rawMobile) ? normalizeMobile(rawMobile) : null)
-      ?? normalizeMobile(profile.fields.mobile)
-      ?? mobileFromUuids(row);
+    const ownMobile = rawMobile && !UUID_VALUE.test(rawMobile) ? normalizeMobile(rawMobile) : null;
+    // No usable mobile on the TA row (blank, "#N/A", or no mobile column): its User ID gives one from the student-detail tabs.
+    const resolved = ownMobile ? { mobile: null } : resolveTaMobile(row);
+    const profile = profileForRow(row, resolved.mobile);
+    const mobile = ownMobile ?? normalizeMobile(profile.fields.mobile) ?? resolved.mobile;
+    if (!ownMobile && resolved.settledBy && resolved.mobile === mobile && resolved.others?.length) {
+      issues.push({
+        severity: "WARNING",
+        code: "MOBILE_CONFLICT",
+        message: `This User ID has different mobile numbers on different tabs (${[resolved.mobile, ...resolved.others].join(", ")}). Used ${resolved.mobile} from ${resolved.settledBy}.`,
+      });
+    }
     rememberUuids(row, mobile);
     // A candidate ID sitting in the name column is not a name.
     const sheetName = cell(row, columns.fullName);

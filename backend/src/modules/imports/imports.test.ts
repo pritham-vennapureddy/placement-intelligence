@@ -9,7 +9,7 @@ import {
 import { normalizeEmail, normalizeMobile, parseDate } from "../../utils/normalize.js";
 import { deriveStatus, planCompanyImport, type JobApplicant } from "./company-plan.js";
 import { internalMappingSchema, companyMappingSchema } from "./imports.validators.js";
-import { planInternalImport, type PlanContext } from "./internal-plan.js";
+import { collectApplicationKeys, planInternalImport, type PlanContext } from "./internal-plan.js";
 import type { SheetRow } from "./workbook.js";
 
 /** In-memory workbook: sheet name → rows of cells (row 1 is the header). */
@@ -726,6 +726,32 @@ describe("internal sheet planning", () => {
     assert.deepEqual(outcomes, ["NO_SHOW", "REJECTED"]);
   });
 
+  test("a TA tab with only User IDs takes each mobile from Applied Users, which wins a conflict", () => {
+    const ids = ["0bab694c-a953-4eaf-9bbe-9c36d3ad3093", "97a599fd-bffa-4e08-8e29-7bb29c7fc4ce", "cac713fe-dbd6-461b-9752-bce0fdd8981d"];
+    const config = internalMappingSchema.parse({
+      applications: { sheet: "TA", headerRow: 1, columns: { candidateId: 0, resumeUrl: 1 } },
+      profileLookups: [
+        { sheet: "Applied Users", headerRow: 1, keyType: "mobile", keyColumn: 2, columns: { candidateId: 0, fullName: 1, mobile: 2 } },
+        { sheet: "2nd confirm", headerRow: 1, keyType: "mobile", keyColumn: 2, columns: { candidateId: 0, fullName: 1, mobile: 2 } },
+      ],
+      stages: { RESUME_SHORTLIST: { mode: "MANUAL" }, SCREENING_SHORTLIST: { mode: "UNCHANGED" }, ASSIGNMENT_SHORTLIST: { mode: "UNCHANGED" }, FINAL_SHORTLIST: { mode: "UNCHANGED" } },
+    });
+    const sheets = reader({
+      TA: [["User Id", "Resume Link"], [ids[0]!, ""], [ids[1]!, ""], ["", "https://cv.example/x.pdf"]],
+      "Applied Users": [["User Id", "Name", "Phone Number"], [ids[0]!, "Asha", "9000000001"], [ids[1]!, "Ravi", "9000000002"], [ids[2]!, "Not in TA", "9000000003"]],
+      "2nd confirm": [["User Id", "Name", "Mobile"], [ids[1]!, "Ravi", "9000000099"]],
+    });
+    assert.deepEqual(collectApplicationKeys(config, sheets).mobiles.sort(), ["9000000001", "9000000002", "9000000099"]);
+    const [asha, ravi, blank] = planInternalImport(config, sheets, context()).rows.filter((row) => row.role === "APPLICATIONS");
+    const candidate = (row: typeof asha) => (row!.data as { candidate: { fullName: string; mobile: string } }).candidate;
+    assert.ok(asha!.included);
+    assert.deepEqual([candidate(asha).fullName, candidate(asha).mobile], ["Asha", "9000000001"]);
+    assert.ok(ravi!.included);
+    assert.equal(candidate(ravi).mobile, "9000000002", "Applied Users wins over 2nd confirm");
+    assert.deepEqual(ravi!.issues.map((issue) => issue.code), ["MOBILE_CONFLICT"]);
+    assert.equal(blank!.included, false, "no User ID and no mobile: cannot be identified");
+  });
+
   test("students in a detail tab who did not apply produce one summary, not one warning per row", () => {
     const plan = planInternalImport(
       mapping({}, [{ sheet: "Eligible", headerRow: 1, keyType: "mobile", keyColumn: 0, columns: { mobile: 0, fullName: 1 } }]),
@@ -783,19 +809,88 @@ describe("company sheet planning", () => {
     ]);
   });
 
+  test("reads the optional reason column, and leaves it out when unmapped", () => {
+    const withReason = sheet.map((row, index) => [...row, index === 1 ? "  Weak in DSA " : ""]);
+    withReason[0]![6] = "Remarks";
+    const mapping = companyMappingSchema.parse({ ...companyMapping, tabs: [{ ...companyMapping.tabs[0]!, reasonColumn: 6 }] });
+    const applicants = [applicant("1", "a@example.com", "9000000001"), applicant("2", "b@example.com", "9000000002")];
+    const { rows } = planCompanyImport(mapping, reader({ MERN: withReason.slice(0, 3) }), applicants, [], []);
+    assert.equal(rows[0]!.data.reason, "Weak in DSA");
+    assert.equal(rows[1]!.data.reason, null, "a blank cell is no reason");
+    const { rows: unmapped } = planCompanyImport(companyMapping, reader({ MERN: withReason.slice(0, 2) }), applicants, [], []);
+    assert.equal(unmapped[0]!.data.reason, null);
+  });
+
   test("a manual match overrides automatic matching", () => {
     const applicants = [applicant("1", "x@example.com", "9111111111")];
     const withOverride = { ...companyMapping, overrides: { "MERN#3": "1" } };
     const { rows } = planCompanyImport(withOverride, reader({ MERN: sheet.slice(0, 3) }), applicants, [], []);
-    assert.equal(rows[0]!.issues[0]!.code, "NO_MATCH");
+    assert.equal(rows[0]!.issues[0]!.code, "NOT_IN_APPLICANTS");
     assert.equal(rows[1]!.data.matchedBy, "manual");
+    assert.equal(rows[1]!.data.addToJob, null);
   });
 
   test("company matching ignores email when the mobile number does not match", () => {
     const onlyEmailMatches = [applicant("1", "a@example.com", "9000000099")];
     const { rows } = planCompanyImport(companyMapping, reader({ MERN: sheet.slice(0, 2) }), onlyEmailMatches, [], []);
-    assert.equal(rows[0]?.included, false);
-    assert.equal(rows[0]?.issues[0]?.code, "NO_MATCH");
+    assert.equal(rows[0]?.data.applicationId, null, "never matched to the applicant by email");
+    assert.equal(rows[0]?.issues[0]?.code, "NOT_IN_APPLICANTS");
+  });
+
+  test("students not in the internal sheet are added to the job with their product from the dashboard", () => {
+    const others = [
+      { candidateId: "c-9", fullName: "Known Student", email: null, mobile: "9000000002", product: { id: "p-1", name: "Academy" } },
+    ];
+    const { rows, summary } = planCompanyImport(companyMapping, reader({ MERN: sheet.slice(0, 3) }), [], others, []);
+    const [newcomer, known] = rows;
+    assert.equal(known!.included, true);
+    assert.equal(known!.issues[0]!.code, "NOT_IN_INTERNAL_SHEET");
+    assert.deepEqual(known!.data.addToJob, { candidateId: "c-9", newCandidate: null, productId: "p-1", from: "DASHBOARD", fromSheet: null });
+    assert.equal(known!.data.candidateName, "Known Student");
+    assert.ok(known!.data.createNomination);
+    assert.equal(known!.data.toStatus, "IN_PROCESS");
+    assert.equal(newcomer!.issues[0]!.code, "NOT_IN_APPLICANTS");
+    assert.equal(newcomer!.data.addToJob?.newCandidate?.fullName, "A");
+    assert.equal(newcomer!.data.addToJob?.newCandidate?.mobile, "9000000001");
+    assert.equal(newcomer!.data.toStatus, "REJECTED");
+    assert.equal(summary.addedToJob, 2);
+    assert.equal(summary.newStudents, 1);
+    assert.equal(summary.unmatched, 0);
+  });
+
+  test("students on the internal sheet's eligible tab take their product from it; others are tagged not in applicants", () => {
+    const eligible = new Map([
+      ["9000000001", { sheet: "Eligible Students", fullName: "A Full", email: "a@x.com", product: { id: "p-2", name: "Intensive" }, productText: "Intensive" }],
+      ["9000000002", { sheet: "Eligible Students", fullName: null, email: null, product: { id: "p-3", name: "Academy" }, productText: "Academy" }],
+    ]);
+    const others = [{ candidateId: "c-9", fullName: "Known", email: null, mobile: "9000000002", product: null }];
+    const { rows, summary } = planCompanyImport(companyMapping, reader({ MERN: sheet.slice(0, 4) }), [], others, [], eligible);
+    const [listed, known, nowhere] = rows;
+    assert.equal(listed!.issues[0]!.code, "NEW_STUDENT");
+    assert.equal(listed!.data.addToJob?.productId, "p-2");
+    assert.equal(listed!.data.addToJob?.from, "ELIGIBLE");
+    assert.equal(listed!.data.addToJob?.newCandidate?.email, "a@example.com", "the company sheet email wins");
+    assert.equal(known!.data.addToJob?.productId, "p-3", "dashboard product unknown: eligible tab's product");
+    assert.equal(known!.data.addToJob?.from, "ELIGIBLE");
+    assert.equal(nowhere!.issues[0]!.code, "NOT_IN_APPLICANTS");
+    assert.equal(nowhere!.included, true);
+    assert.equal(nowhere!.data.addToJob?.from, "NOT_IN_APPLICANTS");
+    assert.equal(summary.fromEligible, 2);
+    assert.equal(summary.notInApplicants, 1);
+  });
+
+  test("a mobile shared by two dashboard students, or a repeated student, is not added", () => {
+    const twins = [
+      { candidateId: "c-1", fullName: "One", email: null, mobile: "9000000001", product: null },
+      { candidateId: "c-2", fullName: "Two", email: null, mobile: "9000000001", product: null },
+    ];
+    const { rows } = planCompanyImport(companyMapping, reader({ MERN: [...sheet.slice(0, 2), sheet[1]!] }), [], twins, []);
+    assert.equal(rows[0]!.issues[0]!.code, "AMBIGUOUS_MATCH");
+    assert.equal(rows[0]!.included, false);
+    const { rows: repeated } = planCompanyImport(companyMapping, reader({ MERN: [...sheet.slice(0, 2), sheet[1]!] }), [], [twins[0]!], []);
+    assert.equal(repeated[0]!.included, true);
+    assert.equal(repeated[1]!.issues.some((issue) => issue.code === "DUPLICATE_PROFILE"), true);
+    assert.equal(repeated[1]!.included, false);
   });
 
   test("ambiguous mobile numbers are rejected instead of matching an arbitrary company applicant", () => {

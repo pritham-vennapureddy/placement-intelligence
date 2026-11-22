@@ -14,6 +14,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/ta
 import { jobRequestsApi } from "../../services/api";
 import { importsApi } from "../../services/workflow-api";
 import { PipelineTab } from "../pipeline/pipeline-tab";
+import { DriveNotesTab } from "../pulse/drive-notes";
+import { CATEGORY_LABELS } from "../screening/badges";
 import { ScreeningTab } from "../screening/screening-tab";
 import { ChangeStatusDialog, ReassignOwnerDialog } from "./job-request-dialogs";
 import { JobStatusBadge } from "./job-status-badge";
@@ -152,6 +154,7 @@ export function JobRequestDetailPage() {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="screening">Internal screening</TabsTrigger>
           <TabsTrigger value="pipeline">Company pipeline</TabsTrigger>
+          <TabsTrigger value="notes">CRM & RSA notes</TabsTrigger>
           <TabsTrigger value="imports">Imports</TabsTrigger>
           <TabsTrigger value="ownership">Ownership ({data.assignments.length})</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
@@ -172,8 +175,8 @@ export function JobRequestDetailPage() {
                   </span>
                 )}
               </Detail>
-              <Detail label="Eligible products">
-                {data.eligibleProducts.length ? data.eligibleProducts.map(({ product }) => product.name).join(", ") : "Any product"}
+              <Detail label="Eligible categories">
+                {data.eligibleProducts.length ? [...new Set(data.eligibleProducts.map(({ product }) => CATEGORY_LABELS[product.category] ?? product.category))].join(", ") : "Any category"}
               </Detail>
               <Detail label="Proposed shortlisting mechanism">{data.shortlistingMechanism}</Detail>
               <Detail label="Internal sheet">{data.internalSheetUrl && <ExternalAnchor href={data.internalSheetUrl}>Open</ExternalAnchor>}</Detail>
@@ -187,6 +190,7 @@ export function JobRequestDetailPage() {
 
         <TabsContent value="screening"><ScreeningTab jobRequestId={data.id} /></TabsContent>
         <TabsContent value="pipeline"><PipelineTab jobRequestId={data.id} roleTitle={data.roleTitle} companyName={data.company.name} /></TabsContent>
+        <TabsContent value="notes"><DriveNotesTab jobRequestId={data.id} /></TabsContent>
         <TabsContent value="imports"><JobImports jobRequestId={data.id} /></TabsContent>
 
         <TabsContent value="ownership">

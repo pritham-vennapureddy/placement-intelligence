@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { prisma, type Db } from "../../db.js";
 import { Prisma, type ImportTarget } from "../../generated/prisma/client.js";
+import { ApiError } from "../../utils/api-error.js";
 import type { PlanIssue, StagedRow } from "./internal-plan.js";
 
 const CHUNK = 500;
@@ -168,6 +169,11 @@ export const importsRepository = {
     ];
 
     await prisma.$transaction(async (transaction) => {
+      // Two people pressing "Check again" on the same import: the second waits, then replaces the first's rows.
+      const [locked] = await transaction.$queryRaw<{ status: string }[]>`SELECT status::text AS status FROM "ImportBatch" WHERE id = ${batchId}::uuid FOR UPDATE`;
+      // Approved or cancelled by someone else while this check ran: keep what they did.
+      if (locked?.status === "COMMITTED") throw new ApiError(409, "IMPORT_COMMITTED", "This import was approved by someone else while it was being checked.");
+      if (locked?.status === "CANCELLED") throw new ApiError(409, "IMPORT_CANCELLED", "This import was cancelled while it was being checked.");
       await transaction.importSheetMapping.deleteMany({ where: { batchId } });
       await transaction.dataQualityIssue.deleteMany({ where: { batchId } });
       await transaction.importSheetMapping.createMany({

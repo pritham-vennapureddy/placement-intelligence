@@ -1,5 +1,6 @@
 import type { CompanyProcessPhase, PaginationMeta, StudentSupportKind } from "@placement/shared";
 import type { GuidanceJobOption, GuidanceView, InsightFilters, Insights, JobTracking, MyWork, StudentInsight, StudentInsightsPage, StudentStatusFilter, StudentSupportInput, SupportStatusOption } from "../types/tracking";
+import type { AcademyCandidate, AcademyCandidateView, AcademyFilters, AcademyInsights, AcademyStudentApplication } from "../types/academy";
 import { newIdempotencyKey, request, toQueryString } from "./api";
 
 type Data<T> = { data: T };
@@ -69,5 +70,18 @@ export const insightsApi = {
       `/insights/students${toQueryString({ ...filters, page: String(filters.page), pageSize: filters.pageSize ? String(filters.pageSize) : undefined })}`,
     );
     return { items: response.data.items, meta: response.meta };
+  },
+};
+
+export const academyInsightsApi = {
+  async overview(filters: AcademyFilters): Promise<AcademyInsights> {
+    return (await request<Data<AcademyInsights>>(`/insights/academy${toQueryString({ ...filters })}`)).data;
+  },
+  async studentApplications(candidateId: string, filters: AcademyFilters): Promise<AcademyStudentApplication[]> {
+    const { academyCategory: _category, segment: _segment, ...period } = filters;
+    return (await request<Data<{ items: AcademyStudentApplication[] }>>(`/insights/academy/candidates/${candidateId}/applications${toQueryString({ ...period })}`)).data.items;
+  },
+  async candidates(filters: AcademyFilters & { view: AcademyCandidateView; q?: string | undefined }): Promise<AcademyCandidate[]> {
+    return (await request<Data<{ items: AcademyCandidate[] }>>(`/insights/academy/candidates${toQueryString({ ...filters })}`)).data.items;
   },
 };

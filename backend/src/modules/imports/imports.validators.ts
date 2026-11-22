@@ -56,8 +56,9 @@ const applicationColumns = z
     academicScore: column.optional(),
     jobId: column.optional(),
   })
-  .refine((columns) => columns.mobile !== undefined, {
-    message: "Choose the mobile-number column; mobile is the required candidate identity.",
+  // A TA tab with only User IDs is allowed: each ID's mobile comes from the student-detail tabs.
+  .refine((columns) => columns.mobile !== undefined || columns.candidateId !== undefined, {
+    message: "Choose the mobile-number column (or a User ID column whose mobiles are on another tab); mobile is the required candidate identity.",
   });
 
 const stageSheet = z.object({
@@ -161,6 +162,8 @@ const companyTab = z.object({
     .max(20)
     .default([]),
   finalStatusColumn: column.optional(),
+  /** Optional free-text column (company feedback / rejection reason), kept with the student's last round. */
+  reasonColumn: column.optional(),
 });
 
 export const companyMappingSchema = z.object({

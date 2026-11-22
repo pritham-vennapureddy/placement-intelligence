@@ -19,8 +19,11 @@ import { JobRequestsPage } from "./features/job-requests/job-requests-page";
 import { ImportCentrePage, PipelineOverviewPage, ScreeningOverviewPage } from "./features/pipeline/progress-pages";
 import { DashboardPage } from "./pages/dashboard-page";
 import { GuidancePage } from "./features/tracking/guidance-page";
+import { AcademyPage } from "./features/tracking/academy-page";
 import { InsightsPage } from "./features/tracking/insights-page";
 import { MyWorkPage } from "./features/tracking/my-work-page";
+import { MonthlyPipelinePage } from "./features/pulse/monthly-pipeline-page";
+import { RsaPage } from "./features/pulse/rsa-page";
 import { LoginPage } from "./pages/login-page";
 import { SheetsPage } from "./pages/sheets-page";
 import { UserAccessPage } from "./pages/user-access-page";
@@ -40,12 +43,15 @@ const queryClient = new QueryClient({
 const pages: Record<string, ReactNode> = {
   "/": <DashboardPage />,
   "/my-work": <MyWorkPage />,
+  "/monthly": <MonthlyPipelinePage />,
   "/insights": <InsightsPage />,
+  "/academy": <AcademyPage />,
   "/job-requests": <JobRequestsPage />,
   "/candidates": <CandidatesPage />,
   "/assessed-pool": <AssessedPoolPage />,
   "/screening": <ScreeningOverviewPage />,
   "/pipeline": <PipelineOverviewPage />,
+  "/rsa": <RsaPage />,
   "/imports": <ImportCentrePage />,
   "/sheets": <SheetsPage />,
   "/users": <UserAccessPage />,

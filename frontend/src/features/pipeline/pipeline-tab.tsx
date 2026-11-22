@@ -1,17 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  DIRECT_SHARE_REASON_LABELS,
+  DIRECT_SHARE_REASONS,
   INTERVIEW_OUTCOME_LABELS,
   INTERVIEW_OUTCOMES,
   PIPELINE_STATUS_LABELS,
   PIPELINE_TRANSITIONS,
   ROUND_TYPE_LABELS,
   ROUND_TYPES,
+  type DirectShareReason,
   type InterviewOutcome,
   type PipelineStatus,
   type RoundType,
 } from "@placement/shared";
 import { format } from "date-fns";
-import { ArrowDown, ArrowUp, ChevronDown, Plus, Send, Trash2, UploadCloud } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, CornerDownRight, Plus, Send, Tag, Trash2, UploadCloud } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -32,6 +35,7 @@ import { RefreshFromGoogleButton } from "../imports/refresh-button";
 import { JobTrackingPanel } from "../tracking/job-tracking-panel";
 import { ProcessDates } from "../tracking/tracking-dialogs";
 import { InterviewBadge, PipelineBadge } from "../screening/badges";
+import { PipelineOverview, productOf, segmentOf, SEGMENT_LABELS, type PipelineFilter, type Segment } from "./pipeline-overview";
 
 function useRefresh(jobRequestId: string) {
   const queryClient = useQueryClient();
@@ -267,6 +271,9 @@ function WithdrawDialog({ jobRequestId, nomination, onClose }: { jobRequestId: s
   );
 }
 
+/** Nominated without being selected at the internal final shortlist (SP): shared to the company directly. */
+const isDirectShare = (nomination: Nomination) => !nomination.application.stageOutcomes.some((outcome) => outcome.outcome === "SELECTED");
+
 export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: { jobRequestId: string; roleTitle?: string; companyName?: string }) {
   const { can } = usePermissions();
   const [nominating, setNominating] = useState(false);
@@ -275,13 +282,21 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
   const [withdrawing, setWithdrawing] = useState<Nomination | null>(null);
   const [showWithdrawn, setShowWithdrawn] = useState(false);
   const [datesTarget, setDatesTarget] = useState<Nomination | null>(null);
+  const [directTarget, setDirectTarget] = useState<Nomination[] | null>(null);
+  const [filter, setFilter] = useState<PipelineFilter>({ segment: "ALL", product: "ALL" });
   const pipeline = useQuery({ queryKey: ["pipeline", jobRequestId], queryFn: () => pipelineApi.get(jobRequestId) });
 
   if (pipeline.isPending) return <Card><LoadingRows rows={5} /></Card>;
   if (pipeline.error) return <Card><ErrorState error={pipeline.error} onRetry={() => void pipeline.refetch()} /></Card>;
   const { rounds, nominations, canEdit, eligibleToNominate } = pipeline.data;
-  const visible = nominations.filter((nomination) => showWithdrawn || nomination.status === "NOMINATED");
+  const active = nominations.filter((nomination) => nomination.status === "NOMINATED");
+  const matchesFilter = (nomination: Nomination) =>
+    (filter.segment === "ALL" || segmentOf(nomination) === filter.segment) && (filter.product === "ALL" || productOf(nomination) === filter.product);
+  const visible = nominations.filter((nomination) => (showWithdrawn || nomination.status === "NOMINATED") && matchesFilter(nomination));
+  const filterLabel = filter.product !== "ALL" ? filter.product : filter.segment !== "ALL" ? SEGMENT_LABELS[filter.segment] : null;
   const withdrawnCount = nominations.length - nominations.filter((nomination) => nomination.status === "NOMINATED").length;
+  const direct = nominations.filter((nomination) => nomination.status === "NOMINATED" && isDirectShare(nomination));
+  const untagged = direct.filter((nomination) => !nomination.directShareReason);
 
   return (
     <div className="space-y-4">
@@ -292,17 +307,48 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
       </div>
       <JobTrackingPanel jobRequestId={jobRequestId} roleTitle={roleTitle} companyName={companyName} rounds={rounds.map(({ id, name }) => ({ id, name }))} />
       <RoundsCard jobRequestId={jobRequestId} rounds={rounds} canEdit={canEdit} />
+      <PipelineOverview nominations={active} filter={filter} onFilter={setFilter} />
       <Card className="overflow-hidden">
+        {direct.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-amber-100 bg-amber-50/60 px-4 py-2.5 text-xs text-amber-900">
+            <CornerDownRight size={14} />
+            <span>
+              {direct.length} of these {direct.length === 1 ? "profile" : "profiles"} reached the company without the internal shortlist (not selected at SP)
+              {untagged.length > 0 ? <> · <strong>{untagged.length} not tagged with a reason</strong></> : " · all tagged"}.
+            </span>
+            {canEdit && (
+              <Button size="sm" variant="outline" className="ml-auto h-7 bg-white" onClick={() => setDirectTarget(untagged.length > 0 ? untagged : direct)}>
+                <Tag size={13} /> {untagged.length > 0 ? `Tag ${untagged.length} untagged` : "Change tag for all"}
+              </Button>
+            )}
+          </div>
+        )}
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-          <p className="text-sm font-semibold text-slate-800">Nominated candidates ({nominations.length - withdrawnCount})</p>
+          <p className="text-sm font-semibold text-slate-800">
+            Nominated candidates ({nominations.length - withdrawnCount})
+            {filterLabel && <span className="ml-2 text-xs font-normal text-indigo-700">showing {visible.length} · {filterLabel}</span>}
+          </p>
+          <div className="ml-auto flex flex-wrap items-center gap-3">
+          <Select value={filter.segment} onValueChange={(value) => setFilter({ segment: value as Segment | "ALL", product: "ALL" })}>
+            <SelectTrigger className="h-8 w-44 text-xs" aria-label="Filter by segment"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All students</SelectItem>
+              {(Object.keys(SEGMENT_LABELS) as Segment[]).map((segment) => (
+                <SelectItem key={segment} value={segment}>{SEGMENT_LABELS[segment]} ({active.filter((nomination) => segmentOf(nomination) === segment).length})</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {withdrawnCount > 0 && (
             <label className="flex items-center gap-2 text-xs text-slate-500">
               <Checkbox checked={showWithdrawn} onCheckedChange={(checked) => setShowWithdrawn(checked === true)} /> Show {withdrawnCount} withdrawn
             </label>
           )}
+          </div>
         </div>
         {visible.length === 0 ? (
-          <EmptyState icon={Send} title="Nobody nominated yet" description="Nominate candidates from the final shortlist, or import the company sheet." />
+          filterLabel
+            ? <EmptyState icon={Send} title={`No ${filterLabel} students here`} description="Clear the filter to see everyone." />
+            : <EmptyState icon={Send} title="Nobody nominated yet" description="Nominate candidates from the final shortlist, or import the company sheet." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -322,6 +368,16 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
                       <td className="px-4 py-2.5">
                         <Link to={`/candidates/${nomination.application.candidate.id}`} className="font-medium text-slate-800 hover:text-indigo-700">{nomination.application.candidate.fullName}</Link>
                         <p className="text-xs text-slate-400">{nomination.application.product?.name ?? ""}{nomination.source === "IMPORT" ? " · from company sheet" : ""}</p>
+                        {isDirectShare(nomination) && (
+                          <button type="button" disabled={!canEdit} onClick={() => setDirectTarget([nomination])}
+                            title={nomination.directShareNote ?? (canEdit ? "Say why this profile skipped the internal shortlist" : undefined)}
+                            className={`mt-1 inline-flex max-w-56 items-center gap-1 rounded-full border px-2 py-0.5 text-left text-[11px] disabled:cursor-default ${nomination.directShareReason
+                              ? "border-sky-200 bg-sky-50 text-sky-800"
+                              : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                            <CornerDownRight size={11} className="shrink-0" />
+                            <span className="truncate">Direct to company · {nomination.directShareReason ? DIRECT_SHARE_REASON_LABELS[nomination.directShareReason] : "reason?"}</span>
+                          </button>
+                        )}
                       </td>
                       {rounds.map((round) => {
                         const result = nomination.interviews.find((entry) => entry.roundId === round.id);
@@ -381,6 +437,7 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
       <StatusDialog jobRequestId={jobRequestId} target={statusTarget} onClose={() => setStatusTarget(null)} />
       <WithdrawDialog jobRequestId={jobRequestId} nomination={withdrawing} onClose={() => setWithdrawing(null)} />
       <StudentProcessDatesDialog jobRequestId={jobRequestId} nomination={datesTarget} onClose={() => setDatesTarget(null)} />
+      <DirectShareDialog jobRequestId={jobRequestId} targets={directTarget} untagged={untagged} onClose={() => setDirectTarget(null)} />
     </div>
   );
 }
@@ -418,6 +475,72 @@ function StudentProcessDatesDialog({ jobRequestId, nomination, onClose }: { jobR
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={save.isPending}>Cancel</Button>
           <Button onClick={() => save.mutate()} disabled={save.isPending || invalid}>Save</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Why profiles reached the company without the internal shortlist — e.g. the company never
+ * takes our shortlisting, or another team shared the profiles straight into the company sheet.
+ */
+function DirectShareDialog({ jobRequestId, targets, untagged, onClose }: { jobRequestId: string; targets: Nomination[] | null; untagged: Nomination[]; onClose: () => void }) {
+  const refresh = useRefresh(jobRequestId);
+  const [reason, setReason] = useState<DirectShareReason | "">("");
+  const [note, setNote] = useState("");
+  const [alsoUntagged, setAlsoUntagged] = useState(false);
+  const single = targets?.length === 1 ? targets[0]! : null;
+  // Other untagged direct profiles that one tag could cover too.
+  const others = single ? untagged.filter((nomination) => nomination.id !== single.id) : [];
+  useEffect(() => {
+    if (!targets) return;
+    const reasons = new Set(targets.map((nomination) => nomination.directShareReason));
+    const shared = reasons.size === 1 ? [...reasons][0] : null;
+    setReason(shared ?? "");
+    setNote(targets.length === 1 ? targets[0]!.directShareNote ?? "" : "");
+    setAlsoUntagged(false);
+  }, [targets]);
+  const ids = [...(targets ?? []), ...(alsoUntagged ? others : [])].map((nomination) => nomination.id);
+  const save = useMutation({
+    mutationFn: (clear: boolean) => pipelineApi.setDirectShare(jobRequestId, {
+      nominationIds: ids,
+      reason: clear ? null : reason || null,
+      note: clear ? null : note.trim() || null,
+    }),
+    onSuccess: async (_, clear) => { await refresh(); toast.success(clear ? "Tag removed" : ids.length === 1 ? "Tagged" : `${ids.length} profiles tagged`); onClose(); },
+  });
+  const tagged = targets?.some((nomination) => nomination.directShareReason) ?? false;
+  return (
+    <Dialog open={Boolean(targets)} onOpenChange={(open) => !open && !save.isPending && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Why didn't this go through shortlisting?</DialogTitle>
+          <DialogDescription>
+            {single ? single.application.candidate.fullName : `${targets?.length ?? 0} profiles`} reached the company without being selected in the internal process (TA → SP).
+            The internal and company sheets both stay as they are; this only records why.
+          </DialogDescription>
+        </DialogHeader>
+        <FormField id="direct-reason" label="Reason">
+          <Select value={reason} onValueChange={(value) => setReason(value as DirectShareReason)}>
+            <SelectTrigger id="direct-reason"><SelectValue placeholder="Choose a reason" /></SelectTrigger>
+            <SelectContent>{DIRECT_SHARE_REASONS.map((value) => <SelectItem key={value} value={value}>{DIRECT_SHARE_REASON_LABELS[value]}</SelectItem>)}</SelectContent>
+          </Select>
+        </FormField>
+        <FormField id="direct-note" label="Note (optional)">
+          <Textarea id="direct-note" rows={2} value={note} maxLength={1000} onChange={(event) => setNote(event.target.value)} placeholder="E.g. who shared it, or what the company asked for" />
+        </FormField>
+        {others.length > 0 && (
+          <label className="flex items-center gap-2 text-xs text-slate-600">
+            <Checkbox checked={alsoUntagged} onCheckedChange={(checked) => setAlsoUntagged(checked === true)} />
+            Also tag the {others.length} other untagged direct {others.length === 1 ? "profile" : "profiles"} in this job
+          </label>
+        )}
+        {save.error && <p role="alert" className="text-sm text-rose-600">{save.error.message}</p>}
+        <DialogFooter>
+          {tagged && <Button variant="ghost" className="mr-auto" onClick={() => save.mutate(true)} disabled={save.isPending}>Remove tag</Button>}
+          <Button variant="outline" onClick={onClose} disabled={save.isPending}>Cancel</Button>
+          <Button onClick={() => save.mutate(false)} disabled={save.isPending || !reason}>Save{ids.length > 1 ? ` for ${ids.length}` : ""}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

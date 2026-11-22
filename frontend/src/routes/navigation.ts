@@ -3,8 +3,11 @@ import {
   Activity,
   BriefcaseBusiness,
   ChartNoAxesCombined,
+  CalendarRange,
   ClipboardCheck,
+  FileSearch,
   FileSpreadsheet,
+  GraduationCap,
   GitBranch,
   LayoutDashboard,
   UploadCloud,
@@ -33,7 +36,9 @@ export const NAVIGATION: NavGroup[] = [
     items: [
       { label: "Overview", icon: LayoutDashboard, path: "/", permission: "dashboard:read" },
       { label: "My companies", icon: Activity, path: "/my-work", permission: "dashboard:read" },
+      { label: "Monthly pipeline", icon: CalendarRange, path: "/monthly", permission: "report:read" },
       { label: "Insights", icon: ChartNoAxesCombined, path: "/insights", permission: "report:read" },
+      { label: "Academy & pool", icon: GraduationCap, path: "/academy", permission: "report:read" },
     ],
   },
   {
@@ -44,6 +49,7 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Assessed pool", icon: UserRoundCheck, path: "/assessed-pool", permission: "candidate:read" },
       { label: "Internal screening", icon: ClipboardCheck, path: "/screening", permission: "job:read" },
       { label: "Company pipeline", icon: GitBranch, path: "/pipeline", permission: "job:read" },
+      { label: "RSA team", icon: FileSearch, path: "/rsa", permission: "candidate:read" },
     ],
   },
   {

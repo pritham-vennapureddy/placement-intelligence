@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildWorkbook, excelSheetName, excelSheetNames, gridChecksum } from "./google-snapshot.js";
+import { buildWorkbook, excelSheetName, excelSheetNames, gridChecksum, workbookFromGrid } from "./google-snapshot.js";
 import { readWorkbook } from "./workbook.js";
 import type { SpreadsheetGrid } from "../sheets/google-sheets.service.js";
 
@@ -54,4 +54,25 @@ test("excelSheetNames matches the worksheet names buildWorkbook writes, in order
   const names = excelSheetNames(grid.sheets);
   const workbook = await readWorkbook(await buildWorkbook(grid), "snapshot.xlsx");
   assert.deepEqual(workbook.sheets.map(({ name }) => name), names);
+});
+
+test("cells with characters an .xlsx cannot hold (e.g. U+FFFE from form responses) still read back", async () => {
+  const grid = { title: "t", sheets: [{ title: "Form Responses 1", rows: [[{ text: "Name" }, { text: "Answer" }], [{ text: "Asha" }, { text: "ok￾\u000Bfine\uD800" }]] }] };
+  const workbook = await readWorkbook(await buildWorkbook(grid), "snapshot.xlsx");
+  assert.deepEqual(workbook.read("Form Responses 1", 1).rows[0]!.cells, ["Asha", "okfine"]);
+});
+
+test("a Google Sheet is read straight from its cells, the same as through an .xlsx", async () => {
+  const grid = {
+    title: "t",
+    sheets: [
+      { title: "TA: drive/1", rows: [[{ text: " Name " }, { text: "Resume" }], [], [{ text: "Asha￾" }, { text: "", link: "https://cv.example/a.pdf" }, { text: "" }]] },
+      { title: "Empty", rows: [] },
+    ],
+  };
+  const direct = workbookFromGrid(grid);
+  const viaXlsx = await readWorkbook(await buildWorkbook(grid), "snapshot.xlsx");
+  assert.deepEqual(direct.sheets, viaXlsx.sheets);
+  for (const { name } of direct.sheets) assert.deepEqual(direct.read(name, 0), viaXlsx.read(name, 0));
+  assert.deepEqual(direct.read("TA drive 1", 1).rows[0]!.cells, ["Asha", "https://cv.example/a.pdf"]);
 });

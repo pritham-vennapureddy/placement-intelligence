@@ -1,4 +1,4 @@
-import type { CompanyProcessPhase, CompanyShareStatus, JobRequestStatus, PaginationMeta, PipelineStatus, ScreeningSkipReason, StudentSupportKind, SupportTone } from "@placement/shared";
+import type { CompanyProcessPhase, CompanyShareStatus, DirectShareReason, JobRequestStatus, PaginationMeta, PipelineStatus, ScreeningSkipReason, StudentSupportKind, SupportTone } from "@placement/shared";
 
 export interface PersonOption { id: string; fullName: string }
 
@@ -151,8 +151,12 @@ export interface InsightMetrics {
   finalShortlisted: number;
   shared: number;
   notShared: number;
+  /** With the company without coming through the internal shortlist (SP). */
+  direct: number;
   inProcess: number;
   companyRejected: number;
+  /** Where the company rejected them; UNKNOWN = rejected in the final status with no round result. */
+  companyRejectedAt: Record<CompanyRejectStage, number>;
   selected: number;
   offers: number;
   joined: number;
@@ -160,9 +164,15 @@ export interface InsightMetrics {
 
 export type InsightCategory = "ACADEMY" | "ACADEMY_INTENSIVE" | "EXTERNAL";
 
+export type InsightDateBasis = "requested" | "processEnd";
+
 export interface InsightFilters {
   from?: string | undefined;
   to?: string | undefined;
+  /** Which job date From/To use; the job request date when unset. */
+  dateBy?: InsightDateBasis | undefined;
+  /** One or more Job IDs (or parts), separated by commas, spaces or new lines. */
+  jobIds?: string | undefined;
   category?: InsightCategory | undefined;
   companyId?: string | undefined;
 }
@@ -178,10 +188,19 @@ export interface Insights {
     jobs: { jobRequestId: string; roleTitle: string; companyId: string; companyName: string; ownerName: string | null; month: string; reason: ScreeningSkipReason | null; note: string | null; finalShortlisted: number }[];
   };
   rejectionReasons: { stage: string; reason: string; count: number }[];
+  /** Company funnel: shared students round by round (CV screen, TR1, TR2…, MR, HR). */
+  companyRounds: CompanyRoundMetrics[];
+  companyRejectionReasons: { round: string; reason: string; count: number }[];
+  /** Profiles with the company that skipped the internal shortlist, by tagged reason ("UNTAGGED" = no reason yet). */
+  directByReason: { reason: DirectShareReason | "UNTAGGED"; count: number }[];
   activeJobsByPhase: { phase: CompanyProcessPhase; count: number }[];
 }
 
-export type StudentStatusFilter = "INTERNAL_REJECTED" | "FINAL_SHORTLIST" | "NOT_SHARED" | "SHARED" | "IN_PROCESS" | "COMPANY_REJECTED" | "SELECTED" | "JOINED";
+export type CompanyRejectStage = "CV" | "ASSESSMENT" | "TR1" | "TR2" | "TR3" | "MR" | "CLIENT" | "HR" | "OTHER" | "UNKNOWN";
+
+export interface CompanyRoundMetrics { label: string; appeared: number; cleared: number; rejected: number; noShow: number; scheduled: number }
+
+export type StudentStatusFilter = "INTERNAL_REJECTED" | "FINAL_SHORTLIST" | "NOT_SHARED" | "SHARED" | "DIRECT" | "IN_PROCESS" | "COMPANY_REJECTED" | "SELECTED" | "JOINED";
 
 export interface StudentInsight {
   applicationId: string;
@@ -201,6 +220,10 @@ export interface StudentInsight {
   finalShortlisted: boolean;
   shareStatus: CompanyShareStatus;
   pipelineStatus: PipelineStatus | null;
+  /** Set when the student reached the company without the internal shortlist; reason null = not tagged yet. */
+  directShare: { reason: DirectShareReason | null } | null;
+  /** The company round they were rejected in (CV screen, TR1, TR2…); null when not rejected or no round result. */
+  companyRejectedRound: string | null;
   rejectionReason: string | null;
   guidance: string | null;
   rsa: string | null;

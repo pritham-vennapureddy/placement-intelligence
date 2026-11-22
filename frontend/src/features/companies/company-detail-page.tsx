@@ -21,6 +21,7 @@ import { SupportBadge } from "../tracking/student-support";
 import { CompanyStatusCell, ProcessBadge, ProcessDates, ProcessStatusDialog } from "../tracking/tracking-dialogs";
 import { CompanyFormDialog } from "./company-form-dialog";
 import { CATEGORY_LABELS, OutcomeBadge } from "../screening/badges";
+import { mergeAcademyProducts } from "../../utils/products";
 import { PIPELINE_STATUS_LABELS, SCREENING_SKIP_REASON_LABELS, STAGE_LABELS, STAGE_OUTCOME_LABELS, STAGE_OUTCOMES, type DecisionStage, type PipelineStatus, type ScreeningSkipReason, type StageOutcome } from "@placement/shared";
 
 function Detail({ label, children }: { label: string; children: ReactNode }) {
@@ -273,6 +274,8 @@ function CompanyProcessCard({ job, companyName }: { job: AnalyticsJob; companyNa
   );
 }
 
+const PRODUCT_COUNT_KEYS = ["applicants", "resumeShortlisted", "screeningShortlisted", "assignmentShortlisted", "finalShortlisted", "inPool", "poolFinalShortlisted"] as const;
+
 function CompanyAnalytics({ companyId, canViewCandidates }: { companyId: string; canViewCandidates: boolean }) {
   const analytics = useQuery({
     queryKey: ["dashboard", "company", companyId],
@@ -280,7 +283,8 @@ function CompanyAnalytics({ companyId, canViewCandidates }: { companyId: string;
   });
   if (analytics.isPending) return <Card><LoadingRows rows={5} /></Card>;
   if (analytics.error) return <Card><ErrorState error={analytics.error} onRetry={() => void analytics.refetch()} /></Card>;
-  const { totals, products, jobs, company } = analytics.data;
+  const { totals, jobs, company } = analytics.data;
+  const products = mergeAcademyProducts(analytics.data.products, PRODUCT_COUNT_KEYS);
   const metrics = [
     ["Total applications (TA)", totals.applications],
     ["Resume shortlisted (RS)", totals.resumeShortlisted],
@@ -308,7 +312,7 @@ function CompanyAnalytics({ companyId, canViewCandidates }: { companyId: string;
           : <div className="mt-3 overflow-x-auto"><table className="w-full min-w-[560px] text-left text-xs">
             <thead className="text-slate-500"><tr><th className="py-2">Product</th><th>TA</th><th>RS</th><th>SC</th><th>AS</th><th>SP</th><th>TA in assessed pool</th><th>SP from assessed pool</th></tr></thead>
             <tbody className="border-t border-slate-100 text-slate-700">{products.map((product) => (
-              <tr key={product.id} className="border-b border-slate-100"><th className="py-2 pr-3 font-medium">{product.name} <span className="font-normal text-slate-400">· {CATEGORY_LABELS[product.category as keyof typeof CATEGORY_LABELS] ?? product.category}</span></th><td>{product.applicants}</td><td>{product.resumeShortlisted}</td><td>{product.screeningShortlisted}</td><td>{product.assignmentShortlisted}</td><td>{product.finalShortlisted}</td><td>{product.inPool}</td><td>{product.poolFinalShortlisted}</td></tr>
+              <tr key={product.id} className="border-b border-slate-100"><th className="py-2 pr-3 font-medium">{product.name}{product.name !== CATEGORY_LABELS[product.category as keyof typeof CATEGORY_LABELS] && <span className="font-normal text-slate-400"> · {CATEGORY_LABELS[product.category as keyof typeof CATEGORY_LABELS] ?? product.category}</span>}</th><td>{product.applicants}</td><td>{product.resumeShortlisted}</td><td>{product.screeningShortlisted}</td><td>{product.assignmentShortlisted}</td><td>{product.finalShortlisted}</td><td>{product.inPool}</td><td>{product.poolFinalShortlisted}</td></tr>
             ))}</tbody>
           </table></div>}
       </Card>
@@ -344,7 +348,7 @@ function CompanyAnalytics({ companyId, canViewCandidates }: { companyId: string;
             <h3 className="text-xs font-semibold text-slate-600">{batch.name} · product-stage counts</h3>
             <div className="mt-1 overflow-x-auto"><table className="w-full min-w-[560px] text-left text-xs">
               <thead className="text-slate-500"><tr><th className="py-1">Product</th><th>TA</th><th>RS</th><th>SC</th><th>AS</th><th>SP</th><th>TA in assessed pool</th><th>SP from assessed pool</th></tr></thead>
-              <tbody className="border-t border-slate-100">{batch.products.map((product) => <tr key={product.id} className="border-b border-slate-100"><th className="py-2 pr-3 font-medium">{product.name}</th><td>{product.applicants}</td><td>{product.resumeShortlisted}</td><td>{product.screeningShortlisted}</td><td>{product.assignmentShortlisted}</td><td>{product.finalShortlisted}</td><td>{product.inPool}</td><td>{product.poolFinalShortlisted}</td></tr>)}</tbody>
+              <tbody className="border-t border-slate-100">{mergeAcademyProducts(batch.products, PRODUCT_COUNT_KEYS).map((product) => <tr key={product.id} className="border-b border-slate-100"><th className="py-2 pr-3 font-medium">{product.name}</th><td>{product.applicants}</td><td>{product.resumeShortlisted}</td><td>{product.screeningShortlisted}</td><td>{product.assignmentShortlisted}</td><td>{product.finalShortlisted}</td><td>{product.inPool}</td><td>{product.poolFinalShortlisted}</td></tr>)}</tbody>
             </table></div>
           </div>)}
         </div>}

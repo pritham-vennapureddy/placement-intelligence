@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { markPoolStudentsAcademy } from "../imports/pool-category.js";
 import path from "node:path";
 import { hasPermission } from "@placement/shared";
 import { inTransaction, prisma } from "../../db.js";
@@ -380,6 +381,8 @@ export const assessedPoolService = {
           mergedDuplicateMobile,
         },
       });
+      // Students already in the dashboard who are in the pool are Academy.
+      await markPoolStudentsAcademy(transaction);
       return createdImport;
     }, { timeoutMs: 60_000 });
 

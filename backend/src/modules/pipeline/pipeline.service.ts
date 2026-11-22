@@ -7,7 +7,7 @@ import { ApiError } from "../../utils/api-error.js";
 import { definedOnly } from "../../utils/object.js";
 import { recordAudit, type AuditContext } from "../audit/audit.service.js";
 import { candidateSummarySelect } from "../screening/screening.repository.js";
-import type { CreateRoundInput, InterviewInput, NominateInput, PipelineStatusInput, ProcessDatesInput, UpdateRoundInput } from "./pipeline.validators.js";
+import type { CreateRoundInput, DirectShareInput, InterviewInput, NominateInput, PipelineStatusInput, ProcessDatesInput, UpdateRoundInput } from "./pipeline.validators.js";
 
 /** Date fields each status records. */
 const STATUS_DATES: Partial<Record<PipelineStatus, "submittedAt" | "offerReleasedAt" | "offerAcceptedAt" | "joinedAt">> = {
@@ -48,13 +48,15 @@ export const pipelineService = {
           joinedAt: true,
           processStartDate: true,
           processEndDate: true,
+          directShareReason: true,
+          directShareNote: true,
           remarks: true,
           createdAt: true,
           nominatedBy: { select: { fullName: true } },
           application: {
             select: {
               id: true,
-              product: { select: { code: true, name: true } },
+              product: { select: { code: true, name: true, category: true } },
               candidate: { select: candidateSummarySelect },
               stageOutcomes: { where: { stage: { stage: "FINAL_SHORTLIST" } }, select: { outcome: true, priority: true } },
             },
@@ -240,6 +242,27 @@ export const pipelineService = {
       });
     });
     return { ok: true };
+  },
+
+  /** Tags why profiles went to the company without the internal shortlist (one or many at once). */
+  async setDirectShare(user: AuthenticatedUser, jobRequestId: string, input: DirectShareInput, audit: AuditContext) {
+    const { job } = await loadJobForUser(user, jobRequestId, "pipeline:write");
+    const ids = [...new Set(input.nominationIds)];
+    const note = input.reason ? input.note?.trim() || null : null;
+    return inTransaction(async (transaction) => {
+      const result = await transaction.companyNomination.updateMany({
+        where: { jobRequestId: job.id, id: { in: ids } },
+        data: { directShareReason: input.reason, directShareNote: note },
+      });
+      if (result.count !== ids.length) throw new ApiError(404, "NOMINATION_NOT_FOUND", "Some of these nominations are not on this job.");
+      await recordAudit(transaction, audit, {
+        action: "DIRECT_SHARE_TAGGED",
+        entityType: "JobRequest",
+        entityId: job.id,
+        metadata: { nominations: ids.length, reason: input.reason, note },
+      });
+      return { updated: result.count };
+    });
   },
 
   async withdraw(user: AuthenticatedUser, jobRequestId: string, nominationId: string, notes: string, audit: AuditContext) {

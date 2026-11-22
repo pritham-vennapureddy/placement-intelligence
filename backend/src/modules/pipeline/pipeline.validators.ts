@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { INTERVIEW_OUTCOMES, PIPELINE_STATUSES, ROUND_TYPES } from "@placement/shared";
+import { DIRECT_SHARE_REASONS, INTERVIEW_OUTCOMES, PIPELINE_STATUSES, ROUND_TYPES } from "@placement/shared";
 
 export const jobParamsSchema = z.object({ jobRequestId: z.uuid() });
 export const roundParamsSchema = jobParamsSchema.extend({ roundId: z.uuid() });
@@ -34,6 +34,17 @@ export const processDatesSchema = z
   .object({ startDate: z.iso.date().nullable(), endDate: z.iso.date().nullable() })
   .refine(({ startDate, endDate }) => !startDate || !endDate || endDate >= startDate, { message: "The end date cannot be before the start date.", path: ["endDate"] });
 
+/**
+ * Why these profiles reached the company without the internal shortlist.
+ * One or many nominations at once (a company that never takes our shortlisting);
+ * a null reason clears the tag, and the note is optional.
+ */
+export const directShareSchema = z.object({
+  nominationIds: z.array(z.uuid()).min(1).max(500),
+  reason: z.enum(DIRECT_SHARE_REASONS).nullable(),
+  note: z.string().trim().max(1000).nullable().optional(),
+});
+
 export const withdrawSchema = z.object({ notes: z.string().trim().min(2, "Say why the nomination is withdrawn.").max(1000) });
 
 export const interviewSchema = z.object({
@@ -50,3 +61,4 @@ export type NominateInput = z.infer<typeof nominateSchema>;
 export type PipelineStatusInput = z.infer<typeof pipelineStatusSchema>;
 export type InterviewInput = z.infer<typeof interviewSchema>;
 export type ProcessDatesInput = z.infer<typeof processDatesSchema>;
+export type DirectShareInput = z.infer<typeof directShareSchema>;

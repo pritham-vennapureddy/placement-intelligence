@@ -193,6 +193,16 @@ enum ScreeningSkipReason {
   OTHER
 }
 
+// Why a profile reached the company without the internal shortlist (TA → SP).
+enum DirectShareReason {
+  COMPANY_NO_SHORTLISTING
+  SHARED_BY_OTHER_TEAM
+  COMPANY_SOURCED
+  PRE_ASSESSED
+  LATE_ADDITION
+  OTHER
+}
+
 // Where the company's hiring process stands for a job. Round phases point at one
 // of the job's configured rounds (JobRequest.processRoundId).
 enum CompanyProcessPhase {
@@ -211,6 +221,26 @@ enum CompanyProcessPhase {
 enum StudentSupportKind {
   GUIDANCE
   RSA
+}
+
+// Where a company on CRM's monthly potential list stands.
+enum PotentialCompanyStatus {
+  POTENTIAL
+  IN_DISCUSSION
+  CONFIRMED
+  PROCESS_STARTED
+  ON_HOLD
+  NO_RESPONSE
+  DROPPED
+}
+
+// How CRM spoke to the company for a remark.
+enum CrmChannel {
+  CALL
+  EMAIL
+  MEETING
+  WHATSAPP
+  OTHER
 }
 
 enum AssessedProcessType {
@@ -256,6 +286,11 @@ model User {
   supportContributions   StudentSupportContributor[]
   supportUpdates         StudentSupport[]            @relation("StudentSupportUpdater")
   supportStatusesCreated SupportStatusOption[]       @relation("SupportStatusCreator")
+  pipelineEntriesOwned   MonthlyPipelineEntry[]      @relation("PipelineEntryOwner")
+  pipelineEntriesCreated MonthlyPipelineEntry[]      @relation("PipelineEntryCreator")
+  pipelineStatusChanges  MonthlyPipelineHistory[]    @relation("PipelineHistoryAuthor")
+  crmRemarks             JobCrmRemark[]              @relation("CrmRemarkAuthor")
+  rsaReviewsUpdated      JobRsaReview[]              @relation("RsaReviewUpdater")
 }
 
 model Role {
@@ -432,6 +467,7 @@ model Company {
   updatedAt        DateTime      @updatedAt
   createdBy        User          @relation("CompanyCreator", fields: [createdById], references: [id], onDelete: Restrict)
   jobRequests      JobRequest[]
+  pipelineEntries  MonthlyPipelineEntry[]
 
   @@index([name])
   @@index([status, createdAt])
@@ -515,6 +551,9 @@ model JobRequest {
   processHistory          CompanyProcessHistory[]
   guidanceSessions        GuidanceSession[]
   studentSupport          StudentSupport[]
+  pipelineEntries         MonthlyPipelineEntry[]
+  crmRemarks              JobCrmRemark[]
+  rsaReview               JobRsaReview?
 
   @@index([companyId, status])
   @@index([psmOwnerId, status])
@@ -849,27 +888,30 @@ model StageCompletionRecord {
 // The only link between internal screening and the company pipeline. Created by
 // the PSM; internally rejected candidates cannot be nominated.
 model CompanyNomination {
-  id               String                @id @default(uuid()) @db.Uuid
-  applicationId    String                @unique @db.Uuid
-  jobRequestId     String                @db.Uuid
-  status           NominationStatus      @default(NOMINATED)
-  pipelineStatus   CompanyPipelineStatus @default(NOT_SUBMITTED)
-  source           ChangeSource          @default(MANUAL)
-  nominatedById    String                @db.Uuid
-  submittedAt      DateTime?
-  offerReleasedAt  DateTime?
-  offerAcceptedAt  DateTime?
-  joinedAt         DateTime?
+  id                String                @id @default(uuid()) @db.Uuid
+  applicationId     String                @unique @db.Uuid
+  jobRequestId      String                @db.Uuid
+  status            NominationStatus      @default(NOMINATED)
+  pipelineStatus    CompanyPipelineStatus @default(NOT_SUBMITTED)
+  source            ChangeSource          @default(MANUAL)
+  nominatedById     String                @db.Uuid
+  submittedAt       DateTime?
+  offerReleasedAt   DateTime?
+  offerAcceptedAt   DateTime?
+  joinedAt          DateTime?
   // When this student's company process started and ended, entered by hand by a PSM.
-  processStartDate DateTime?             @db.Date
-  processEndDate   DateTime?             @db.Date
-  remarks          String?
-  createdAt        DateTime              @default(now())
-  updatedAt        DateTime              @updatedAt
-  application      Application           @relation(fields: [applicationId, jobRequestId], references: [id, jobRequestId], onDelete: Restrict)
-  nominatedBy      User                  @relation("NominationCreator", fields: [nominatedById], references: [id], onDelete: Restrict)
-  interviews       CompanyInterview[]
-  stageHistory     CompanyStageHistory[]
+  processStartDate  DateTime?             @db.Date
+  processEndDate    DateTime?             @db.Date
+  // Set when the profile went to the company without the internal shortlist; the note is optional.
+  directShareReason DirectShareReason?
+  directShareNote   String?
+  remarks           String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  application       Application           @relation(fields: [applicationId, jobRequestId], references: [id, jobRequestId], onDelete: Restrict)
+  nominatedBy       User                  @relation("NominationCreator", fields: [nominatedById], references: [id], onDelete: Restrict)
+  interviews        CompanyInterview[]
+  stageHistory      CompanyStageHistory[]
 
   @@unique([id, jobRequestId])
   @@unique([applicationId, jobRequestId])
@@ -985,6 +1027,9 @@ model StudentSupport {
   doneOn            DateTime?                   @db.Date
   otherContributors String?
   notes             String?
+  // RSA team's write-up for the student and a link to the full report (Google Doc / Drive).
+  reportSummary     String?
+  reportUrl         String?
   updatedById       String?                     @db.Uuid
   createdAt         DateTime                    @default(now())
   updatedAt         DateTime                    @updatedAt
@@ -1030,6 +1075,84 @@ model StudentSupportContributor {
 
   @@id([supportId, userId])
   @@index([userId])
+}
+
+// ─────────────────────────── Company pulse ───────────────────────────
+
+// One company on CRM's potential list for a month (month = first day). A company
+// can sit on the list for months; carrying it forward makes a new entry for the
+// next month that points back at this one.
+model MonthlyPipelineEntry {
+  id                String                   @id @default(uuid()) @db.Uuid
+  month             DateTime                 @db.Date
+  companyId         String                   @db.Uuid
+  // The job drive, once one exists.
+  jobRequestId      String?                  @db.Uuid
+  roleHint          String?
+  expectedOpenings  Int?
+  expectedStartDate DateTime?                @db.Date
+  status            PotentialCompanyStatus   @default(POTENTIAL)
+  crmOwnerId        String?                  @db.Uuid
+  remarks           String?
+  carriedFromId     String?                  @unique @db.Uuid
+  createdById       String                   @db.Uuid
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  company           Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  jobRequest        JobRequest?              @relation(fields: [jobRequestId], references: [id], onDelete: SetNull)
+  crmOwner          User?                    @relation("PipelineEntryOwner", fields: [crmOwnerId], references: [id], onDelete: SetNull)
+  createdBy         User                     @relation("PipelineEntryCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  carriedFrom       MonthlyPipelineEntry?    @relation("PipelineCarry", fields: [carriedFromId], references: [id], onDelete: SetNull)
+  carriedTo         MonthlyPipelineEntry?    @relation("PipelineCarry")
+  history           MonthlyPipelineHistory[]
+
+  @@index([month, status])
+  @@index([companyId, month])
+}
+
+// Every status change of a potential-list entry, so the month shows what moved.
+model MonthlyPipelineHistory {
+  id          String                  @id @default(uuid()) @db.Uuid
+  entryId     String                  @db.Uuid
+  fromStatus  PotentialCompanyStatus?
+  toStatus    PotentialCompanyStatus
+  note        String?
+  changedById String                  @db.Uuid
+  changedAt   DateTime                @default(now())
+  entry       MonthlyPipelineEntry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  changedBy   User                    @relation("PipelineHistoryAuthor", fields: [changedById], references: [id], onDelete: Restrict)
+
+  @@index([entryId, changedAt])
+}
+
+// What the company said on one CRM interaction for a job drive.
+model JobCrmRemark {
+  id            String     @id @default(uuid()) @db.Uuid
+  jobRequestId  String     @db.Uuid
+  interactionOn DateTime   @db.Date
+  channel       CrmChannel @default(CALL)
+  remark        String
+  nextStep      String?
+  createdById   String     @db.Uuid
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  jobRequest    JobRequest @relation(fields: [jobRequestId], references: [id], onDelete: Cascade)
+  createdBy     User       @relation("CrmRemarkAuthor", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([jobRequestId, interactionOn])
+}
+
+// RSA review of a whole job drive: what went right, what went wrong, what to change.
+model JobRsaReview {
+  jobRequestId String     @id @db.Uuid
+  wentRight    String?
+  wentWrong    String?
+  actionItems  String?
+  updatedById  String?    @db.Uuid
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  jobRequest   JobRequest @relation(fields: [jobRequestId], references: [id], onDelete: Cascade)
+  updatedBy    User?      @relation("RsaReviewUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
 }
 
 // ──────────────────────────────── Imports ────────────────────────────────

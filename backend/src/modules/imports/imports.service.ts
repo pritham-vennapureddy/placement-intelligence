@@ -14,11 +14,11 @@ import type { AuthenticatedUser } from "../../middleware/authenticate.js";
 import { jobRequestScopeFilter, resolveDataScope } from "../../services/data-scope.service.js";
 import { loadJobForUser } from "../../services/job-access.service.js";
 import { ApiError } from "../../utils/api-error.js";
-import { normalizeMobile } from "../../utils/normalize.js";
+import { normalizeEmail, normalizeMobile } from "../../utils/normalize.js";
 import { buildPaginationMeta, toPrismaPage } from "../../utils/pagination.js";
 import { recordAudit, type AuditContext } from "../audit/audit.service.js";
 import { commitCompanyImport } from "./company-commit.js";
-import { overrideKey, planCompanyImport, type JobApplicant } from "./company-plan.js";
+import { overrideKey, planCompanyImport, type EligibleStudent, type JobApplicant, type OtherCandidate } from "./company-plan.js";
 import { commitInternalImport } from "./internal-commit.js";
 import { collectApplicationKeys, planInternalImport, type ExistingCandidate } from "./internal-plan.js";
 import { importsRepository } from "./imports.repository.js";
@@ -36,14 +36,13 @@ import {
   type UpdateRowInput,
   type ValuesQuery,
 } from "./imports.validators.js";
-import { detectHeaderRow, readWorkbook, restoreWorkbook, serializeWorkbook, type Workbook } from "./workbook.js";
-import { buildWorkbook, gridChecksum } from "./google-snapshot.js";
+import { detectHeaderRow, restoreWorkbook, serializeWorkbook, type Workbook } from "./workbook.js";
+import { gridChecksum, workbookFromGrid } from "./google-snapshot.js";
 import { inferGoogleMapping } from "./google-sheet-analysis.js";
 import { mappingMatchesTabs, parseBatchTabs, selectionFromTabs, tabsFromMapping } from "./batch-tabs.js";
 import { isRecruitmentTab, sheetsInMapping, suggestRecruitmentTab } from "./tab-names.js";
 import { extractSpreadsheetId, fetchSpreadsheetGrid, getGoogleServiceAccountEmail } from "../sheets/google-sheets.service.js";
 
-const MAX_BYTES = 20 * 1024 * 1024;
 const MAX_SNAPSHOT_BYTES = 80 * 1024 * 1024;
 
 async function loadBatch(user: AuthenticatedUser, batchId: string, write = false) {
@@ -145,8 +144,13 @@ function assertGoogleInternalMapping(mapping: ReturnType<typeof inferGoogleMappi
     throw new ApiError(422, "GOOGLE_SHEET_ANALYSIS_FAILED", "Could not analyze the selected internal workbook tabs.");
   }
   const application = mapping.applications.columns;
-  if (application.mobile === undefined) {
-    throw new ApiError(422, "GOOGLE_SHEET_ANALYSIS_FAILED", `Could not identify a mobile-number column in the selected applications tab “${selection.applications.sheet}”. Candidate UUID and email columns are ignored for identity matching.`);
+  // No mobile column on TA: fine when it has User IDs and another tab lists User ID + mobile (e.g. Applied Users).
+  const idsResolvable = application.candidateId !== undefined
+    && mapping.profileLookups.some((lookup) => lookup.columns.candidateId !== undefined && lookup.columns.mobile !== undefined);
+  if (application.mobile === undefined && !idsResolvable) {
+    throw new ApiError(422, "GOOGLE_SHEET_ANALYSIS_FAILED", application.candidateId !== undefined
+      ? `The applications tab “${selection.applications.sheet}” has User IDs but no mobile numbers, and no other tab lists User ID with mobile number. Add a mobile column to it, or a tab such as Applied Users with both.`
+      : `Could not identify a mobile-number column in the selected applications tab “${selection.applications.sheet}”. Email columns are ignored for identity matching.`);
   }
   if (selection.productLookupSheet && !mapping.productsLookup) {
     throw new ApiError(422, "GOOGLE_SHEET_ANALYSIS_FAILED", `Could not identify a mobile-number column and a Product column in the selected product tab “${selection.productLookupSheet}”.`);
@@ -227,6 +231,63 @@ async function validateInternal(batchId: string, job: { id: string; jobId: strin
 
 // ── Company sheet ──
 
+type LooseLookup = { sheet?: string; headerRow?: number; keyType?: string; keyColumn?: number; productColumn?: number; columns?: Record<string, number | undefined> };
+
+/**
+ * Students on the internal sheet's eligible / product tabs (the product lookup and
+ * student-detail tabs of this drive's latest internal import), keyed by mobile.
+ * Empty when the drive has no internal import with a stored snapshot.
+ */
+async function loadEligibleStudents(jobRequestId: string, recruitmentBatchId: string, mobiles: Set<string>): Promise<Map<string, EligibleStudent>> {
+  const result = new Map<string, EligibleStudent>();
+  if (mobiles.size === 0) return result;
+  const internal = (await prisma.importBatch.findMany({
+    where: { jobRequestId, recruitmentBatchId, target: "INTERNAL_SCREENING", status: { not: "CANCELLED" } },
+    orderBy: [{ committedAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
+    take: 5,
+    select: { id: true, mapping: true },
+  })).find(({ mapping }) => mapping && typeof mapping === "object");
+  if (!internal) return result;
+  const stored = await importsRepository.findSnapshot(internal.id);
+  if (!stored?.sourceSnapshot) return result;
+  const workbook = restoreWorkbook(stored.sourceSnapshot);
+  const mapping = internal.mapping as { productsLookup?: LooseLookup; profileLookups?: LooseLookup[] };
+  const products = await prisma.product.findMany({ select: { id: true, code: true, name: true } });
+  const productByKey = new Map<string, { id: string; name: string }>();
+  for (const product of products) {
+    productByKey.set(product.code.toLowerCase(), { id: product.id, name: product.name });
+    productByKey.set(product.name.toLowerCase(), { id: product.id, name: product.name });
+  }
+  const text = (value: string | null | undefined) => (value ?? "").trim() || null;
+  const lookups = [mapping.productsLookup, ...(mapping.profileLookups ?? [])].filter((lookup): lookup is LooseLookup => Boolean(lookup?.sheet));
+  for (const lookup of lookups) {
+    const mobileColumn = lookup.keyType === "mobile" ? lookup.keyColumn : lookup.columns?.mobile;
+    if (mobileColumn === undefined || !workbook.sheets.some(({ name }) => name === lookup.sheet)) continue;
+    let rows;
+    try {
+      rows = workbook.read(lookup.sheet!, lookup.headerRow ?? detectHeaderRow(workbook.top(lookup.sheet!, 10))).rows;
+    } catch {
+      continue;
+    }
+    const productColumn = lookup.productColumn ?? lookup.columns?.product;
+    for (const row of rows) {
+      const mobile = normalizeMobile(row.cells[mobileColumn]);
+      if (!mobile || !mobiles.has(mobile)) continue;
+      const productText = productColumn === undefined ? null : text(row.cells[productColumn]);
+      const earlier = result.get(mobile);
+      const entry: EligibleStudent = {
+        sheet: earlier?.sheet ?? lookup.sheet!,
+        fullName: earlier?.fullName ?? (lookup.columns?.fullName === undefined ? null : text(row.cells[lookup.columns.fullName])),
+        email: earlier?.email ?? (lookup.columns?.email === undefined ? null : normalizeEmail(row.cells[lookup.columns.email])),
+        product: earlier?.product ?? (productText ? productByKey.get(productText.toLowerCase()) ?? null : null),
+        productText: earlier?.productText ?? productText,
+      };
+      result.set(mobile, entry);
+    }
+  }
+  return result;
+}
+
 async function validateCompany(batchId: string, job: { id: string }, recruitmentBatchId: string, mapping: CompanyMapping, workbook: Workbook) {
   const read = readerFor(workbook);
   const mobiles = new Set<string>();
@@ -237,7 +298,7 @@ async function validateCompany(batchId: string, job: { id: string }, recruitment
     }
   }
 
-  const [applications, outsiders, rounds] = await Promise.all([
+  const [applications, outsiders, rounds, eligible] = await Promise.all([
     prisma.application.findMany({
       where: { jobRequestId: job.id, recruitmentBatchId },
       select: {
@@ -251,10 +312,16 @@ async function validateCompany(batchId: string, job: { id: string }, recruitment
       },
     }),
     prisma.candidate.findMany({
-      where: { mobile: { in: [...mobiles] }, applications: { none: { jobRequestId: job.id, recruitmentBatchId } } },
-      select: { fullName: true, email: true, mobile: true },
+      where: { mobile: { in: [...mobiles] }, archivedAt: null, applications: { none: { jobRequestId: job.id, recruitmentBatchId } } },
+      select: {
+        id: true, fullName: true, email: true, mobile: true,
+        // Their product: the latest application that has one, else their product list.
+        applications: { where: { productId: { not: null } }, orderBy: { appliedAt: "desc" }, take: 1, select: { product: { select: { id: true, name: true } } } },
+        products: { orderBy: { firstSeenAt: "desc" }, take: 1, select: { product: { select: { id: true, name: true } } } },
+      },
     }),
     prisma.companyInterviewRound.findMany({ where: { jobRequestId: job.id, recruitmentBatchId }, select: { name: true } }),
+    loadEligibleStudents(job.id, recruitmentBatchId, mobiles),
   ]);
 
   const applicants: JobApplicant[] = applications.map((application) => ({
@@ -274,7 +341,14 @@ async function validateCompany(batchId: string, job: { id: string }, recruitment
       : null,
   }));
 
-  const plan = planCompanyImport(mapping, read, applicants, outsiders, rounds.map(({ name }) => name));
+  const others: OtherCandidate[] = outsiders.map((candidate) => ({
+    candidateId: candidate.id,
+    fullName: candidate.fullName,
+    email: candidate.email,
+    mobile: candidate.mobile,
+    product: candidate.applications[0]?.product ?? candidate.products[0]?.product ?? null,
+  }));
+  const plan = planCompanyImport(mapping, read, applicants, others, rounds.map(({ name }) => name), eligible);
   await importsRepository.saveValidation(batchId, mapping as Prisma.InputJsonValue, plan.summary as unknown as Prisma.InputJsonValue, plan.rows, []);
 }
 
@@ -314,7 +388,7 @@ function copySettings(previous: Prisma.JsonValue): Record<string, unknown> {
   return Object.fromEntries(["acceptOtherJobIds", "overwriteManualDecisions"].filter((key) => typeof value[key] === "boolean").map((key) => [key, value[key]]));
 }
 
-/** Creates a batch from source bytes, stores only the parsed snapshot, and reuses the job's last approved mapping. */
+/** Creates a batch from the sheet read, stores only the parsed snapshot, and reuses the job's last approved mapping. */
 async function createBatch(
   user: AuthenticatedUser,
   jobRequestId: string,
@@ -322,7 +396,7 @@ async function createBatch(
   target: ImportTarget,
   audit: AuditContext,
   source: {
-    bytes: Buffer;
+    workbook: Workbook;
     fileName: string;
     sourceType: "EXCEL" | "CSV" | "GOOGLE_SHEETS";
     checksum: string;
@@ -330,7 +404,7 @@ async function createBatch(
     url?: string | null;
   },
 ) {
-  const workbook = await readWorkbook(source.bytes, source.fileName);
+  const { workbook } = source;
   if (workbook.sheets.length === 0) throw new ApiError(400, "EMPTY_FILE", "The file has no sheets with data.");
   const sourceSnapshot = serializeWorkbook(workbook);
   const snapshotSize = Buffer.byteLength(JSON.stringify(sourceSnapshot));
@@ -395,10 +469,9 @@ async function linkedSheetUrl(jobRequestId: string, recruitmentBatchId: string, 
 async function createGoogleBatch(user: AuthenticatedUser, jobRequestId: string, recruitmentBatchId: string, target: ImportTarget, spreadsheetId: string, url: string | null, audit: AuditContext) {
   const grid = await fetchSpreadsheetGrid(spreadsheetId);
   if (grid.sheets.every((sheet) => sheet.rows.length === 0)) throw new ApiError(400, "EMPTY_FILE", "The spreadsheet has no data.");
-  const bytes = await buildWorkbook(grid);
-  if (bytes.length > MAX_BYTES * 2) throw new ApiError(413, "FILE_TOO_LARGE", "The spreadsheet is too large to import in one go.");
+  // Read straight from the cell values; the snapshot size check in createBatch caps very large sheets.
   return createBatch(user, jobRequestId, recruitmentBatchId, target, audit, {
-    bytes,
+    workbook: workbookFromGrid(grid),
     fileName: `${grid.title.replace(/[\\/:*?"<>|]/g, " ").trim().slice(0, 200) || "Google Sheet"}.xlsx`,
     sourceType: "GOOGLE_SHEETS",
     checksum: gridChecksum(grid),
@@ -617,6 +690,23 @@ export const importsService = {
     // loadJobForUser already selected these IDs; avoid another database trip on approval.
     const jobSkills = batch.target === "COMPANY_PIPELINE" ? job.skills.map(({ skillId }) => skillId) : [];
     const counts = await inTransaction(async (transaction) => {
+      // Approvals run one at a time (several PSMs may approve at once): they share
+      // students, so they must not interleave. Released when this transaction ends.
+      await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('import-approve'))`;
+      const [current] = await transaction.$queryRaw<{ status: string; updatedAt: Date }[]>`
+        SELECT status::text AS status, "updatedAt" FROM "ImportBatch" WHERE id = ${batch.id}::uuid FOR UPDATE`;
+      if (current?.status === "COMMITTED") throw new ApiError(409, "IMPORT_COMMITTED", "This import was just approved by someone else.");
+      if (current?.status !== "VALIDATED") throw new ApiError(409, "IMPORT_NOT_VALIDATED", "Check the file before approving it.");
+      // Another import for this drive saved after this one was checked: its review is out of date.
+      const newer = await transaction.importBatch.findFirst({
+        where: { id: { not: batch.id }, jobRequestId: job.id, recruitmentBatchId: batch.recruitmentBatchId, status: "COMMITTED", committedAt: { gt: current.updatedAt } },
+        orderBy: { committedAt: "desc" },
+        select: { batchCode: true, committedAt: true, importedBy: { select: { fullName: true } } },
+      });
+      if (newer) {
+        throw new ApiError(409, "IMPORT_STALE",
+          `${newer.importedBy.fullName} saved another import for this drive (${newer.batchCode}) after this one was checked. Click Check again to review against the latest data, then approve.`);
+      }
       const result = batch.target === "INTERNAL_SCREENING"
         ? await commitInternalImport(transaction, {
           batchId: batch.id,
@@ -627,6 +717,7 @@ export const importsService = {
           rows,
         })
         : await commitCompanyImport(transaction, {
+          batchId: batch.id,
           jobRequestId: job.id,
           recruitmentBatchId: batch.recruitmentBatchId,
           userId: user.id,

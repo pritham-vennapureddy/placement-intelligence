@@ -1,6 +1,8 @@
 import { parse as parseCsv } from "csv-parse/sync";
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 import { columnLetter } from "@placement/shared";
+import { logger } from "../../config/logger.js";
 import { ApiError } from "../../utils/api-error.js";
 
 export interface SheetInfo {
@@ -69,12 +71,64 @@ function cellText(value: ExcelJS.CellValue): { text: string; link?: string } {
   return { text: String(value) };
 }
 
+/** Parts the reader does not need and that commonly break it: charts, pivots, images, comments, external links. */
+const EXTRA_PARTS = /^xl\/(drawings|charts|pivotTables|pivotCache|externalLinks|media|tables|comments\d*\.xml|threadedComments|persons|slicers|slicerCaches|timelines|timelineCaches|ctrlProps|activeX|embeddings)/i;
+
+const EXTRA_RELATION = /Type="[^"]*\/(drawing|chart|pivotTable|pivotCacheDefinition|externalLink|image|table|comments|threadedComment|person|slicer|slicerCache|timeline|timelineCache|ctrlProp|control|oleObject|package|vmlDrawing)"/i;
+
+/** A copy of the workbook with only sheets, shared strings and styles: the cell data the import reads. */
+export async function stripExtras(buffer: Buffer): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(buffer);
+  for (const name of Object.keys(zip.files)) {
+    if (EXTRA_PARTS.test(name)) zip.remove(name);
+  }
+  for (const name of Object.keys(zip.files).filter((file) => /^xl\/(worksheets\/_rels\/.+|_rels\/workbook\.xml)\.rels$/i.test(file))) {
+    const xml = await zip.file(name)!.async("string");
+    // By relationship type: hyperlinks (e.g. resume URLs) must stay.
+    zip.file(name, xml.replace(/<Relationship\b[^>]*\/>/gi, (rel) => (EXTRA_RELATION.test(rel) ? "" : rel)));
+  }
+  for (const name of Object.keys(zip.files).filter((file) => /^xl\/worksheets\/sheet[^/]*\.xml$/i.test(file) || /^xl\/workbook\.xml$/i.test(file))) {
+    const xml = await zip.file(name)!.async("string");
+    zip.file(name, xml
+      // Paired elements first (their content may hold self-closing tags), then self-closing ones.
+      .replace(/<(drawing|legacyDrawing|legacyDrawingHF|picture|tableParts|controls|oleObjects|extLst|pivotCaches|externalReferences|slicerCaches)\b[^>]*[^/]>[\s\S]*?<\/\1>/g, "")
+      .replace(/<(drawing|legacyDrawing|legacyDrawingHF|picture|tableParts|controls|oleObjects|extLst|pivotCaches|externalReferences|slicerCaches)\b[^>]*\/>/g, ""));
+  }
+  return zip.generateAsync({ type: "nodebuffer" });
+}
+
+const UNREADABLE = "This file could not be read as an Excel workbook (.xlsx).";
+
 async function readXlsx(buffer: Buffer): Promise<Workbook> {
-  const workbook = new ExcelJS.Workbook();
+  const magic = buffer.subarray(0, 4).toString("hex");
+  if (magic === "d0cf11e0") {
+    throw new ApiError(400, "UNSUPPORTED_XLS",
+      "This is an old Excel file (.xls) or a password-protected workbook. Open it in Excel, remove any password, use File → Save As → Excel Workbook (.xlsx), and upload that. Or import it from Google Sheets.");
+  }
+  if (magic !== "504b0304") {
+    const head = buffer.subarray(0, 2048);
+    const isText = !head.includes(0);
+    if (isText && /^\s*</.test(head.toString("utf8").replace(/^﻿/, ""))) {
+      throw new ApiError(400, "UNREADABLE_FILE", `${UNREADABLE} It is a web page saved with an .xlsx name. Download it again as Microsoft Excel (.xlsx), or import it from Google Sheets.`);
+    }
+    // A CSV saved with an .xlsx name: read it as CSV.
+    if (isText) return readCsv(buffer);
+    throw new ApiError(400, "UNREADABLE_FILE", `${UNREADABLE} It is not a spreadsheet file. Download it again as Microsoft Excel (.xlsx) or CSV.`);
+  }
+
+  let workbook = new ExcelJS.Workbook();
   try {
     await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
-  } catch {
-    throw new ApiError(400, "UNREADABLE_FILE", "This file could not be read as an Excel workbook (.xlsx).");
+  } catch (error) {
+    logger.warn({ err: error }, "Excel workbook failed to load; retrying without charts, pivots and images");
+    try {
+      workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load((await stripExtras(buffer)) as unknown as ArrayBuffer);
+    } catch (retryError) {
+      logger.error({ err: retryError }, "Excel workbook could not be read");
+      throw new ApiError(400, "UNREADABLE_FILE",
+        `${UNREADABLE} It may be damaged or use features the reader does not support. Open it in Excel or Google Sheets and save a fresh copy as .xlsx, or import it straight from Google Sheets.`);
+    }
   }
   const byName = new Map(workbook.worksheets.map((sheet) => [sheet.name, sheet]));
   const rowsOf = (name: string) => {

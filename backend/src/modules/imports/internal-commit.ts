@@ -1,10 +1,12 @@
 // Writes an approved internal-sheet import. Bulk statements keep the number of
 // database round trips small: each one is costly against a distant database.
+import { markPoolStudentsAcademy } from "./pool-category.js";
 import { DECISION_STAGES, type DecisionStage } from "@placement/shared";
 import { ensureInternalProcess } from "../screening/screening.repository.js";
 import type { Db } from "../../db.js";
 import type { ApplicationRowData, StageRowData } from "./internal-plan.js";
 import type { InternalMapping } from "./imports.validators.js";
+import { studentsAddedMeanwhile } from "./student-reuse.js";
 
 export interface CommitCounts {
   candidatesCreated: number;
@@ -31,8 +33,10 @@ export async function commitInternalImport(
   const stageRows = input.rows.map((row) => row.normalizedData).filter((data): data is StageRowData => (data as { kind?: string }).kind === "stage");
   const now = new Date();
 
-  // 1. New candidates.
-  const toCreate = appRows.filter((row) => !row.candidateId);
+  // 1. New candidates. One added since this import was checked (e.g. by another PSM's
+  //    import a moment earlier) is reused by mobile, not created twice.
+  const reused = await studentsAddedMeanwhile(db, appRows.filter((row) => !row.candidateId).map((row) => ({ candidateCode: row.candidateCode, mobile: row.candidate.mobile })));
+  const toCreate = appRows.filter((row) => !row.candidateId && !reused.has(row.candidateCode.toLowerCase()));
   if (toCreate.length > 0) {
     await db.candidate.createMany({
       data: toCreate.map((row) => ({
@@ -46,7 +50,7 @@ export async function commitInternalImport(
   }
   const codes = [...new Set([...appRows.map((row) => row.candidateCode), ...stageRows.flatMap((row) => (row.candidateCode ? [row.candidateCode] : []))])];
   const candidates = await db.candidate.findMany({ where: { candidateCode: { in: codes } }, select: { id: true, candidateCode: true } });
-  const idByCode = new Map(candidates.map((candidate) => [candidate.candidateCode.toLowerCase(), candidate.id]));
+  const idByCode = new Map([...reused, ...candidates.map((candidate) => [candidate.candidateCode.toLowerCase(), candidate.id] as const)]);
   if (codes.length > 0) {
     await db.$executeRaw`
       UPDATE "CandidatePoolMembership" AS membership
@@ -294,6 +298,8 @@ export async function commitInternalImport(
     }
   }
 
+  // Assessed-pool students are Academy even when their product is missing or external.
+  await markPoolStudentsAcademy(db);
   return {
     candidatesCreated: toCreate.length,
     candidatesUpdated: fills.length,

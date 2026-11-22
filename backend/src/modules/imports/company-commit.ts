@@ -1,10 +1,14 @@
 // Writes an approved company-sheet import: rounds, nominations, round outcomes,
 // pipeline status changes (with history) and the job's tech stack on profiles.
+import { markPoolStudentsAcademy } from "./pool-category.js";
 import type { PipelineStatus } from "@placement/shared";
 import type { Db } from "../../db.js";
+import { studentsAddedMeanwhile } from "./student-reuse.js";
 import type { CompanyRowData } from "./company-plan.js";
 
 export interface CompanyCommitCounts {
+  studentsCreated: number;
+  addedToJob: number;
   roundsCreated: number;
   nominationsCreated: number;
   outcomesWritten: number;
@@ -15,6 +19,7 @@ export interface CompanyCommitCounts {
 export async function commitCompanyImport(
   db: Db,
   input: {
+    batchId?: string;
     jobRequestId: string;
     recruitmentBatchId: string;
     userId: string;
@@ -23,8 +28,67 @@ export async function commitCompanyImport(
     addJobSkills: boolean;
   },
 ): Promise<CompanyCommitCounts> {
-  const rows = input.rows.map((row) => row.normalizedData as CompanyRowData).filter((row) => row.kind === "company" && row.applicationId);
+  const staged = input.rows.map((row) => row.normalizedData as CompanyRowData).filter((row) => row.kind === "company");
   const now = new Date();
+
+  // 0. Students shared to the company without being in the internal sheet: create the
+  //    ones the dashboard does not have, then add them all to this drive.
+  const outsiders = staged.filter((row) => !row.applicationId && row.addToJob);
+  const planned = outsiders.flatMap((row) => (row.addToJob!.newCandidate ? [row.addToJob!.newCandidate] : []));
+  // Added to the dashboard since this import was checked (e.g. by another PSM's import): reuse by mobile.
+  const reused = await studentsAddedMeanwhile(db, planned);
+  const newCandidates = planned.filter(({ candidateCode }) => !reused.has(candidateCode.toLowerCase()));
+  let studentsCreated = 0;
+  if (newCandidates.length > 0) {
+    studentsCreated = (await db.candidate.createMany({ data: newCandidates, skipDuplicates: true })).count;
+  }
+  const createdIds = newCandidates.length > 0
+    ? new Map((await db.candidate.findMany({ where: { candidateCode: { in: newCandidates.map(({ candidateCode }) => candidateCode) } }, select: { id: true, candidateCode: true } }))
+      .map((candidate) => [candidate.candidateCode, candidate.id]))
+    : new Map<string, string>();
+  const additions = outsiders.flatMap((row) => {
+    const code = row.addToJob!.newCandidate?.candidateCode;
+    const candidateId = row.addToJob!.candidateId ?? (code ? reused.get(code.toLowerCase()) ?? createdIds.get(code) : undefined);
+    return candidateId ? [{ row, candidateId }] : [];
+  });
+  let addedToJob = 0;
+  if (additions.length > 0) {
+    addedToJob = (await db.application.createMany({
+      data: additions.map(({ row, candidateId }) => ({
+        candidateId,
+        jobRequestId: input.jobRequestId,
+        recruitmentBatchId: input.recruitmentBatchId,
+        productId: row.addToJob!.productId,
+        appliedAt: now,
+        source: "IMPORT" as const,
+        ...(input.batchId ? { importBatchId: input.batchId } : {}),
+      })),
+      skipDuplicates: true,
+    })).count;
+    const productLinks = additions.flatMap(({ row, candidateId }) => (row.addToJob!.productId ? [{ candidateId, productId: row.addToJob!.productId }] : []));
+    if (productLinks.length > 0) await db.candidateProduct.createMany({ data: productLinks, skipDuplicates: true });
+    const applications = await db.application.findMany({
+      where: { jobRequestId: input.jobRequestId, recruitmentBatchId: input.recruitmentBatchId, candidateId: { in: additions.map(({ candidateId }) => candidateId) } },
+      select: { id: true, candidateId: true },
+    });
+    const applicationByCandidate = new Map(applications.map((application) => [application.candidateId, application.id]));
+    for (const { row, candidateId } of additions) {
+      row.candidateId = candidateId;
+      row.applicationId = applicationByCandidate.get(candidateId) ?? null;
+    }
+  }
+  /** Application → why it was not in the internal process, saved as the direct-share note. */
+  const addedApplications = new Map(additions.flatMap(({ row }) => {
+    if (!row.applicationId) return [];
+    const { from, fromSheet } = row.addToJob!;
+    const note = from === "NOT_IN_APPLICANTS"
+      ? "Not in applicants: not in TA, the eligible list or the dashboard; added from the company sheet."
+      : from === "ELIGIBLE"
+        ? `Not in TA; on the internal sheet's ${fromSheet ?? "eligible"} tab. Added from the company sheet.`
+        : "Not in the internal sheet; added from the company sheet.";
+    return [[row.applicationId, note] as const];
+  }));
+  const rows = staged.filter((row) => row.applicationId);
 
   // 1. Rounds, in the order they first appear; existing ones are kept as they are.
   const existing = await db.companyInterviewRound.findMany({ where: { jobRequestId: input.jobRequestId, recruitmentBatchId: input.recruitmentBatchId }, select: { id: true, name: true, sequence: true } });
@@ -55,6 +119,8 @@ export async function commitCompanyImport(
         source: "IMPORT" as const,
         submittedAt: now,
         remarks: "Nominated while importing the company sheet.",
+        // Never in the internal process: the PSM tags why on the pipeline tab.
+        ...(addedApplications.has(applicationId) ? { directShareNote: addedApplications.get(applicationId)! } : {}),
       })),
       skipDuplicates: true,
     });
@@ -65,28 +131,45 @@ export async function commitCompanyImport(
   });
   const nominationByApplication = new Map(nominations.map((nomination) => [nomination.applicationId, nomination]));
 
-  // 3. Round outcomes.
+  // 3. Round outcomes. The optional reason column goes with the round the student was
+  //    rejected in (as the rejection reason), else with their last round (as feedback).
   const outcomes = rows.flatMap((row) => {
     const nomination = nominationByApplication.get(row.applicationId!);
-    return nomination
-      ? row.rounds.flatMap((round) => {
-        const roundId = allRoundIds.get(round.roundName);
-        return roundId ? [{ nominationId: nomination.id, roundId, outcome: round.outcome }] : [];
-      })
-      : [];
+    if (!nomination) return [];
+    const reasonRound = row.reason
+      ? [...row.rounds].reverse().find((round) => round.outcome === "REJECTED") ?? row.rounds[row.rounds.length - 1]
+      : undefined;
+    return row.rounds.flatMap((round) => {
+      const roundId = allRoundIds.get(round.roundName);
+      if (!roundId) return [];
+      const reason = round === reasonRound ? row.reason ?? null : null;
+      return [{
+        nominationId: nomination.id,
+        roundId,
+        outcome: round.outcome,
+        rejectionReason: reason && round.outcome === "REJECTED" ? reason : null,
+        feedback: reason && round.outcome !== "REJECTED" ? reason : null,
+      }];
+    });
   });
   let outcomesWritten = 0;
   if (outcomes.length > 0) {
     outcomesWritten = await db.$executeRaw`
-      INSERT INTO "CompanyInterview" ("id", "nominationId", "roundId", "jobRequestId", "outcome", "source", "createdAt", "updatedAt")
-      SELECT gen_random_uuid(), t.nomination_id, t.round_id, ${input.jobRequestId}::uuid, t.outcome::"InterviewOutcome", 'IMPORT'::"ChangeSource", NOW(), NOW()
+      INSERT INTO "CompanyInterview" ("id", "nominationId", "roundId", "jobRequestId", "outcome", "rejectionReason", "feedback", "source", "createdAt", "updatedAt")
+      SELECT gen_random_uuid(), t.nomination_id, t.round_id, ${input.jobRequestId}::uuid, t.outcome::"InterviewOutcome", t.rejection_reason, t.feedback, 'IMPORT'::"ChangeSource", NOW(), NOW()
       FROM UNNEST(
         ${outcomes.map((row) => row.nominationId)}::uuid[],
         ${outcomes.map((row) => row.roundId)}::uuid[],
-        ${outcomes.map((row) => row.outcome)}::text[]
-      ) AS t(nomination_id, round_id, outcome)
+        ${outcomes.map((row) => row.outcome)}::text[],
+        ${outcomes.map((row) => row.rejectionReason)}::text[],
+        ${outcomes.map((row) => row.feedback)}::text[]
+      ) AS t(nomination_id, round_id, outcome, rejection_reason, feedback)
       ON CONFLICT ("nominationId", "roundId") DO UPDATE SET
-        "outcome" = EXCLUDED."outcome", "source" = 'IMPORT', "updatedAt" = NOW()`;
+        "outcome" = EXCLUDED."outcome",
+        -- A blank reason cell keeps whatever was recorded before.
+        "rejectionReason" = COALESCE(EXCLUDED."rejectionReason", "CompanyInterview"."rejectionReason"),
+        "feedback" = COALESCE(EXCLUDED."feedback", "CompanyInterview"."feedback"),
+        "source" = 'IMPORT', "updatedAt" = NOW()`;
   }
 
   // 4. Pipeline status, with a history row for every change.
@@ -129,5 +212,7 @@ export async function commitCompanyImport(
     skillsAdded = result.count;
   }
 
-  return { roundsCreated, nominationsCreated: toNominate.length, outcomesWritten, statusChanges: changes.length, skillsAdded };
+  // Students found by mobile in the assessed pool are Academy, whatever the sheets said.
+  if (additions.length > 0) await markPoolStudentsAcademy(db);
+  return { studentsCreated, addedToJob, roundsCreated, nominationsCreated: toNominate.length, outcomesWritten, statusChanges: changes.length, skillsAdded };
 }

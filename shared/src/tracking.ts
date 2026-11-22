@@ -19,6 +19,26 @@ export const SCREENING_SKIP_REASON_LABELS: Record<ScreeningSkipReason, string> =
   OTHER: "Other",
 };
 
+/** Why a profile reached the company without coming through the internal shortlist (TA → SP). */
+export const DIRECT_SHARE_REASONS = [
+  "COMPANY_NO_SHORTLISTING",
+  "SHARED_BY_OTHER_TEAM",
+  "COMPANY_SOURCED",
+  "PRE_ASSESSED",
+  "LATE_ADDITION",
+  "OTHER",
+] as const;
+export type DirectShareReason = (typeof DIRECT_SHARE_REASONS)[number];
+
+export const DIRECT_SHARE_REASON_LABELS: Record<DirectShareReason, string> = {
+  COMPANY_NO_SHORTLISTING: "Company does not take our shortlisting",
+  SHARED_BY_OTHER_TEAM: "Shared directly by another team",
+  COMPANY_SOURCED: "Company picked the profile itself",
+  PRE_ASSESSED: "Already assessed (pool / earlier drive)",
+  LATE_ADDITION: "Added after shortlisting closed",
+  OTHER: "Other",
+};
+
 export const COMPANY_PROCESS_PHASES = [
   "YET_TO_SHARE_CVS",
   "CVS_SHARED",

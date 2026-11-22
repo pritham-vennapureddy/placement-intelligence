@@ -1,9 +1,10 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { companyProcessLabel, SCREENING_SKIP_REASON_LABELS, STAGE_LABELS, type InternalStage } from "@placement/shared";
+import { companyProcessLabel, DIRECT_SHARE_REASON_LABELS, PIPELINE_STATUS_LABELS, SCREENING_SKIP_REASON_LABELS, STAGE_LABELS, type InternalStage } from "@placement/shared";
 import { format } from "date-fns";
-import { Award, GraduationCap, ListChecks, Send, UserMinus, Users, UserX, X } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Award, Download, GraduationCap, ListChecks, Send, UserMinus, Users, UserX, X } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { toast } from "sonner";
 import { KpiCard } from "../../components/kpi-card";
 import { PageHeader } from "../../components/page-header";
 import { EmptyState, ErrorState, LoadingRows } from "../../components/states";
@@ -15,7 +16,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/ta
 import { useDebouncedValue } from "../../hooks/use-debounced-value";
 import { usePermissions } from "../../hooks/use-permissions";
 import { insightsApi } from "../../services/tracking-api";
-import type { InsightCategory, InsightFilters, InsightMetrics, StudentStatusFilter } from "../../types/tracking";
+import type { CompanyRejectStage, InsightCategory, InsightDateBasis, InsightFilters, InsightMetrics, Insights, StudentInsight, StudentStatusFilter } from "../../types/tracking";
+import { downloadCsv, type CsvValue } from "../../utils/csv";
 import { BigPicture } from "./big-picture";
 import { CompanyStatusCell } from "./tracking-dialogs";
 
@@ -26,6 +28,7 @@ const STATUS_LABELS: Record<StudentStatusFilter, string> = {
   FINAL_SHORTLIST: "Final shortlist (SP)",
   NOT_SHARED: "Not shared with company",
   SHARED: "Shared with company",
+  DIRECT: "Direct to company (skipped shortlisting)",
   IN_PROCESS: "In company process",
   COMPANY_REJECTED: "Rejected by company",
   SELECTED: "Selected by company",
@@ -34,8 +37,22 @@ const STATUS_LABELS: Record<StudentStatusFilter, string> = {
 const monthLabel = (month: string) => format(new Date(`${month}-01T00:00:00`), "MMM yyyy");
 const pct = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : "—");
 
-type Column = { key: string; label: string; title?: string; render: (row: InsightMetrics) => ReactNode };
+/** `when`: shown only if some row has a value (company rounds differ by job). */
+type Column = { key: string; label: string; title?: string; render: (row: InsightMetrics) => ReactNode; when?: (row: InsightMetrics) => number };
 const n = (value: number, tone?: string) => <span className={value === 0 ? "text-slate-300" : tone}>{value}</span>;
+const COMPANY_REJECT_STAGES: [CompanyRejectStage, string, string][] = [
+  ["CV", "Co. CV rej.", "Rejected at the company's CV / resume screen"],
+  ["ASSESSMENT", "Co. assess. rej.", "Rejected at the company's assessment / assignment"],
+  ["TR1", "TR1 rej.", "Rejected in the first technical round"],
+  ["TR2", "TR2 rej.", "Rejected in the second technical round"],
+  ["TR3", "TR3+ rej.", "Rejected in the third or a later technical round"],
+  ["MR", "MR rej.", "Rejected in the managerial round"],
+  ["CLIENT", "Client rej.", "Rejected in the client round"],
+  ["HR", "HR rej.", "Rejected in the HR round"],
+  ["OTHER", "Other round rej.", "Rejected in a round of type Other"],
+  ["UNKNOWN", "Co. rej. (no round)", "Rejected in the company's final status, with no round result recorded"],
+];
+
 const METRIC_COLUMNS: Column[] = [
   { key: "ta", label: "TA", title: "Applications", render: (row) => n(row.applications) },
   { key: "academy", label: "Academy TA", render: (row) => n(row.academyApplications) },
@@ -47,30 +64,138 @@ const METRIC_COLUMNS: Column[] = [
   { key: "ns", label: "SC no-show", render: (row) => n(row.screeningNoShow) },
   { key: "sp", label: "SP", render: (row) => n(row.finalShortlisted) },
   { key: "shared", label: "Shared", render: (row) => n(row.shared) },
+  { key: "direct", label: "Direct", title: "With the company without the internal shortlist (SP)", render: (row) => n(row.direct, "text-sky-700") },
   { key: "notshared", label: "Not shared", render: (row) => n(row.notShared, "font-semibold text-amber-700") },
   { key: "inproc", label: "In process", render: (row) => n(row.inProcess) },
-  { key: "corej", label: "Co. rejected", render: (row) => n(row.companyRejected) },
+  { key: "corej", label: "Co. rejected", title: "Rejected by the company, all rounds", render: (row) => <>{n(row.companyRejected, "text-rose-600")} <span className="text-[11px] text-slate-400">{pct(row.companyRejected, row.shared)}</span></> },
+  ...COMPANY_REJECT_STAGES.map(([stage, label, title]): Column => ({
+    key: `corej-${stage}`, label, title, when: (row) => row.companyRejectedAt[stage], render: (row) => n(row.companyRejectedAt[stage], "text-rose-500"),
+  })),
   { key: "sel", label: "Selects", render: (row) => n(row.selected, "font-semibold text-emerald-700") },
   { key: "off", label: "Offers", render: (row) => n(row.offers) },
   { key: "join", label: "Joined", render: (row) => n(row.joined, "font-semibold text-emerald-700") },
 ];
 
+const METRIC_CSV: [string, (row: InsightMetrics) => CsvValue][] = [
+  ["TA", (row) => row.applications],
+  ["Academy TA", (row) => row.academyApplications],
+  ["Internally rejected", (row) => row.internalRejected],
+  ["Internally rejected %", (row) => pct(row.internalRejected, row.applications)],
+  ["Academy internally rejected", (row) => row.academyInternalRejected],
+  ["Academy internally rejected %", (row) => pct(row.academyInternalRejected, row.academyApplications)],
+  ["RS rejected", (row) => row.rejectedAt.RS],
+  ["SC rejected", (row) => row.rejectedAt.SC],
+  ["AS rejected", (row) => row.rejectedAt.AS],
+  ["SC no-show", (row) => row.screeningNoShow],
+  ["SP", (row) => row.finalShortlisted],
+  ["Shared", (row) => row.shared],
+  ["Not shared", (row) => row.notShared],
+  ["Direct to company (no SP)", (row) => row.direct],
+  ["In process", (row) => row.inProcess],
+  ["Company rejected", (row) => row.companyRejected],
+  ...COMPANY_REJECT_STAGES.map(([stage, label]): [string, (row: InsightMetrics) => CsvValue] => [label, (row) => row.companyRejectedAt[stage]]),
+  ["Selects", (row) => row.selected],
+  ["Offers", (row) => row.offers],
+  ["Joined", (row) => row.joined],
+];
+
+function metricsCsv<T extends InsightMetrics>(filename: string, lead: [string, (row: T) => CsvValue][], rows: T[]) {
+  downloadCsv(filename, [...lead.map(([label]) => label), ...METRIC_CSV.map(([label]) => label)],
+    rows.map((row) => [...lead.map(([, value]) => value(row)), ...METRIC_CSV.map(([, value]) => value(row))]));
+}
+
+const csvName = (part: string, filters: InsightFilters) => ["insights", part, filters.from, filters.to].filter(Boolean).join("-");
+const directLabel = (reason: string | null) => (!reason || reason === "UNTAGGED" ? "Reason not tagged" : DIRECT_SHARE_REASON_LABELS[reason as keyof typeof DIRECT_SHARE_REASON_LABELS] ?? reason);
+const skipReasonLabel = (reason: string | null) => (!reason || reason === "UNSPECIFIED" ? "No reason chosen" : SCREENING_SKIP_REASON_LABELS[reason as keyof typeof SCREENING_SKIP_REASON_LABELS] ?? reason);
+
+/** Downloads the open Insights tab as CSV (Students has its own button, since it pages through the server). */
+function downloadInsightsTab(tab: string, data: Insights, filters: InsightFilters) {
+  if (tab === "companies") metricsCsv(csvName("by-company", filters), [["Company", (row) => row.companyName], ["Jobs", (row) => row.jobs]], data.byCompany);
+  else if (tab === "months") metricsCsv(csvName("by-month", filters), [["Month", (row) => row.month], ["Companies", (row) => row.companies], ["Jobs", (row) => row.jobs]], data.byMonth);
+  else if (tab === "categories") metricsCsv(csvName("by-category", filters), [["Category", (row) => CATEGORY_LABELS[row.category] ?? row.category]], data.byCategory);
+  else if (tab === "skipped") {
+    downloadCsv(csvName("screening-skipped", filters), ["Company", "Role", "Month", "PSM", "Reason", "Note", "SP"],
+      data.screeningSkipped.jobs.map((row) => [row.companyName, row.roleTitle, row.month, row.ownerName, skipReasonLabel(row.reason), row.note, row.finalShortlisted]));
+  } else if (tab === "reasons") {
+    downloadCsv(csvName("funnels-and-reasons", filters), ["Type", "Stage / round / status", "Reason", "Count", "Appeared", "Cleared", "Rejected", "No-show", "Scheduled"], [
+      ...data.companyRounds.map((row): CsvValue[] => ["Company funnel", row.label, "", "", row.appeared, row.cleared, row.rejected, row.noShow, row.scheduled]),
+      ...data.rejectionReasons.map((row): CsvValue[] => ["Internal rejection reason", STAGE_LABELS[row.stage as InternalStage]?.code ?? row.stage, row.reason, row.count]),
+      ...data.companyRejectionReasons.map((row): CsvValue[] => ["Company rejection reason", row.round, row.reason, row.count]),
+      ...data.directByReason.map((row): CsvValue[] => ["Direct to company (skipped shortlisting)", "", directLabel(row.reason), row.count]),
+      ...data.activeJobsByPhase.map((row): CsvValue[] => ["Active jobs by company status", companyProcessLabel(row.phase), "", row.count]),
+    ]);
+  }
+}
+
+const internalResult = (row: StudentInsight) => (row.rejectedAt ? `Rejected at ${row.rejectedAt}` : row.finalShortlisted ? "SP" : row.screeningNoShow ? "SC no-show" : "");
+const companyResult = (row: StudentInsight) => row.shareStatus === "NOT_SHARED" ? "Not shared with company"
+  : row.shareStatus === "SHARED" ? (!row.pipelineStatus || row.pipelineStatus === "NOT_SUBMITTED" ? "Shared · sheet pending"
+    : `${PIPELINE_STATUS_LABELS[row.pipelineStatus]}${row.companyRejectedRound ? ` at ${row.companyRejectedRound}` : ""}`) : "";
+
+/** Company funnel: how shared students fared in each company round, next to the internal one. */
+function CompanyFunnel({ rounds, shared, selected }: { rounds: Insights["companyRounds"]; shared: number; selected: number }) {
+  return (
+    <Card className="overflow-hidden">
+      <div className="border-b border-slate-100 px-4 py-3">
+        <p className="text-sm font-semibold text-slate-800">Company funnel</p>
+        <p className="text-xs text-slate-500">Shared with company → each company round → selected. Rounds are grouped across jobs (TR1, TR2… by order within a drive).</p>
+      </div>
+      {rounds.length === 0 ? <p className="px-4 py-4 text-xs text-slate-400">No company round results recorded for these filters yet.</p> : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50/60 text-xs text-slate-500">
+              <tr>
+                <th className="px-4 py-2 text-left">Step</th>
+                <th className="px-3 py-2 text-right">Appeared</th><th className="px-3 py-2 text-right">Cleared</th><th className="px-3 py-2 text-right">Rejected</th>
+                <th className="px-3 py-2 text-right">No-show</th><th className="px-3 py-2 text-right">Scheduled</th><th className="px-4 py-2 text-right">Clear rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t border-slate-100 bg-slate-50/40">
+                <td className="px-4 py-2 font-medium text-slate-700">Shared with company</td>
+                <td className="px-3 py-2 text-right font-semibold" colSpan={6}>{shared}</td>
+              </tr>
+              {rounds.map((row) => (
+                <tr key={row.label} className="border-t border-slate-100">
+                  <td className="px-4 py-2 font-medium text-slate-700">{row.label}</td>
+                  <td className="px-3 py-2 text-right">{n(row.appeared)}</td>
+                  <td className="px-3 py-2 text-right">{n(row.cleared, "text-emerald-700")}</td>
+                  <td className="px-3 py-2 text-right">{n(row.rejected, "text-rose-600")}</td>
+                  <td className="px-3 py-2 text-right">{n(row.noShow, "text-violet-700")}</td>
+                  <td className="px-3 py-2 text-right">{n(row.scheduled, "text-slate-500")}</td>
+                  <td className="px-4 py-2 text-right text-slate-600">{pct(row.cleared, row.appeared)}</td>
+                </tr>
+              ))}
+              <tr className="border-t border-slate-100 bg-emerald-50/40">
+                <td className="px-4 py-2 font-medium text-slate-700">Selected by company</td>
+                <td className="px-3 py-2 text-right font-semibold text-emerald-700" colSpan={5}>{selected}</td>
+                <td className="px-4 py-2 text-right text-slate-600">{pct(selected, shared)} of shared</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function MetricsTable<T extends InsightMetrics>({ rows, lead, rowKey }: { rows: T[]; lead: { label: string; render: (row: T) => ReactNode }[]; rowKey: (row: T) => string }) {
   if (rows.length === 0) return <EmptyState title="No data for these filters" />;
+  const columns = METRIC_COLUMNS.filter((column) => !column.when || rows.some((row) => column.when!(row) > 0));
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-slate-50/60 text-left text-xs text-slate-500">
           <tr>
             {lead.map((column) => <th key={column.label} className="whitespace-nowrap px-4 py-2">{column.label}</th>)}
-            {METRIC_COLUMNS.map((column) => <th key={column.key} title={column.title} className="whitespace-nowrap px-3 py-2 text-right">{column.label}</th>)}
+            {columns.map((column) => <th key={column.key} title={column.title} className="whitespace-nowrap px-3 py-2 text-right">{column.label}</th>)}
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={rowKey(row)} className="border-t border-slate-100">
               {lead.map((column) => <td key={column.label} className="whitespace-nowrap px-4 py-2">{column.render(row)}</td>)}
-              {METRIC_COLUMNS.map((column) => <td key={column.key} className="whitespace-nowrap px-3 py-2 text-right">{column.render(row)}</td>)}
+              {columns.map((column) => <td key={column.key} className="whitespace-nowrap px-3 py-2 text-right">{column.render(row)}</td>)}
             </tr>
           ))}
         </tbody>
@@ -84,6 +209,26 @@ function StudentsTable({ filters, companyName, onClearCompany }: { filters: Insi
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const q = useDebouncedValue(search.trim(), 300);
+  const [downloading, setDownloading] = useState(false);
+  const download = async () => {
+    setDownloading(true);
+    try {
+      const items: StudentInsight[] = [];
+      for (let next = 1, pages = 1; next <= pages; next += 1) {
+        const result = await insightsApi.students({ ...filters, status, q: q || undefined, page: next, pageSize: 100 });
+        items.push(...result.items);
+        pages = result.meta.totalPages;
+      }
+      downloadCsv(csvName(status ? `students-${status.toLowerCase()}` : "students", filters),
+        ["Student", "Mobile", "Candidate code", "Category", "Product", "Company", "Role", "Month", "Internal", "Rejection reason", "Direct to company", "With company", "Guidance", "RSA"],
+        items.map((row) => [row.fullName, row.mobile, row.candidateCode, CATEGORY_LABELS[row.category] ?? row.category, row.category === "ACADEMY" ? "" : row.productName,
+          row.companyName, row.roleTitle, row.month, internalResult(row), row.rejectionReason, row.directShare ? directLabel(row.directShare.reason) : "", companyResult(row), row.guidance, row.rsa]));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not download the students.");
+    } finally {
+      setDownloading(false);
+    }
+  };
   const students = useQuery({
     queryKey: ["insights", "students", filters, status, q, page],
     queryFn: () => insightsApi.students({ ...filters, status, q: q || undefined, page }),
@@ -102,6 +247,7 @@ function StudentsTable({ filters, companyName, onClearCompany }: { filters: Insi
         <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Name or mobile" className="h-9 w-56" />
         {companyName && <Button size="sm" variant="outline" onClick={onClearCompany}>{companyName} <X size={13} /></Button>}
         {students.data && <span className="ml-auto text-xs text-slate-500">{students.data.meta.total} applications</span>}
+        <Button size="sm" variant="outline" disabled={downloading || !students.data?.meta.total} onClick={() => void download()}><Download size={13} /> {downloading ? "Preparing…" : "Download CSV"}</Button>
       </div>
       {students.isPending ? <LoadingRows rows={6} /> : students.error ? <ErrorState error={students.error} /> : students.data.items.length === 0 ? (
         <EmptyState icon={Users} title="No students match" />
@@ -118,15 +264,23 @@ function StudentsTable({ filters, companyName, onClearCompany }: { filters: Insi
                     <Link to={`/candidates/${row.candidateId}`} className="font-medium text-slate-800 hover:text-indigo-700">{row.fullName}</Link>
                     <p className="text-xs text-slate-400">{row.mobile ?? row.candidateCode}</p>
                   </td>
-                  <td className="px-3 py-2 text-xs text-slate-600">{CATEGORY_LABELS[row.category] ?? row.category}{row.productName && <p className="text-slate-400">{row.productName}</p>}</td>
+                  <td className="px-3 py-2 text-xs text-slate-600">{CATEGORY_LABELS[row.category] ?? row.category}{row.productName && row.category !== "ACADEMY" && <p className="text-slate-400">{row.productName}</p>}</td>
                   <td className="px-3 py-2 text-xs"><Link to={`/companies/${row.companyId}`} className="font-medium text-slate-700 hover:text-indigo-700">{row.companyName}</Link><p className="text-slate-500">{row.roleTitle}</p></td>
                   <td className="whitespace-nowrap px-3 py-2 text-xs text-slate-500">{monthLabel(row.month)}</td>
                   <td className="px-3 py-2 text-xs">
                     {row.rejectedAt ? <span className="text-rose-600">Rejected at {row.rejectedAt}{row.rejectionReason && <span className="block text-slate-500">{row.rejectionReason}</span>}</span>
                       : row.finalShortlisted ? <span className="text-emerald-700">SP</span>
-                        : row.screeningNoShow ? <span className="text-violet-700">SC no-show</span> : <span className="text-slate-300">—</span>}
+                        : row.screeningNoShow ? <span className="text-violet-700">SC no-show</span> : !row.directShare && <span className="text-slate-300">—</span>}
+                    {row.directShare && (
+                      <span className={`block ${row.directShare.reason ? "text-sky-700" : "text-amber-700"}`} title="Reached the company without the internal shortlist">
+                        Direct to company<span className="block text-slate-500">{directLabel(row.directShare.reason)}</span>
+                      </span>
+                    )}
                   </td>
-                  <td className="px-3 py-2"><CompanyStatusCell shareStatus={row.shareStatus} pipelineStatus={row.pipelineStatus} /></td>
+                  <td className="px-3 py-2">
+                    <CompanyStatusCell shareStatus={row.shareStatus} pipelineStatus={row.pipelineStatus} />
+                    {row.companyRejectedRound && <p className="mt-0.5 text-[11px] text-rose-600">at {row.companyRejectedRound}</p>}
+                  </td>
                   <td className="px-3 py-2 text-xs text-slate-500">{row.guidance ?? "—"}</td>
                   <td className="px-4 py-2 text-xs text-slate-500">{row.rsa ?? "—"}</td>
                 </tr>
@@ -153,16 +307,31 @@ export function InsightsPage() {
   const [tab, setTab] = useState("companies");
   const overview = useQuery({ queryKey: ["insights", "overview", filters], queryFn: () => insightsApi.overview(filters), placeholderData: keepPreviousData });
   const set = (patch: Partial<InsightFilters>) => setFilters((current) => ({ ...current, ...patch }));
+  const [jobIdsText, setJobIdsText] = useState("");
+  const jobIds = useDebouncedValue(jobIdsText.trim(), 400);
+  useEffect(() => { setFilters((current) => ({ ...current, jobIds: jobIds || undefined })); }, [jobIds]);
+  const jobIdCount = jobIdsText.split(/[\s,;]+/).filter(Boolean).length;
 
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Stakeholder view"
         title="Placement insights"
-        description="Internal screening and company outcomes by company, month and student. A drive counts in the month its job was requested."
+        description={filters.dateBy === "processEnd"
+          ? "Internal screening and company outcomes by company, month and student. Showing jobs whose company process has ended; a drive counts in the month it ended."
+          : "Internal screening and company outcomes by company, month and student. A drive counts in the month its job was requested."}
       />
 
       <Card className="flex flex-wrap items-end gap-3 p-4">
+        <label className="grid gap-1 text-xs text-slate-500">Date
+          <Select value={filters.dateBy ?? "requested"} onValueChange={(value) => set({ dateBy: value === "requested" ? undefined : value as InsightDateBasis })}>
+            <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="requested">Job requested</SelectItem>
+              <SelectItem value="processEnd">Process ended</SelectItem>
+            </SelectContent>
+          </Select>
+        </label>
         <label className="grid gap-1 text-xs text-slate-500">From<Input type="month" value={filters.from ?? ""} onChange={(event) => set({ from: event.target.value || undefined })} className="h-9 w-40" /></label>
         <label className="grid gap-1 text-xs text-slate-500">To<Input type="month" value={filters.to ?? ""} onChange={(event) => set({ to: event.target.value || undefined })} className="h-9 w-40" /></label>
         <label className="grid gap-1 text-xs text-slate-500">Category
@@ -176,8 +345,12 @@ export function InsightsPage() {
             </SelectContent>
           </Select>
         </label>
+        <label className="grid min-w-64 flex-1 gap-1 text-xs text-slate-500">
+          <span>Job IDs {jobIdCount > 1 && <span className="text-slate-400">· {jobIdCount} IDs</span>}</span>
+          <Input value={jobIdsText} onChange={(event) => setJobIdsText(event.target.value)} placeholder="One or more Job IDs, separated by commas or spaces" className="h-9 font-mono text-xs" />
+        </label>
         {companyName && <Button size="sm" variant="outline" onClick={() => { set({ companyId: undefined }); setCompanyName(null); }}>{companyName} <X size={13} /></Button>}
-        {Object.values(filters).some(Boolean) && <Button size="sm" variant="ghost" onClick={() => { setFilters({}); setCompanyName(null); }}>Reset</Button>}
+        {(Object.values(filters).some(Boolean) || jobIdsText) && <Button size="sm" variant="ghost" onClick={() => { setFilters({}); setJobIdsText(""); setCompanyName(null); }}>Reset</Button>}
       </Card>
 
       <BigPicture from={filters.from} to={filters.to} />
@@ -196,19 +369,24 @@ export function InsightsPage() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <KpiCard label="Rejected at RS / SC / AS" value={`${t.rejectedAt.RS} / ${t.rejectedAt.SC} / ${t.rejectedAt.AS}`} hint={`${t.screeningNoShow} SC no-shows`} icon={UserMinus} tone="slate" />
               <KpiCard label="Not shared after SP" value={t.notShared} hint="Shortlisted, but the job is still at “Yet to share CVs” or the imported company sheet does not list them" icon={UserX} tone="amber" />
-              <KpiCard label="Shared with company" value={t.shared} hint={`${t.inProcess} in process · ${t.companyRejected} rejected`} icon={Send} tone="sky" />
+              <KpiCard label="Shared with company" value={t.shared} hint={`${t.inProcess} in process · ${t.companyRejected} rejected · ${t.direct} direct (no SP)`} icon={Send} tone="sky" />
               <KpiCard label="Drives with screening skipped" value={data.screeningSkipped.total} hint={data.screeningSkipped.byReason[0] ? `Most often: ${data.screeningSkipped.byReason[0].reason === "UNSPECIFIED" ? "no reason chosen" : SCREENING_SKIP_REASON_LABELS[data.screeningSkipped.byReason[0].reason]}` : "Every drive was screened"} icon={GraduationCap} tone="slate" />
             </div>
 
             <Tabs value={tab} onValueChange={setTab}>
+              <div className="flex flex-wrap items-start gap-2">
               <TabsList className="max-w-full flex-wrap justify-start group-data-[orientation=horizontal]/tabs:h-auto">
                 <TabsTrigger value="companies">By company</TabsTrigger>
                 <TabsTrigger value="months">By month</TabsTrigger>
                 <TabsTrigger value="categories">By category</TabsTrigger>
                 {can("candidate:read") && <TabsTrigger value="students">Students</TabsTrigger>}
                 <TabsTrigger value="skipped">Screening skipped ({data.screeningSkipped.total})</TabsTrigger>
-                <TabsTrigger value="reasons">Rejection reasons</TabsTrigger>
+                <TabsTrigger value="reasons">Funnels &amp; reasons</TabsTrigger>
               </TabsList>
+              {tab !== "students" && (
+                <Button size="sm" variant="outline" className="ml-auto" onClick={() => downloadInsightsTab(tab, data, filters)}><Download size={13} /> Download CSV</Button>
+              )}
+              </div>
               <TabsContent value="companies">
                 <Card className="overflow-hidden">
                   <MetricsTable rows={data.byCompany} rowKey={(row) => row.companyId} lead={[
@@ -270,7 +448,8 @@ export function InsightsPage() {
                   )}
                 </Card>
               </TabsContent>
-              <TabsContent value="reasons">
+              <TabsContent value="reasons" className="space-y-4">
+                <CompanyFunnel rounds={data.companyRounds} shared={t.shared} selected={t.selected} />
                 <div className="grid gap-4 lg:grid-cols-2">
                   <Card className="overflow-hidden">
                     <div className="border-b border-slate-100 px-4 py-3"><p className="text-sm font-semibold text-slate-800">Top internal rejection reasons</p></div>
@@ -280,6 +459,34 @@ export function InsightsPage() {
                           <li key={`${row.stage}-${row.reason}`} className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
                             <span><span className="mr-2 text-xs font-bold text-indigo-600">{STAGE_LABELS[row.stage as InternalStage]?.code ?? row.stage}</span>{row.reason}</span>
                             <span className="text-slate-600">{row.count}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </Card>
+                  <Card className="overflow-hidden">
+                    <div className="border-b border-slate-100 px-4 py-3"><p className="text-sm font-semibold text-slate-800">Top company rejection reasons</p></div>
+                    {data.companyRejectionReasons.length === 0 ? <p className="px-4 py-4 text-xs text-slate-400">No company rejection reasons recorded yet. Add them in a round result, or map the optional reason column when importing the company sheet.</p> : (
+                      <ul className="divide-y divide-slate-100">
+                        {data.companyRejectionReasons.map((row) => (
+                          <li key={`${row.round}-${row.reason}`} className="flex items-center justify-between gap-3 px-4 py-2 text-sm">
+                            <span><span className="mr-2 text-xs font-bold text-sky-700">{row.round}</span>{row.reason}</span>
+                            <span className="text-slate-600">{row.count}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </Card>
+                  <Card className="overflow-hidden">
+                    <div className="border-b border-slate-100 px-4 py-3">
+                      <p className="text-sm font-semibold text-slate-800">Direct to company · why shortlisting was skipped</p>
+                      <p className="text-xs text-slate-500">Profiles with the company that were not selected at SP, e.g. shared straight into the company sheet.</p>
+                    </div>
+                    {data.directByReason.length === 0 ? <p className="px-4 py-4 text-xs text-slate-400">Every profile with the company came through the internal shortlist.</p> : (
+                      <ul className="divide-y divide-slate-100">
+                        {data.directByReason.map((row) => (
+                          <li key={row.reason} className="flex items-center justify-between px-4 py-2 text-sm">
+                            <span className={row.reason === "UNTAGGED" ? "text-amber-700" : undefined}>{directLabel(row.reason)}</span><span className="text-slate-600">{row.count}</span>
                           </li>
                         ))}
                       </ul>

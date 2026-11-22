@@ -1,4 +1,4 @@
-import type { DecisionStage, InternalStage, InterviewOutcome, PaginationMeta, PipelineStatus, RoundType, ScreeningSkipReason, StageOutcome, StageStatus } from "@placement/shared";
+import type { DecisionStage, DirectShareReason, InternalStage, InterviewOutcome, PaginationMeta, PipelineStatus, RoundType, ScreeningSkipReason, StageOutcome, StageStatus } from "@placement/shared";
 import type {
   CandidateDetail,
   CandidateListItem,
@@ -115,6 +115,9 @@ export const pipelineApi = {
   },
   async setProcessDates(jobRequestId: string, nominationId: string, input: { startDate: string | null; endDate: string | null }) {
     await request(`/job-requests/${jobRequestId}/pipeline/nominations/${nominationId}/process-dates`, json("PUT", input));
+  },
+  async setDirectShare(jobRequestId: string, input: { nominationIds: string[]; reason: DirectShareReason | null; note: string | null }) {
+    await request(`/job-requests/${jobRequestId}/pipeline/direct-share`, json("PUT", input));
   },
   async withdraw(jobRequestId: string, nominationId: string, notes: string) {
     await request(`/job-requests/${jobRequestId}/pipeline/nominations/${nominationId}/withdraw`, json("POST", { notes }));

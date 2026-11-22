@@ -468,6 +468,8 @@ function mappingForCompany(sheets: SheetAnalysis[], selection?: GoogleCompanySel
       }
       return { column, roundName, roundType };
     });
+    const reasonColumn = tab.headers.findIndex((header, column) =>
+      !identity.includes(column) && !roundColumns.includes(column) && /reason|remark|feedback|comment/i.test(header));
     if (finalStatusColumn !== undefined) {
       for (const row of tab.rows.filter(({ rowNumber }) => rowNumber > tab.headerRow)) {
         const value = row.cells[finalStatusColumn]?.trim();
@@ -486,6 +488,7 @@ function mappingForCompany(sheets: SheetAnalysis[], selection?: GoogleCompanySel
       },
       rounds,
       ...(finalStatusColumn !== undefined ? { finalStatusColumn } : {}),
+      ...(reasonColumn >= 0 ? { reasonColumn } : {}),
       guessed: false,
     };
   });

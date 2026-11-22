@@ -261,33 +261,30 @@ export function JobRequestFormPage() {
       </Section>
 
       <Card className="p-5">
-        <h2 className="text-sm font-semibold text-slate-800">Eligible products</h2>
-        <p className="mt-0.5 text-xs text-slate-400">Products whose candidates can apply. Leave all unticked if any product can apply.</p>
+        <h2 className="text-sm font-semibold text-slate-800">Eligible categories</h2>
+        <p className="mt-0.5 text-xs text-slate-400">Categories whose candidates can apply. Ticking a category includes all of its plans. Leave all unticked if anyone can apply.</p>
         <Controller
           control={form.control}
           name="eligibleProductIds"
           render={({ field }) => (
-            <div className="mt-4 grid gap-5 sm:grid-cols-3">
-              {productsByCategory.map(({ label, items }) => (
-                <fieldset key={label}>
-                  <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</legend>
-                  <div className="space-y-2">
-                    {items.map((product) => {
-                      const checked = field.value.includes(product.id);
-                      return (
-                        <label key={product.id} className="flex items-center gap-2 text-sm text-slate-700">
-                          <Checkbox
-                            checked={checked}
-                            onCheckedChange={(next) =>
-                              field.onChange(next ? [...field.value, product.id] : field.value.filter((id) => id !== product.id))}
-                          />
-                          {product.name}
-                        </label>
-                      );
-                    })}
-                  </div>
-                </fieldset>
-              ))}
+            <div className="mt-4 flex flex-wrap gap-6">
+              {productsByCategory.filter(({ items }) => items.length > 0).map(({ label, items }) => {
+                const ids = items.map((product) => product.id);
+                const ticked = ids.filter((id) => field.value.includes(id)).length;
+                return (
+                  <label key={label} className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                    <Checkbox
+                      // A job saved earlier with only some plans of a category shows as partly ticked.
+                      checked={ticked === ids.length ? true : ticked > 0 ? "indeterminate" : false}
+                      onCheckedChange={(next) => {
+                        const others = field.value.filter((id) => !ids.includes(id));
+                        field.onChange(next === true ? [...others, ...ids] : others);
+                      }}
+                    />
+                    {label}
+                  </label>
+                );
+              })}
             </div>
           )}
         />

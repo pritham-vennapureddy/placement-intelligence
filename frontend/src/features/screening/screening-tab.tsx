@@ -306,8 +306,9 @@ function CategoryRows({ group, cell }: {
   group: { label: string; products: ScreeningProcess["stageAnalytics"]["byProduct"]; totals: Record<AnalyticsStage, number> };
   cell: StageCell;
 }) {
-  // A category with one product of the same name (e.g. External) needs no sub-row.
-  const single = group.products.length === 1 && group.products[0]!.name === group.label;
+  // Academy plans (Smart, Genius, Edge…) are reported as one Academy row; a category
+  // with one product of the same name (e.g. External) needs no sub-row either.
+  const single = group.label === CATEGORY_LABELS.ACADEMY || (group.products.length === 1 && group.products[0]!.name === group.label);
   return (
     <>
       <tr className="bg-slate-50/70 font-semibold text-slate-800">

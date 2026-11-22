@@ -1,5 +1,6 @@
 import type {
   DecisionStage,
+  DirectShareReason,
   InternalStage,
   InterviewOutcome,
   PaginationMeta,
@@ -108,6 +109,11 @@ export interface CompanySummary {
   matched: number;
   unmatched: number;
   newNominations: number;
+  /** Not in the internal sheet: added to the drive from the company sheet (new students included). Missing on older checks. */
+  addedToJob?: number;
+  newStudents?: number;
+  fromEligible?: number;
+  notInApplicants?: number;
   statusChanges: number;
   rounds: { name: string; roundType: RoundType; exists: boolean }[];
   byStatus: Partial<Record<PipelineStatus, number>>;
@@ -180,12 +186,15 @@ export interface Nomination {
   /** This student's company process start / end dates, entered by hand. */
   processStartDate: string | null;
   processEndDate: string | null;
+  /** Why the profile went to the company without the internal shortlist; the note is optional. */
+  directShareReason: DirectShareReason | null;
+  directShareNote: string | null;
   remarks: string | null;
   createdAt: string;
   nominatedBy: { fullName: string };
   application: {
     id: string;
-    product: { code: string; name: string } | null;
+    product: { code: string; name: string; category?: "ACADEMY" | "ACADEMY_INTENSIVE" | "EXTERNAL" } | null;
     candidate: CandidateSummary;
     stageOutcomes: { outcome: StageOutcome; priority: Priority | null }[];
   };
