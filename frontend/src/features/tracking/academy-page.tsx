@@ -1,8 +1,8 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { companyProcessLabel, INTERVIEW_OUTCOME_LABELS, PIPELINE_STATUS_LABELS } from "@placement/shared";
+import { companyProcessLabel } from "@placement/shared";
 import { format, subMonths } from "date-fns";
-import { Award, ChevronDown, ChevronRight, ClipboardCheck, Download, GraduationCap, Info, SearchX, UserRoundCheck, Users, UserX } from "lucide-react";
-import { Fragment, useMemo, useState, type ReactNode } from "react";
+import { Award, ClipboardCheck, Download, GraduationCap, Info, SearchX, UserRoundCheck, Users, UserX } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { KpiCard } from "../../components/kpi-card";
 import { PageHeader } from "../../components/page-header";
@@ -12,15 +12,15 @@ import { Card } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
-import { useDebouncedValue } from "../../hooks/use-debounced-value";
 import { usePermissions } from "../../hooks/use-permissions";
 import { academyInsightsApi } from "../../services/tracking-api";
-import type { AcademyCandidate, AcademyCandidateView, AcademyCategory, AcademyCompanyStage, AcademyComparison, AcademyFilters, AcademyInsights, AcademyMetrics, AcademySegment, StageResult } from "../../types/academy";
+import type { AcademyCategory, AcademyComparison, AcademyFilters, AcademyInsights, AcademyMetrics, AcademySegment } from "../../types/academy";
 import type { InsightDateBasis } from "../../types/tracking";
 import { downloadCsv, type CsvValue } from "../../utils/csv";
+import { StudentsPanel } from "./academy-students";
+import { CompanyReasonsPanel } from "./company-reasons-panel";
 
 const BAR = "#2a78d6";
-const PAGE_SIZE = 50;
 
 const CATEGORY_OPTIONS: Record<AcademyCategory, string> = { ACADEMY: "Academy", ACADEMY_INTENSIVE: "Academy Intensive", ALL_ACADEMY: "Academy + Intensive" };
 const SEGMENT_OPTIONS: Record<AcademySegment, string> = {
@@ -41,23 +41,14 @@ const COMPARISON_LABELS: Record<AcademyComparison, string> = {
   BUCKET_C: "Bucket C",
 };
 const FUNNEL_COLUMNS: AcademyComparison[] = ["ACADEMY", "ASSESSED_POOL", "NOT_IN_POOL", "BUCKET_A"];
-const VIEW_LABELS: Record<AcademyCandidateView, string> = {
-  POOL_APPLIED: "Assessed pool · applied",
-  APPLIED: "Everyone · applied",
-  POOL_ZERO_APPLICATIONS: "Assessed pool · 0 applications",
-  POOL_ZERO_OPPORTUNITY: "Assessed pool · applied, 0 opportunities",
-  POOL: "Assessed pool · everyone",
-  ZERO_APPLICATIONS: "Everyone · 0 applications",
-  ALL: "Everyone",
-};
 
 /** `rejected` / `noShow`: shown under the step, so each internal stage reads "passed · rejected". */
 const FUNNEL_STEPS: { key: string; label: string; hint: string; value: (row: AcademyMetrics) => number; rejected?: (row: AcademyMetrics) => number; noShow?: (row: AcademyMetrics) => number }[] = [
-  { key: "ta", label: "Applied (TA)", hint: "Applications in the period", value: (row) => row.applications },
-  { key: "rs", label: "Resume shortlist (RS)", hint: "Cleared the internal resume shortlist", value: (row) => row.resumeShortlisted, rejected: (row) => row.rejectedAt.RS },
-  { key: "sc", label: "Screening cleared (SC)", hint: "Cleared internal screening", value: (row) => row.screeningCleared, rejected: (row) => row.rejectedAt.SC, noShow: (row) => row.screeningNoShow },
-  { key: "as", label: "Assessment / assignment (AS)", hint: "Cleared the internal assignment", value: (row) => row.assignmentCleared, rejected: (row) => row.rejectedAt.AS },
-  { key: "sp", label: "Final shortlist (SP)", hint: "Final internal shortlist", value: (row) => row.finalShortlisted },
+  { key: "ta", label: "Applied", hint: "Applications in the period", value: (row) => row.applications },
+  { key: "rs", label: "Passed resume shortlist", hint: "Our team shortlisted the resume", value: (row) => row.resumeShortlisted, rejected: (row) => row.rejectedAt.RS },
+  { key: "sc", label: "Passed screening", hint: "Cleared our screening call / test", value: (row) => row.screeningCleared, rejected: (row) => row.rejectedAt.SC, noShow: (row) => row.screeningNoShow },
+  { key: "as", label: "Passed assignment", hint: "Cleared our assignment", value: (row) => row.assignmentCleared, rejected: (row) => row.rejectedAt.AS },
+  { key: "sp", label: "Final shortlist", hint: "Picked to send to the company", value: (row) => row.finalShortlisted },
   { key: "shared", label: "Shared with company", hint: "Profile sent to the company", value: (row) => row.shared },
   { key: "iv", label: "Interviewed", hint: "Attended at least one company round", value: (row) => row.interviewed },
   { key: "sel", label: "Selected", hint: "Selected, offered or joined", value: (row) => row.selected },
@@ -107,7 +98,7 @@ function Bar({ value, max }: { value: number; max: number }) {
 
 type ConversionRow = AcademyMetrics & { lead: ReactNode; key: string };
 
-const CONVERSION_HEADER = ["TA", "SP", "SP % of TA", "Shared", "Interviewed", "Selected", "Selected % of TA", "Selected % of interviewed", "Int. rejected", "Int. rejected %"];
+const CONVERSION_HEADER = ["Applied", "Final shortlist", "Final shortlist % of applied", "Shared", "Interviewed", "Selected", "Selected % of applied", "Selected % of interviewed", "Rejected internally", "Rejected internally %"];
 const conversionCsv = (row: AcademyMetrics): CsvValue[] => [
   row.applications, row.finalShortlisted, pct(row.finalShortlisted, row.applications), row.shared, row.interviewed, row.selected,
   pct(row.selected, row.applications), pct(row.selected, row.interviewed), row.internalRejected, pct(row.internalRejected, row.applications),
@@ -121,14 +112,14 @@ function ConversionTable({ rows, leadHeader }: { rows: ConversionRow[]; leadHead
         <thead className="bg-slate-50/60 text-left text-xs text-slate-500">
           <tr>
             {leadHeader.map((label) => <th key={label} className="whitespace-nowrap px-4 py-2">{label}</th>)}
-            <th className="px-3 py-2 text-right">TA</th>
-            <th className="px-3 py-2 text-right" title="Internally rejected at RS, SC or AS">Int. rejected</th>
-            <th className="px-3 py-2 text-right">SP</th>
+            <th className="px-3 py-2 text-right">Applied</th>
+            <th className="px-3 py-2 text-right" title="Rejected at resume shortlist, screening or assignment">Rejected internally</th>
+            <th className="px-3 py-2 text-right">Final shortlist</th>
             <th className="px-3 py-2 text-right">Shared</th>
             <th className="px-3 py-2 text-right">Interviewed</th>
             <th className="px-3 py-2 text-right">Selected</th>
-            <th className="px-3 py-2 text-right" title="Selected ÷ applications">Conversion</th>
-            <th className="px-3 py-2 text-right" title="Selected ÷ interviewed">Interview → select</th>
+            <th className="px-3 py-2 text-right" title="Selected ÷ applications">Selected % of applied</th>
+            <th className="px-3 py-2 text-right" title="Selected ÷ interviewed">Selected % of interviewed</th>
           </tr>
         </thead>
         <tbody className="tabular-nums">
@@ -157,7 +148,7 @@ function FunnelTab({ data, filters }: { data: AcademyInsights; filters: AcademyF
   const bySegment = Object.fromEntries(data.segments.map((row) => [row.segment, row])) as unknown as Record<AcademyComparison, AcademyMetrics>;
   const academy = bySegment.ACADEMY;
   const download = () => downloadCsv(csvName("funnel", filters),
-    ["Step", ...FUNNEL_COLUMNS.flatMap((segment) => [COMPARISON_LABELS[segment], `${COMPARISON_LABELS[segment]} step %`, `${COMPARISON_LABELS[segment]} % of TA`])],
+    ["Step", ...FUNNEL_COLUMNS.flatMap((segment) => [COMPARISON_LABELS[segment], `${COMPARISON_LABELS[segment]} step %`, `${COMPARISON_LABELS[segment]} % of applied`])],
     [
       ...FUNNEL_STEPS.map((step, index) => [step.label, ...FUNNEL_COLUMNS.flatMap((segment) => {
         const row = bySegment[segment];
@@ -182,8 +173,8 @@ function FunnelTab({ data, filters }: { data: AcademyInsights; filters: AcademyF
   return (
     <div className="space-y-4">
       <Section
-        title="Interview funnel · split by assessed-pool tag"
-        description="Each step counts applications. The small figure is conversion from the step above. If a drive skipped a step (for example no screening), everyone who reached a later step counts as passing it."
+        title="Step by step: how many got through"
+        description="Each step counts applications (one student in 3 drives counts 3 times). The grey % is how many of the step above made it. If a drive skipped a step, everyone who reached a later step counts as passing it."
         action={<CsvButton onClick={download} />}
       >
         <div className="overflow-x-auto">
@@ -211,7 +202,7 @@ function FunnelTab({ data, filters }: { data: AcademyInsights; filters: AcademyF
                         {step.rejected && (
                           <p className="text-[11px]">
                             <span className={step.rejected(row) ? "text-rose-600" : "text-slate-300"}>✗ {step.rejected(row)} rejected</span>
-                            {step.noShow && step.noShow(row) > 0 && <span className="text-violet-700"> · {step.noShow(row)} no-show</span>}
+                            {step.noShow && step.noShow(row) > 0 && <span className="text-violet-700"> · {step.noShow(row)} did not attend</span>}
                           </p>
                         )}
                       </td>
@@ -225,8 +216,8 @@ function FunnelTab({ data, filters }: { data: AcademyInsights; filters: AcademyF
       </Section>
 
       <Section
-        title="Company rounds · appeared → cleared"
-        description="Rounds are grouped by type across drives: assessment, TR1, TR2…, MR, HR. Appeared → cleared, conversion is cleared ÷ appeared; rejections and no-shows below."
+        title="Company rounds: attended → cleared"
+        description="Rounds grouped by type across drives: assessment, technical rounds (TR1, TR2…), managerial (MR), HR. The % is cleared ÷ attended."
       >
         {data.companyRounds.length === 0 ? (
           <p className="px-4 py-4 text-xs text-slate-500">No company round results imported yet. They appear here once company sheets with round outcomes are imported.</p>
@@ -264,7 +255,7 @@ function FunnelTab({ data, filters }: { data: AcademyInsights; filters: AcademyF
 }
 
 function SegmentsTab({ data, filters }: { data: AcademyInsights; filters: AcademyFilters }) {
-  const header = ["Segment", "Students", "Applications", "Applications / student", "Students interviewed", "Interviews attended", "Students selected", "Interview → selection %", "Selections % of students", "SP", "Shared"];
+  const header = ["Group", "Students", "Applications", "Applications per student", "Students interviewed", "Interviews attended", "Students selected", "Selected % of interviewed", "Selected % of students", "Final shortlist", "Shared"];
   const rows = data.segments.map((row) => [
     COMPARISON_LABELS[row.segment], row.students, row.applications, row.students ? (row.applications / row.students).toFixed(1) : "—",
     row.studentsInterviewed, row.interviews, row.studentsSelected, pct(row.studentsSelected, row.studentsInterviewed), pct(row.studentsSelected, row.students),
@@ -272,8 +263,8 @@ function SegmentsTab({ data, filters }: { data: AcademyInsights; filters: Academ
   ]);
   return (
     <Section
-      title="Interview count vs selection count · Tier 1 vs overall vs assessed pool"
-      description="Student level: a student counts once however many drives they were in. Tier 1 = assessed-pool bucket A."
+      title="Students, not applications: interviews vs selections"
+      description="Here a student counts once however many drives they were in. Tier 1 = assessed-pool bucket A."
       action={<CsvButton onClick={() => downloadCsv(csvName("segments", filters), header, rows)} />}
     >
       <div className="overflow-x-auto">
@@ -307,14 +298,14 @@ function SegmentsTab({ data, filters }: { data: AcademyInsights; filters: Academ
 function ReasonsTab({ data, filters }: { data: AcademyInsights; filters: AcademyFilters }) {
   const total = data.rejectionBuckets.reduce((sum, row) => sum + row.total, 0);
   const max = Math.max(0, ...data.rejectionBuckets.map((row) => row.total));
-  const download = () => downloadCsv(csvName("rejection-reasons", filters), ["Macro reason", "Total", "Share", "RS", "SC", "AS", "Reason as written", "Count"],
+  const download = () => downloadCsv(csvName("internal-rejection-reasons", filters), ["Reason group", "Total", "Share", "Resume shortlist", "Screening", "Assignment", "Reason as written", "Count"],
     data.rejectionBuckets.flatMap((row) => (row.topReasons.length ? row.topReasons : [{ reason: "", count: 0 }]).map((reason, index) => [
       row.bucket, index === 0 ? row.total : "", index === 0 ? pct(row.total, total) : "", index === 0 ? row.byStage.RS : "", index === 0 ? row.byStage.SC : "", index === 0 ? row.byStage.AS : "", reason.reason, reason.count || "",
     ])));
   return (
     <Section
-      title="Internal screening rejection · macro reasons"
-      description={<>Reasons typed in the sheets, grouped by keywords. {total} internal rejections in total{data.rejectionsWithoutReason > 0 && <>, {data.rejectionsWithoutReason} with no reason recorded</>}.</>}
+      title="Why our team rejected students (internal shortlisting)"
+      description={<>Reasons typed in the job sheets, grouped by keywords. {total} internal rejections{data.rejectionsWithoutReason > 0 && <>, {data.rejectionsWithoutReason} with no reason written</>}.</>}
       action={<CsvButton onClick={download} disabled={total === 0} />}
     >
       {data.rejectionBuckets.length === 0 ? <EmptyState icon={SearchX} title="No internal rejections for these filters" /> : (
@@ -323,7 +314,7 @@ function ReasonsTab({ data, filters }: { data: AcademyInsights; filters: Academy
             <li key={row.bucket} className="grid gap-2 px-4 py-3 md:grid-cols-[minmax(0,16rem)_minmax(0,1fr)_minmax(0,22rem)] md:items-center">
               <div>
                 <p className="text-sm font-medium text-slate-800">{row.bucket}</p>
-                <p className="text-xs text-slate-500 tabular-nums">RS {row.byStage.RS} · SC {row.byStage.SC} · AS {row.byStage.AS}</p>
+                <p className="text-xs text-slate-500 tabular-nums">Resume {row.byStage.RS} · Screening {row.byStage.SC} · Assignment {row.byStage.AS}</p>
               </div>
               <div className="flex items-center gap-3">
                 <Bar value={row.total} max={max} />
@@ -367,14 +358,14 @@ function StackTab({ data, filters }: { data: AcademyInsights; filters: AcademyFi
 
 function CompaniesTab({ data, filters }: { data: AcademyInsights; filters: AcademyFilters }) {
   const download = () => downloadCsv(csvName("company-funnels", filters),
-    ["Company", "Role", "Month", "CTC (LPA)", "Tech stack", "Company status", "TA", "RS", "SC", "AS", "SP", "Shared", "Interviewed", "Selected", "Conversion", "Rounds (appeared → cleared)"],
+    ["Company", "Role", "Month", "CTC (LPA)", "Tech stack", "Company status", "Applied", "Passed resume shortlist", "Passed screening", "Passed assignment", "Final shortlist", "Shared", "Interviewed", "Selected", "Selected % of applied", "Rounds (attended → cleared)"],
     data.byJob.map((row) => [row.companyName, row.roleTitle, row.month, row.ctcLpa, row.skills, companyProcessLabel(row.phase), row.applications, row.resumeShortlisted, row.screeningCleared,
       row.assignmentCleared, row.finalShortlisted, row.shared, row.interviewed, row.selected, pct(row.selected, row.applications),
       row.rounds.map((round) => `${round.label}: ${round.appeared}→${round.cleared}`).join("; ")]));
   return (
     <Section
-      title="Funnel by company drive"
-      description="For a review, pick 5–10 drives from the last month across different stacks and CTC ranges; use “Last month” above and the CSV to shortlist."
+      title="Each company drive, step by step"
+      description="How many applied, passed each of our steps, were shared, interviewed and selected, per drive."
       action={<CsvButton onClick={download} disabled={data.byJob.length === 0} />}
     >
       {data.byJob.length === 0 ? <EmptyState title="No drives for these filters" /> : (
@@ -383,7 +374,7 @@ function CompaniesTab({ data, filters }: { data: AcademyInsights; filters: Acade
             <thead className="bg-slate-50/60 text-left text-xs text-slate-500">
               <tr>
                 <th className="px-4 py-2">Company / role</th><th className="px-3 py-2">Stack · CTC</th>
-                {["TA", "RS", "SC", "AS", "SP", "Shared", "Interviewed", "Selected"].map((label) => <th key={label} className="px-3 py-2 text-right">{label}</th>)}
+                {["Applied", "Resume shortlist", "Screening", "Assignment", "Final shortlist", "Shared", "Interviewed", "Selected"].map((label) => <th key={label} className="px-3 py-2 text-right">{label}</th>)}
                 <th className="px-3 py-2">Company rounds</th>
               </tr>
             </thead>
@@ -420,7 +411,6 @@ function CompaniesTab({ data, filters }: { data: AcademyInsights; filters: Acade
 }
 
 function PoolTab({ data, filters }: { data: AcademyInsights; filters: AcademyFilters }) {
-  const { can } = usePermissions();
   const tiers = data.pool.totals ? [...data.pool.byTier, data.pool.totals] : [];
   const maxBand = Math.max(0, ...data.applicationsPerCandidate.map((row) => Math.max(row.academy, row.pool)));
   const header = ["Bucket", "Pool size", "Found in our candidates", "Applied", "0 applications", "Applied, 0 opportunities", "Got an opportunity", "Interviewed", "Selected", "Applications"];
@@ -428,7 +418,7 @@ function PoolTab({ data, filters }: { data: AcademyInsights; filters: AcademyFil
     <div className="space-y-4">
       <Section
         title="Assessed pool coverage"
-        description="One row per person in the assessed-pool sheet, matched to our candidates by mobile. Opportunity = final-shortlisted (SP) or shared with a company."
+        description="One row per person in the assessed-pool sheet (Offline Pool Main + Competency Pool Main), matched to our candidates by mobile. Opportunity = made the final shortlist or was shared with a company."
         action={<CsvButton disabled={tiers.length === 0} onClick={() => downloadCsv(csvName("pool-coverage", filters), header, tiers.map((row) => [row.tier ?? "Total", row.total, row.matched, row.applied, row.zeroApplications, row.zeroOpportunity, row.withOpportunity, row.interviewed, row.selected, row.applications]))} />}
       >
         {tiers.length === 0 ? <EmptyState icon={UserRoundCheck} title="The assessed pool is empty" description="Sync or import it on the Assessed pool page." /> : (
@@ -481,227 +471,6 @@ function PoolTab({ data, filters }: { data: AcademyInsights; filters: AcademyFil
         </table>
       </Section>
 
-      {can("candidate:read") && <CandidateList filters={filters} />}
-    </div>
-  );
-}
-
-function CandidateList({ filters }: { filters: AcademyFilters }) {
-  const [view, setView] = useState<AcademyCandidateView>("POOL_APPLIED");
-  const [open, setOpen] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const q = useDebouncedValue(search.trim(), 300);
-  const list = useQuery({
-    queryKey: ["academy-insights", "candidates", filters, view, q],
-    queryFn: () => academyInsightsApi.candidates({ ...filters, view, q: q || undefined }),
-    placeholderData: keepPreviousData,
-  });
-  const items = list.data ?? [];
-  const pages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
-  const shown = items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  // Company rounds anyone in this list sat; the rest stay hidden.
-  // (Expanding a row shows that student's applications one by one.)
-  const companyStages = COMPANY_STAGES.filter(([stage]) => items.some((row) => row.companyStages[stage]));
-  const download = () => downloadCsv(csvName(`candidates-${view.toLowerCase()}`, filters),
-    ["Name", "Mobile", "Candidate code", "Category", "Assessed pool", "Bucket", "TR1", "TR2", "Applications", "Companies",
-      "RS selected", "RS rejected", "SC selected", "SC rejected", "SC no-show", "AS selected", "AS rejected", "Internally rejected", "SP", "Shared",
-      ...COMPANY_STAGES.flatMap(([, label]) => [`${label} cleared`, `${label} rejected`]), "Interviewed", "Interviews", "Selected", "Last applied"],
-    items.map((row) => [row.fullName, row.mobile, row.candidateCode, row.category, row.inPool ? "Yes" : "No", row.tier, row.tr1Status, row.tr2Status, row.applications, row.companies,
-      row.internalStages.RS.selected, row.internalStages.RS.rejected, row.internalStages.SC.selected, row.internalStages.SC.rejected, row.internalStages.SC.noShow,
-      row.internalStages.AS.selected, row.internalStages.AS.rejected, row.internalRejected, row.finalShortlisted, row.shared,
-      ...COMPANY_STAGES.flatMap(([stage]) => [row.companyStages[stage]?.cleared ?? 0, row.companyStages[stage]?.rejected ?? 0]),
-      row.interviewed, row.interviews, row.selected, row.lastMonth]));
-  return (
-    <Section
-      title="Candidates · application count for each person"
-      description="Pick a list to act on. Everyone with 0 applications in the period appears even if they have never been in a sheet."
-      action={<CsvButton onClick={download} disabled={items.length === 0} />}
-    >
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3">
-        <Select value={view} onValueChange={(value) => { setView(value as AcademyCandidateView); setPage(1); }}>
-          <SelectTrigger className="h-9 w-80"><SelectValue /></SelectTrigger>
-          <SelectContent>{(Object.keys(VIEW_LABELS) as AcademyCandidateView[]).map((key) => <SelectItem key={key} value={key}>{VIEW_LABELS[key]}</SelectItem>)}</SelectContent>
-        </Select>
-        <Input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Name or mobile" className="h-9 w-56" />
-        {list.data && <span className="ml-auto text-xs text-slate-500">{items.length}{items.length === 5000 ? "+" : ""} people</span>}
-      </div>
-      {list.isPending ? <LoadingRows rows={6} /> : list.error ? <ErrorState error={list.error} /> : shown.length === 0 ? <EmptyState icon={Users} title="Nobody in this list" /> : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50/60 text-left text-xs text-slate-500">
-              <tr className="text-[11px] uppercase tracking-wide text-slate-400">
-                <th colSpan={4} />
-                <th colSpan={5} className="border-l border-slate-100 px-3 pt-2 text-center" title="Selected ✓ / rejected ✗ per stage, across this person's applications">Internal shortlisting</th>
-                <th colSpan={companyStages.length + 2} className="border-l border-slate-100 px-3 pt-2 text-center" title="Cleared ✓ / rejected ✗ per company round">Company process</th>
-                <th />
-              </tr>
-              <tr>
-                <th className="px-4 py-2">Candidate</th><th className="px-3 py-2">Pool / bucket</th><th className="px-3 py-2">TR1 · TR2</th>
-                <th className="px-3 py-2 text-right" title="Applications in the period · distinct companies">Applied · companies</th>
-                <th className="border-l border-slate-100 px-3 py-2 text-right" title="Resume shortlist: selected / rejected">RS ✓ / ✗</th>
-                <th className="px-3 py-2 text-right" title="Screening: selected / rejected · no-shows">SC ✓ / ✗</th>
-                <th className="px-3 py-2 text-right" title="Assignment: selected / rejected">AS ✓ / ✗</th>
-                <th className="px-3 py-2 text-right" title="Internally rejected at RS, SC or AS">Int. rejected</th>
-                <th className="px-3 py-2 text-right" title="Final shortlist">SP</th>
-                <th className="border-l border-slate-100 px-3 py-2 text-right">Shared</th>
-                {companyStages.map(([stage, label]) => <th key={stage} className="whitespace-nowrap px-3 py-2 text-right" title={`${label}: cleared / rejected`}>{label} ✓ / ✗</th>)}
-                <th className="px-3 py-2 text-right">Selected</th>
-                <th className="px-3 py-2">Last applied</th>
-              </tr>
-            </thead>
-            <tbody className="tabular-nums">
-              {shown.map((row, index) => {
-                const key = row.candidateId ?? `${row.mobile}-${index}`;
-                const expandable = Boolean(row.candidateId && row.applications > 0);
-                const expanded = expandable && open === key;
-                return (
-                <Fragment key={key}>
-                <tr className={`border-t border-slate-100 ${expandable ? "cursor-pointer hover:bg-slate-50/70" : ""} ${expanded ? "bg-indigo-50/40" : ""}`}
-                  onClick={expandable ? () => setOpen(expanded ? null : key) : undefined}>
-                  <td className="px-4 py-2">
-                    <div className="flex items-start gap-1.5">
-                      {expandable ? (expanded ? <ChevronDown size={14} className="mt-0.5 shrink-0 text-indigo-600" /> : <ChevronRight size={14} className="mt-0.5 shrink-0 text-slate-400" />) : <span className="w-3.5 shrink-0" />}
-                      <div>
-                        {row.candidateId ? <Link to={`/candidates/${row.candidateId}`} onClick={(event) => event.stopPropagation()} className="font-medium text-slate-800 hover:text-indigo-700">{row.fullName}</Link> : <span className="font-medium text-slate-800">{row.fullName}</span>}
-                        <p className="text-xs text-slate-400">{row.mobile ?? row.candidateCode}{!row.candidateId && " · not in any sheet yet"}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-xs text-slate-600">{row.inPool ? `Pool${row.tier ? ` · ${row.tier}` : ""}` : <span className="text-slate-300">—</span>}</td>
-                  <td className="px-3 py-2 text-xs text-slate-500">{[row.tr1Status, row.tr2Status].map((value) => value ?? "—").join(" · ")}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-right"><span className="font-medium">{row.applications}</span>{row.applications > 0 && <span className="text-[11px] text-slate-400"> · {row.companies} co.</span>}</td>
-                  <td className="border-l border-slate-100 px-3 py-2 text-right"><PassFail pass={row.internalStages.RS.selected} fail={row.internalStages.RS.rejected} /></td>
-                  <td className="px-3 py-2 text-right">
-                    <PassFail pass={row.internalStages.SC.selected} fail={row.internalStages.SC.rejected} />
-                    {row.internalStages.SC.noShow > 0 && <p className="text-[10px] text-violet-700">{row.internalStages.SC.noShow} no-show</p>}
-                  </td>
-                  <td className="px-3 py-2 text-right"><PassFail pass={row.internalStages.AS.selected} fail={row.internalStages.AS.rejected} /></td>
-                  <td className="px-3 py-2 text-right">{num(row.internalRejected, "text-rose-600")}</td>
-                  <td className="px-3 py-2 text-right">{num(row.finalShortlisted)}</td>
-                  <td className="border-l border-slate-100 px-3 py-2 text-right">{num(row.shared)}</td>
-                  {companyStages.map(([stage]) => (
-                    <td key={stage} className="px-3 py-2 text-right"><PassFail pass={row.companyStages[stage]?.cleared ?? 0} fail={row.companyStages[stage]?.rejected ?? 0} /></td>
-                  ))}
-                  <td className="px-3 py-2 text-right">{num(row.selected, "font-semibold text-emerald-700")}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-xs text-slate-500">{monthLabel(row.lastMonth)}</td>
-                </tr>
-                {expanded && (
-                  <tr className="border-t border-indigo-100 bg-indigo-50/20">
-                    <td colSpan={11 + companyStages.length} className="px-4 py-3"><StudentApplications candidate={row} filters={filters} /></td>
-                  </tr>
-                )}
-                </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {pages > 1 && (
-        <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-4 py-2 text-xs text-slate-500">
-          Page {page} of {pages}
-          <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</Button>
-          <Button size="sm" variant="outline" disabled={page >= pages} onClick={() => setPage(page + 1)}>Next</Button>
-        </div>
-      )}
-    </Section>
-  );
-}
-
-const COMPANY_STAGES: [AcademyCompanyStage, string][] = [
-  ["CV", "Co. CV"], ["ASSESSMENT", "Assessment"], ["TR1", "TR1"], ["TR2", "TR2"], ["TR3", "TR3+"],
-  ["MR", "MR"], ["CLIENT", "Client"], ["HR", "HR"], ["OTHER", "Other"],
-];
-
-/** "3 / 1": passed (green) / rejected (red); a dash when neither. */
-function PassFail({ pass, fail }: { pass: number; fail: number }) {
-  if (!pass && !fail) return <span className="text-slate-300">—</span>;
-  return (
-    <span className="whitespace-nowrap">
-      <span className={pass ? "text-emerald-700" : "text-slate-300"}>{pass}</span>
-      <span className="text-slate-300"> / </span>
-      <span className={fail ? "text-rose-600" : "text-slate-300"}>{fail}</span>
-    </span>
-  );
-}
-
-const STAGE_STYLE: Record<NonNullable<StageResult>, [string, string]> = {
-  SELECTED: ["✓", "text-emerald-700"],
-  REJECTED: ["✗ Rejected", "font-medium text-rose-600"],
-  NO_SHOW: ["No-show", "text-violet-700"],
-};
-
-function StageCell({ result }: { result: StageResult }) {
-  if (!result) return <span className="text-slate-300">—</span>;
-  const [text, tone] = STAGE_STYLE[result];
-  return <span className={tone}>{text}</span>;
-}
-
-/** Each application of one student: company, internal stage results, company rounds, final status. */
-function StudentApplications({ candidate, filters }: { candidate: AcademyCandidate; filters: AcademyFilters }) {
-  const applications = useQuery({
-    queryKey: ["academy-insights", "student", candidate.candidateId, filters],
-    queryFn: () => academyInsightsApi.studentApplications(candidate.candidateId!, filters),
-  });
-  if (applications.isPending) return <LoadingRows rows={2} />;
-  if (applications.error) return <ErrorState error={applications.error} />;
-  const rows = applications.data;
-  const rejectedAt = (stage: "RS" | "SC" | "AS") => rows.filter((row) => row.internal[stage] === "REJECTED").length;
-  return (
-    <div className="space-y-2">
-      <p className="text-xs text-slate-600">
-        <span className="font-semibold text-slate-800">{candidate.fullName}</span> applied <strong>{rows.length}</strong> {rows.length === 1 ? "time" : "times"} to{" "}
-        <strong>{new Set(rows.map((row) => row.companyId)).size}</strong> {new Set(rows.map((row) => row.companyId)).size === 1 ? "company" : "companies"} ·
-        resume rejected at <strong className="text-rose-600">{rejectedAt("RS")}</strong> · screening rejected at <strong className="text-rose-600">{rejectedAt("SC")}</strong> ·
-        assignment rejected at <strong className="text-rose-600">{rejectedAt("AS")}</strong> · SP at <strong>{rows.filter((row) => row.internal.SP).length}</strong> ·
-        shared with <strong>{rows.filter((row) => row.shared).length}</strong> · selected by <strong className="text-emerald-700">{rows.filter((row) => row.selected).length}</strong>
-      </p>
-      <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-        <table className="w-full text-xs">
-          <thead className="bg-slate-50 text-left text-slate-500">
-            <tr>
-              <th className="px-3 py-1.5">Company · role</th><th className="px-3 py-1.5">Month</th>
-              <th className="px-3 py-1.5">RS</th><th className="px-3 py-1.5">SC</th><th className="px-3 py-1.5">AS</th><th className="px-3 py-1.5">SP</th>
-              <th className="px-3 py-1.5">Rejection reason</th><th className="px-3 py-1.5">Shared</th><th className="px-3 py-1.5">Company rounds</th><th className="px-3 py-1.5">Final status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.applicationId} className="border-t border-slate-100 align-top">
-                <td className="px-3 py-1.5">
-                  <Link to={`/job-requests/${row.jobRequestId}`} onClick={(event) => event.stopPropagation()} className="font-medium text-slate-800 hover:text-indigo-700">{row.companyName}</Link>
-                  <p className="text-slate-500">{row.roleTitle}{row.jobCode ? ` · ${row.jobCode}` : ""}</p>
-                </td>
-                <td className="whitespace-nowrap px-3 py-1.5 text-slate-500">{monthLabel(row.month)}</td>
-                <td className="whitespace-nowrap px-3 py-1.5"><StageCell result={row.internal.RS} /></td>
-                <td className="whitespace-nowrap px-3 py-1.5"><StageCell result={row.internal.SC} /></td>
-                <td className="whitespace-nowrap px-3 py-1.5"><StageCell result={row.internal.AS} /></td>
-                <td className="whitespace-nowrap px-3 py-1.5"><StageCell result={row.internal.SP} /></td>
-                <td className="max-w-56 px-3 py-1.5 text-slate-600">{row.rejectionReason ?? <span className="text-slate-300">—</span>}</td>
-                <td className="px-3 py-1.5">{row.shared ? <span className="text-sky-700">Yes</span> : <span className="text-slate-300">No</span>}</td>
-                <td className="px-3 py-1.5">
-                  {row.rounds.length === 0 ? <span className="text-slate-300">—</span> : (
-                    <div className="flex flex-wrap gap-1">
-                      {row.rounds.map((round, index) => (
-                        <span key={`${round.label}-${index}`} title={round.reason ?? undefined}
-                          className={`whitespace-nowrap rounded border px-1.5 py-0.5 ${round.outcome === "CLEARED" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : round.outcome === "REJECTED" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
-                          {round.label}: {INTERVIEW_OUTCOME_LABELS[round.outcome] ?? round.outcome}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </td>
-                <td className="whitespace-nowrap px-3 py-1.5">
-                  {row.pipelineStatus && row.pipelineStatus !== "NOT_SUBMITTED"
-                    ? <span className={row.selected ? "font-medium text-emerald-700" : row.pipelineStatus === "REJECTED" ? "text-rose-600" : "text-slate-700"}>{PIPELINE_STATUS_LABELS[row.pipelineStatus]}</span>
-                    : <span className="text-slate-300">—</span>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 }
@@ -756,7 +525,8 @@ function RsaTab({ data, filters }: { data: AcademyInsights; filters: AcademyFilt
 
 export function AcademyPage() {
   const [filters, setFilters] = useState<AcademyFilters>({});
-  const [tab, setTab] = useState("funnel");
+  const { can } = usePermissions();
+  const [tab, setTab] = useState(() => (can("candidate:read") ? "students" : "funnel"));
   const set = (patch: Partial<AcademyFilters>) => setFilters((current) => ({ ...current, ...patch }));
   const lastMonth = useMemo(() => format(subMonths(new Date(), 1), "yyyy-MM"), []);
   const overview = useQuery({ queryKey: ["academy-insights", "overview", filters], queryFn: () => academyInsightsApi.overview(filters), placeholderData: keepPreviousData });
@@ -767,7 +537,7 @@ export function AcademyPage() {
       <PageHeader
         eyebrow="Review meet · PSM"
         title="Academy & assessed pool"
-        description="Interview funnel, conversion, rejection reasons and coverage for academy students and the assessed pool."
+        description="Find any Academy or assessed-pool student, see how far they got, and why they were rejected."
       />
 
       <Card className="flex flex-wrap items-end gap-3 p-4">
@@ -795,8 +565,8 @@ export function AcademyPage() {
         {Object.values(filters).some(Boolean) && <Button size="sm" variant="ghost" className="h-9" onClick={() => setFilters({})}>Reset</Button>}
         <p className="flex w-full items-start gap-1.5 text-[11px] text-slate-500">
           <Info size={12} className="mt-0.5 shrink-0" />
-          Segment narrows the reasons, stack, CTC, company and pool lists. The funnel and comparison always show every segment side by side.
-          Assessed pool = mobile found in the assessed-pool sheet · Tier 1 = bucket A · Opportunity = SP or shared with a company.
+          Assessed pool = students in the Offline Pool Main or Competency Pool Main tab (matched by mobile). Tier 1 = bucket A.
+          “Segment” narrows every tab except the step-by-step comparison, which always shows each group side by side.
         </p>
       </Card>
 
@@ -810,22 +580,22 @@ export function AcademyPage() {
               <KpiCard label={`${categoryLabel} students who applied`} value={academy.students} hint={`${academy.applications} applications · ${academy.students ? (academy.applications / academy.students).toFixed(1) : "0"} per student`} icon={Users} />
               <KpiCard label={`${categoryLabel} selected`} value={academy.studentsSelected} hint={`${academy.studentsInterviewed} interviewed · ${pct(academy.studentsSelected, academy.studentsInterviewed)} interview → selection`} icon={Award} tone="emerald" />
               <KpiCard label="Assessed pool at 0 applications" value={pool?.zeroApplications ?? 0} hint={pool ? `of ${pool.total} in the pool · ${pool.applied} applied` : "Pool is empty"} icon={UserX} tone="amber" />
-              <KpiCard label="Pool applied, 0 opportunities" value={pool?.zeroOpportunity ?? 0} hint={pool ? `${pool.withOpportunity} got SP or were shared · ${pool.selected} selected` : ""} icon={UserRoundCheck} tone="rose" />
+              <KpiCard label="Pool applied, never shortlisted or shared" value={pool?.zeroOpportunity ?? 0} hint={pool ? `${pool.withOpportunity} made the final shortlist or were shared · ${pool.selected} selected` : ""} icon={UserRoundCheck} tone="rose" />
             </div>
 
             <Tabs value={tab} onValueChange={setTab}>
               <TabsList className="max-w-full flex-wrap justify-start group-data-[orientation=horizontal]/tabs:h-auto">
-                <TabsTrigger value="funnel">Funnel</TabsTrigger>
-                <TabsTrigger value="segments">Tier 1 vs pool vs overall</TabsTrigger>
-                <TabsTrigger value="reasons">Rejection reasons</TabsTrigger>
-                <TabsTrigger value="stack">Tech stack & CTC</TabsTrigger>
+                {can("candidate:read") && <TabsTrigger value="students">Students</TabsTrigger>}
+                <TabsTrigger value="funnel">Step by step</TabsTrigger>
+                <TabsTrigger value="reasons">Why students are rejected</TabsTrigger>
                 <TabsTrigger value="companies">By company ({data.byJob.length})</TabsTrigger>
                 <TabsTrigger value="pool">Assessed pool</TabsTrigger>
-                <TabsTrigger value="rsa">Concluded & RSA</TabsTrigger>
+                <TabsTrigger value="stack">Tech stack & salary</TabsTrigger>
+                <TabsTrigger value="rsa">Finished drives & RSA</TabsTrigger>
               </TabsList>
-              <TabsContent value="funnel"><FunnelTab data={data} filters={filters} /></TabsContent>
-              <TabsContent value="segments"><SegmentsTab data={data} filters={filters} /></TabsContent>
-              <TabsContent value="reasons"><ReasonsTab data={data} filters={filters} /></TabsContent>
+              {can("candidate:read") && <TabsContent value="students"><StudentsPanel filters={filters} /></TabsContent>}
+              <TabsContent value="funnel"><div className="space-y-4"><FunnelTab data={data} filters={filters} /><SegmentsTab data={data} filters={filters} /></div></TabsContent>
+              <TabsContent value="reasons"><div className="space-y-4"><CompanyReasonsPanel filters={filters} /><ReasonsTab data={data} filters={filters} /></div></TabsContent>
               <TabsContent value="stack"><StackTab data={data} filters={filters} /></TabsContent>
               <TabsContent value="companies"><CompaniesTab data={data} filters={filters} /></TabsContent>
               <TabsContent value="pool"><PoolTab data={data} filters={filters} /></TabsContent>

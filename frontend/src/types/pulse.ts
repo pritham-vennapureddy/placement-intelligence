@@ -91,6 +91,8 @@ export interface MonthlyStudent {
   category: string;
   academy: boolean;
   inPool: boolean;
+  poolSource: "OFFLINE" | "COMPETENCY" | "BOTH" | null;
+  product: string | null;
   tier: string | null;
   jobRequestId: string;
   jobCode: string;
@@ -113,6 +115,7 @@ export interface MonthlyPlacement {
   candidateCode: string | null;
   category: string;
   inPool: boolean;
+  product: string | null;
   jobRequestId: string;
   jobCode: string;
   roleTitle: string;
@@ -208,6 +211,7 @@ export interface RsaStudent {
   candidateCode: string | null;
   category: string;
   inPool: boolean;
+  product: string | null;
   tier: string | null;
   jobRequestId: string;
   jobCode: string;

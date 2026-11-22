@@ -4,7 +4,8 @@ import type { AuthenticatedUser } from "../../middleware/authenticate.js";
 import { jobRequestScopeFilter, resolveDataScope } from "../../services/data-scope.service.js";
 import { dashboardService } from "../dashboard/dashboard.service.js";
 import { insightsService } from "../insights/insights.service.js";
-import { insightsQuerySchema } from "../insights/insights.validators.js";
+import { companyReasonsService } from "../insights/company-reasons.service.js";
+import { companyReasonsQuerySchema, insightsQuerySchema } from "../insights/insights.validators.js";
 import { driveNotesService } from "../pulse/drive-notes.service.js";
 import { monthlyPipelineService } from "../pulse/monthly-pipeline.service.js";
 import type { FunctionDeclaration } from "./gemini.js";
@@ -58,6 +59,19 @@ export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
         from: MONTH,
         to: MONTH,
         category: { type: "string", enum: ["ACADEMY", "ACADEMY_INTENSIVE", "EXTERNAL"], description: "Only this student category." },
+      },
+    },
+  },
+  {
+    name: "get_rejection_reasons",
+    description:
+      "Why companies rejected our students: company-round rejections grouped by the reason tag the team picked (e.g. Technical / coding, Communication, or the team's own reasons), with counts, students, Academy vs assessed-pool split, by round and by company, plus a sample of students with the note. Months filter by job request month. Use for 'main reasons students get rejected' questions.",
+    parameters: {
+      type: "object",
+      properties: {
+        from: MONTH,
+        to: MONTH,
+        students: { type: "string", enum: ["ACADEMY", "ACADEMY_INTENSIVE", "ALL_ACADEMY"], description: "Which students (default Academy + Intensive)." },
       },
     },
   },
@@ -244,6 +258,22 @@ export function createToolRunner(user: AuthenticatedUser) {
       const data = await insightsService.overview(user, query);
       const { screeningSkipped, ...rest } = data as typeof data & { screeningSkipped: { total: number; byReason: unknown[]; jobs: unknown[] } };
       return trim({ ...rest, screeningSkipped: { total: screeningSkipped.total, byReason: screeningSkipped.byReason, jobs: screeningSkipped.jobs.slice(0, 20) } });
+    },
+
+    async get_rejection_reasons(args) {
+      const query = companyReasonsQuerySchema.parse({
+        ...(optionalMonth(args.from, "from") ? { from: text(args.from) } : {}),
+        ...(optionalMonth(args.to, "to") ? { to: text(args.to) } : {}),
+        academyCategory: ["ACADEMY", "ACADEMY_INTENSIVE", "ALL_ACADEMY"].includes(text(args.students)) ? text(args.students) : "ALL_ACADEMY",
+      });
+      const data = await companyReasonsService.overview(user, query);
+      return trim({
+        totals: data.totals,
+        byReason: data.byTag.map(({ tagId: _id, ...row }) => row),
+        byRound: data.byRound.map(({ tagId: _id, ...row }) => row),
+        byCompany: data.byCompany.map(({ tagId: _id, jobRequestId: _job, ...row }) => row),
+        sampleStudents: data.students.slice(0, 40).map((row) => ({ name: row.fullName, product: row.product, inPool: row.inPool, company: row.companyName, round: row.roundName, reason: row.reason, note: row.note })),
+      }) as Record<string, unknown>;
     },
 
     async search_jobs(args) {

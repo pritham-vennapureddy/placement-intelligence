@@ -103,6 +103,10 @@ export interface AcademyCandidate {
   mobile: string | null;
   category: string;
   inPool: boolean;
+  /** Which assessed-pool tab they came from. */
+  poolSource: "OFFLINE" | "COMPETENCY" | "BOTH" | null;
+  /** Product names, comma separated; null when none is on record. */
+  product: string | null;
   tier: string | null;
   tr1Status: string | null;
   tr2Status: string | null;
@@ -124,6 +128,35 @@ export interface AcademyCandidate {
   };
   /** Company rounds cleared / rejected; only rounds the candidate sat appear. */
   companyStages: Partial<Record<AcademyCompanyStage, { cleared: number; rejected: number }>>;
+  /** Company-round rejections in the period and the reasons they were tagged with. */
+  companyRejected: number;
+  rejectionReasons: string[];
+}
+
+export type AcademyStageFilter =
+  | "RESUME_REJECTED" | "SCREENING_REJECTED" | "SCREENING_NO_SHOW" | "ASSIGNMENT_REJECTED" | "INTERNAL_REJECTED"
+  | "FINAL_SHORTLISTED" | "SHARED" | "NOT_SHARED" | "INTERVIEWED" | "COMPANY_REJECTED" | "SELECTED";
+export type AcademyPoolFilter = "ANY" | "NONE" | "OFFLINE" | "COMPETENCY" | "BOTH";
+
+export interface AcademyCandidateFilters {
+  view: AcademyCandidateView;
+  q?: string | undefined;
+  poolSource?: AcademyPoolFilter | undefined;
+  product?: string | undefined;
+  stage?: AcademyStageFilter | undefined;
+  reasonTagId?: string | undefined;
+}
+
+/** Company-round rejections grouped by reason tag. */
+export interface CompanyReasons {
+  totals: { rejections: number; tagged: number; untagged: number };
+  byTag: { tagId: string | null; label: string; removed: boolean; rejections: number; students: number; academy: number; pool: number; withNote: number; withDoc: number }[];
+  byRound: { round: string; sort: number; tagId: string | null; label: string; count: number }[];
+  byCompany: { jobRequestId: string; companyName: string; roleTitle: string; tagId: string | null; label: string; count: number }[];
+  students: {
+    applicationId: string; candidateId: string; fullName: string; candidateCode: string; product: string | null; inPool: boolean;
+    companyName: string; roleTitle: string; jobCode: string | null; roundName: string; reason: string; note: string | null; docUrl: string | null;
+  }[];
 }
 
 export type AcademyCompanyStage = "CV" | "ASSESSMENT" | "TR1" | "TR2" | "TR3" | "MR" | "CLIENT" | "HR" | "OTHER";
@@ -146,5 +179,5 @@ export interface AcademyStudentApplication {
   shared: boolean;
   pipelineStatus: PipelineStatus | null;
   selected: boolean;
-  rounds: { label: string; outcome: InterviewOutcome; reason: string | null }[];
+  rounds: { label: string; outcome: InterviewOutcome; reason: string | null; tag?: string | null; docUrl?: string | null }[];
 }

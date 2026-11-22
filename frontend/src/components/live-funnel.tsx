@@ -16,11 +16,11 @@ export function LiveFunnel() {
 
   const steps = funnel
     ? [
-      { label: "Applications (TA)", value: funnel.applications, color: "bg-indigo-500" },
-      { label: "Resume shortlist (RS)", value: funnel.resumeShortlisted, color: "bg-violet-500" },
-      { label: "Screening (SC)", value: funnel.screeningShortlisted, color: "bg-sky-500" },
-      { label: "Assignment (AS)", value: funnel.assignmentShortlisted, color: "bg-cyan-500" },
-      { label: "Final shortlist (SP)", value: funnel.finalShortlisted, color: "bg-teal-500" },
+      { label: "Applied", value: funnel.applications, color: "bg-indigo-500" },
+      { label: "Passed resume shortlist", value: funnel.resumeShortlisted, color: "bg-violet-500" },
+      { label: "Passed screening", value: funnel.screeningShortlisted, color: "bg-sky-500" },
+      { label: "Passed assignment", value: funnel.assignmentShortlisted, color: "bg-cyan-500" },
+      { label: "Final shortlist", value: funnel.finalShortlisted, color: "bg-teal-500" },
       { label: "Nominated to company", value: funnel.nominated, color: "bg-emerald-500" },
       { label: "Selected by company", value: funnel.selected, color: "bg-emerald-600" },
       { label: "Offer accepted", value: funnel.offersAccepted, color: "bg-green-600" },

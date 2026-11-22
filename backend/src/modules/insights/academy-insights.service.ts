@@ -6,7 +6,7 @@ import { maskMobile } from "../../services/pii.js";
 import { bucketRejectionReason, REJECTION_BUCKETS } from "./rejection-buckets.js";
 import { dateColumn, jobFilter, ownerFilter } from "./insights.service.js";
 import { round, ROUND_LABELS, ROUND_METRICS, ROUND_STAGE, type RoundRow } from "./company-rounds.js";
-import type { AcademyCandidatesQuery, AcademyCandidateView, AcademyQuery, AcademySegment } from "./insights.validators.js";
+import type { AcademyCandidatesQuery, AcademyCandidateView, AcademyQuery, AcademySegment, AcademyStageFilter } from "./insights.validators.js";
 
 /**
  * Academy & assessed-pool review figures.
@@ -31,6 +31,26 @@ function categoryCondition(query: AcademyQuery): Prisma.Sql {
   if (query.academyCategory === "ALL_ACADEMY") return Prisma.sql`category IN ('ACADEMY', 'ACADEMY_INTENSIVE')`;
   return Prisma.sql`category = ${query.academyCategory}`;
 }
+
+/**
+ * Which assessed-pool tab a record came from: the offline assessment, the
+ * competency assessment, or both. NULL when the student is not in the pool.
+ */
+export const POOL_SOURCE = (r: Prisma.Sql) => Prisma.sql`
+  CASE
+    WHEN ${r}.id IS NULL THEN NULL
+    WHEN (${r}."processType" <> 'UNKNOWN' OR jsonb_exists(${r}."sourceData", 'Offline Pool Main')) AND ${r}."isCompetencyPoolMember" THEN 'BOTH'
+    WHEN ${r}."isCompetencyPoolMember" THEN 'COMPETENCY'
+    ELSE 'OFFLINE'
+  END`;
+
+/** The student's product(s) by name, e.g. "CCBP Academy Smart". */
+export const PRODUCT_NAMES = (candidateId: Prisma.Sql) => Prisma.sql`
+  (SELECT string_agg(pr.name, ', ' ORDER BY pr.name) FROM "CandidateProduct" cp JOIN "Product" pr ON pr.id = cp."productId" WHERE cp."candidateId" = ${candidateId})`;
+
+/** The product the student applied under, else their product(s) on record. */
+export const APPLICATION_PRODUCT = (applicationId: Prisma.Sql, candidateId: Prisma.Sql) => Prisma.sql`
+  COALESCE((SELECT ap.name FROM "Application" ax JOIN "Product" ap ON ap.id = ax."productId" WHERE ax.id = ${applicationId}), ${PRODUCT_NAMES(candidateId)})`;
 
 const SEGMENT_CONDITIONS: Record<AcademySegment, Prisma.Sql> = {
   ALL: Prisma.sql`TRUE`,
@@ -217,7 +237,7 @@ function peopleCte(query: AcademyQuery, owners: Prisma.Sql): Prisma.Sql {
     people AS (
       SELECT c.id AS candidate_id, c."fullName" AS name, c."candidateCode" AS code, c.mobile, COALESCE(c.category::text, 'UNKNOWN') AS category,
         r.id AS pool_id, CASE WHEN r.id IS NOT NULL THEN ${TIER(Prisma.sql`r."bucketTier"`)} END AS tier,
-        r."tr1Status" AS tr1, r."tr2Status" AS tr2,
+        r."tr1Status" AS tr1, r."tr2Status" AS tr2, ${POOL_SOURCE(Prisma.sql`r`)} AS pool_source, ${PRODUCT_NAMES(Prisma.sql`c.id`)} AS product,
         COALESCE(per.applications, 0) AS applications, COALESCE(per.companies, 0) AS companies, COALESCE(per.sp, 0) AS sp, COALESCE(per.shared, 0) AS shared,
         COALESCE(per.interviews, 0) AS interviews, COALESCE(per.interviewed, 0) AS interviewed, COALESCE(per.selected, 0) AS selected,
         COALESCE(per.internal_rejected, 0) AS internal_rejected, per.last_month
@@ -232,7 +252,7 @@ function peopleCte(query: AcademyQuery, owners: Prisma.Sql): Prisma.Sql {
       )
       UNION ALL
       SELECT NULL, COALESCE(r."sourceName", 'Unnamed'), r."sourceUserId", r.mobile, 'ACADEMY',
-        r.id, ${TIER(Prisma.sql`r."bucketTier"`)}, r."tr1Status", r."tr2Status",
+        r.id, ${TIER(Prisma.sql`r."bucketTier"`)}, r."tr1Status", r."tr2Status", ${POOL_SOURCE(Prisma.sql`r`)}, NULL,
         0, 0, 0, 0, 0, 0, 0, 0, NULL
       FROM "AssessedPoolRecord" r
       WHERE NOT EXISTS (SELECT 1 FROM "Candidate" c WHERE c.mobile = r.mobile AND c."archivedAt" IS NULL)
@@ -254,6 +274,23 @@ const CANDIDATE_VIEW_CONDITIONS: Record<AcademyCandidateView, Prisma.Sql> = {
   POOL_ZERO_APPLICATIONS: Prisma.sql`pool_id IS NOT NULL AND applications = 0`,
   POOL_ZERO_OPPORTUNITY: Prisma.sql`pool_id IS NOT NULL AND applications > 0 AND sp = 0 AND shared = 0`,
   ZERO_APPLICATIONS: Prisma.sql`applications = 0`,
+};
+
+type PoolSource = "OFFLINE" | "COMPETENCY" | "BOTH";
+
+/** "Where did they get to" filters on the student list (counts are across the period's applications). */
+const STAGE_CONDITIONS: Record<AcademyStageFilter, Prisma.Sql> = {
+  RESUME_REJECTED: Prisma.sql`COALESCE(rs_rej, 0) > 0`,
+  SCREENING_REJECTED: Prisma.sql`COALESCE(sc_rej, 0) > 0`,
+  SCREENING_NO_SHOW: Prisma.sql`COALESCE(sc_no_show, 0) > 0`,
+  ASSIGNMENT_REJECTED: Prisma.sql`COALESCE(as_rej, 0) > 0`,
+  INTERNAL_REJECTED: Prisma.sql`internal_rejected > 0`,
+  FINAL_SHORTLISTED: Prisma.sql`sp > 0`,
+  SHARED: Prisma.sql`shared > 0`,
+  NOT_SHARED: Prisma.sql`applications > 0 AND shared = 0`,
+  INTERVIEWED: Prisma.sql`interviewed > 0`,
+  COMPANY_REJECTED: Prisma.sql`COALESCE(company_rejected, 0) > 0`,
+  SELECTED: Prisma.sql`selected > 0`,
 };
 
 const APPLICATION_BANDS = ["0", "1", "2", "3–5", "6–10", "11+"];
@@ -456,8 +493,10 @@ export const academyInsightsService = {
           WHERE x."applicationId" = f.application_id AND x.outcome = 'REJECTED' AND NULLIF(TRIM(x."rejectionReason"), '') IS NOT NULL) AS rejection_reason,
         (SELECT xs.stage::text FROM "InternalStageCandidate" x JOIN "InternalProcessStage" xs ON xs.id = x."stageId"
           WHERE x."applicationId" = f.application_id AND x.outcome = 'REJECTED' LIMIT 1) AS rejected_stage,
-        (SELECT jsonb_agg(jsonb_build_object('label', rounds.label, 'sort', rounds.sort, 'outcome', ci.outcome::text, 'reason', NULLIF(TRIM(ci."rejectionReason"), '')) ORDER BY rounds.sort)
-          FROM "CompanyInterview" ci JOIN rounds ON rounds.id = ci."roundId" WHERE ci."nominationId" = f.nomination_id) AS rounds
+        (SELECT jsonb_agg(jsonb_build_object('label', rounds.label, 'sort', rounds.sort, 'outcome', ci.outcome::text,
+            'reason', NULLIF(concat_ws(' — ', t.label, NULLIF(TRIM(ci."rejectionReason"), '')), ''), 'tag', t.label, 'docUrl', ci."rejectionDocUrl") ORDER BY rounds.sort)
+          FROM "CompanyInterview" ci JOIN rounds ON rounds.id = ci."roundId" LEFT JOIN "RejectionReasonTag" t ON t.id = ci."rejectionTagId"
+          WHERE ci."nominationId" = f.nomination_id) AS rounds
       FROM f
       JOIN "JobRequest" j ON j.id = f.job_id
       JOIN "Company" co ON co.id = f.company_id
@@ -494,6 +533,19 @@ export const academyInsightsService = {
     if (query.segment === "ASSESSED_POOL") conditions.push(Prisma.sql`pool_id IS NOT NULL`);
     if (query.segment === "NOT_IN_POOL") conditions.push(Prisma.sql`pool_id IS NULL`);
     if (query.segment.startsWith("BUCKET_")) conditions.push(Prisma.sql`tier = ${query.segment.slice(-1)}`);
+    if (query.poolSource === "ANY") conditions.push(Prisma.sql`pool_id IS NOT NULL`);
+    else if (query.poolSource === "NONE") conditions.push(Prisma.sql`pool_id IS NULL`);
+    else if (query.poolSource === "OFFLINE") conditions.push(Prisma.sql`pool_source IN ('OFFLINE', 'BOTH')`);
+    else if (query.poolSource === "COMPETENCY") conditions.push(Prisma.sql`pool_source IN ('COMPETENCY', 'BOTH')`);
+    else if (query.poolSource === "BOTH") conditions.push(Prisma.sql`pool_source = 'BOTH'`);
+    if (query.product === "NONE") conditions.push(Prisma.sql`product IS NULL`);
+    else if (query.product) conditions.push(Prisma.sql`${query.product} = ANY(string_to_array(product, ', '))`);
+    if (query.stage) conditions.push(STAGE_CONDITIONS[query.stage]);
+    if (query.reasonTagId) {
+      conditions.push(query.reasonTagId === "untagged"
+        ? Prisma.sql`EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(reasons, '[]'::jsonb)) x WHERE x->>'tagId' IS NULL)`
+        : Prisma.sql`EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(reasons, '[]'::jsonb)) x WHERE x->>'tagId' = ${query.reasonTagId})`);
+    }
     if (query.q) {
       const digits = query.q.replace(/\D/g, "");
       conditions.push(digits.length >= 4
@@ -502,10 +554,11 @@ export const academyInsightsService = {
     }
     const rows = await prisma.$queryRaw<{
       candidate_id: string | null; name: string; code: string | null; mobile: string | null; category: string; pool_id: string | null; tier: string | null;
-      tr1: string | null; tr2: string | null; applications: number; companies: number; sp: number; shared: number; interviews: number; interviewed: number; selected: number;
+      tr1: string | null; tr2: string | null; pool_source: PoolSource | null; product: string | null; applications: number; companies: number; sp: number; shared: number; interviews: number; interviewed: number; selected: number;
       internal_rejected: number; last_month: string | null;
       rs_sel: number | null; rs_rej: number | null; sc_sel: number | null; sc_rej: number | null; sc_no_show: number | null; as_sel: number | null; as_rej: number | null;
       company: Record<string, { cleared: number; rejected: number }> | null;
+      company_rejected: number | null; reasons: { tagId: string | null; label: string }[] | null;
     }[]>`
       ${peopleCte(query, owners)}, ${ROUND_LABELS},
       -- Each internal stage, counted the same way as the funnel (a later pass counts as passing earlier stages).
@@ -529,11 +582,25 @@ export const academyInsightsService = {
           GROUP BY 1, 2
         ) per_stage
         GROUP BY candidate_id
+      ),
+      -- Company-round rejections and the reason each was tagged with.
+      company_rej AS (
+        SELECT f.candidate_id, COUNT(*)::int AS company_rejected,
+          jsonb_agg(jsonb_build_object('tagId', ci."rejectionTagId", 'label', COALESCE(t.label, 'No reason tagged'))) AS reasons
+        FROM f
+        JOIN "CompanyInterview" ci ON ci."nominationId" = f.nomination_id AND ci.outcome = 'REJECTED'
+        LEFT JOIN "RejectionReasonTag" t ON t.id = ci."rejectionTagId"
+        GROUP BY f.candidate_id
+      ),
+      listed AS (
+        SELECT people.*, internal.rs_sel, internal.rs_rej, internal.sc_sel, internal.sc_rej, internal.sc_no_show, internal.as_sel, internal.as_rej, company.company,
+          company_rej.company_rejected, company_rej.reasons
+        FROM people
+        LEFT JOIN internal ON internal.candidate_id = people.candidate_id
+        LEFT JOIN company ON company.candidate_id = people.candidate_id
+        LEFT JOIN company_rej ON company_rej.candidate_id = people.candidate_id
       )
-      SELECT people.*, internal.rs_sel, internal.rs_rej, internal.sc_sel, internal.sc_rej, internal.sc_no_show, internal.as_sel, internal.as_rej, company.company
-      FROM people
-      LEFT JOIN internal ON internal.candidate_id = people.candidate_id
-      LEFT JOIN company ON company.candidate_id = people.candidate_id
+      SELECT * FROM listed
       WHERE ${Prisma.join(conditions, " AND ")}
       ORDER BY applications DESC, name
       LIMIT 5000`;
@@ -545,6 +612,8 @@ export const academyInsightsService = {
       mobile: showContact ? row.mobile : maskMobile(row.mobile),
       category: row.category,
       inPool: row.pool_id !== null,
+      poolSource: row.pool_source,
+      product: row.product,
       tier: row.tier,
       tr1Status: row.tr1,
       tr2Status: row.tr2,
@@ -563,6 +632,8 @@ export const academyInsightsService = {
         AS: { selected: row.as_sel ?? 0, rejected: row.as_rej ?? 0 },
       },
       companyStages: row.company ?? {},
+      companyRejected: row.company_rejected ?? 0,
+      rejectionReasons: [...new Set((row.reasons ?? []).map((reason) => reason.label))],
     }));
   },
 };

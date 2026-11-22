@@ -291,6 +291,7 @@ model User {
   pipelineStatusChanges  MonthlyPipelineHistory[]    @relation("PipelineHistoryAuthor")
   crmRemarks             JobCrmRemark[]              @relation("CrmRemarkAuthor")
   rsaReviewsUpdated      JobRsaReview[]              @relation("RsaReviewUpdater")
+  rejectionTagsCreated   RejectionReasonTag[]        @relation("RejectionTagCreator")
 }
 
 model Role {
@@ -948,15 +949,37 @@ model CompanyInterview {
   scheduledAt     DateTime?
   interviewerName String?
   feedback        String?
+  // Free-text note on the rejection; the reason itself is rejectionTag.
   rejectionReason String?
+  rejectionTagId  String?               @db.Uuid
+  rejectionDocUrl String?
   source          ChangeSource          @default(MANUAL)
   createdAt       DateTime              @default(now())
   updatedAt       DateTime              @updatedAt
   nomination      CompanyNomination     @relation(fields: [nominationId, jobRequestId], references: [id, jobRequestId], onDelete: Restrict)
   round           CompanyInterviewRound @relation(fields: [roundId, jobRequestId], references: [id, jobRequestId], onDelete: Restrict)
+  rejectionTag    RejectionReasonTag?   @relation(fields: [rejectionTagId], references: [id], onDelete: SetNull)
 
   @@unique([nominationId, roundId])
   @@index([roundId, outcome])
+  @@index([rejectionTagId])
+}
+
+/// Why the company rejected a student in a round. Built-in reasons are seeded;
+/// the team adds its own from the dashboard. Archived tags stay on old results.
+model RejectionReasonTag {
+  id          String             @id @default(uuid()) @db.Uuid
+  label       String
+  builtIn     Boolean            @default(false)
+  sortOrder   Int                @default(100)
+  archivedAt  DateTime?
+  createdById String?            @db.Uuid
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  createdBy   User?              @relation("RejectionTagCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  interviews  CompanyInterview[]
+
+  @@index([archivedAt, sortOrder])
 }
 
 // Append-only history of pipeline status changes.

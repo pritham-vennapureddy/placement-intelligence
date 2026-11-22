@@ -11,6 +11,7 @@ import { catalogApi } from "../../services/api";
 import { candidatesApi } from "../../services/workflow-api";
 import type { CandidateListItem } from "../../types/workflow";
 import { CATEGORY_LABELS } from "../screening/badges";
+import { ProductBadge } from "../../components/student-tags";
 
 const ALL = "__all__";
 
@@ -21,6 +22,7 @@ const columns: ColumnDef<CandidateListItem>[] = [
     cell: ({ row }) => (
       <div>
         <Link to={`/candidates/${row.original.id}`} className="font-semibold text-slate-800 hover:text-indigo-700">{row.original.fullName}</Link>
+        <div className="mt-0.5"><ProductBadge products={row.original.products} /></div>
         <p className="font-mono text-[11px] text-slate-400">{row.original.candidateCode}</p>
       </div>
     ),

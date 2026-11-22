@@ -4,7 +4,7 @@ import type { AuthenticatedUser } from "../../middleware/authenticate.js";
 import { loadJobForUser } from "../../services/job-access.service.js";
 import { ApiError } from "../../utils/api-error.js";
 import { recordAudit, type AuditContext } from "../audit/audit.service.js";
-import { academyFacts } from "../insights/academy-insights.service.js";
+import { academyFacts, APPLICATION_PRODUCT } from "../insights/academy-insights.service.js";
 import { ROUND_LABELS } from "../insights/company-rounds.js";
 import { jobFilter, ownerFilter } from "../insights/insights.service.js";
 import type { AcademyQuery } from "../insights/insights.validators.js";
@@ -45,6 +45,7 @@ export const rsaReportsService = {
 
     const rows = await prisma.$queryRaw<{
       application_id: string; candidate_id: string; full_name: string; candidate_code: string | null; category: string; in_pool: boolean; tier: string | null;
+      product: string | null;
       job_id: string; job_code: string; role_title: string; company_id: string; company_name: string; phase: string; month: string; process_end: Date | null;
       pipeline: string | null; rejected_round: string | null; rejection_reason: string | null;
       support_id: string | null; status_id: string | null; status_label: string | null; status_tone: string | null; counts_as_done: boolean | null;
@@ -54,6 +55,7 @@ export const rsaReportsService = {
       ${academyFacts(academyQuery, owners, jobFilter(academyQuery))},
       ${ROUND_LABELS}
       SELECT f.application_id, f.candidate_id, c."fullName" AS full_name, c."candidateCode" AS candidate_code, f.category, f.in_pool, f.tier,
+        ${APPLICATION_PRODUCT(Prisma.sql`f.application_id`, Prisma.sql`c.id`)} AS product,
         f.job_id, j."jobId" AS job_code, j."roleTitle" AS role_title, co.id AS company_id, co.name AS company_name, j."processPhase"::text AS phase,
         f.month, j."companyProcessEndDate" AS process_end, f.pipeline,
         rr.label AS rejected_round, rr.reason AS rejection_reason,
@@ -70,8 +72,8 @@ export const rsaReportsService = {
       LEFT JOIN "SupportStatusOption" o ON o.id = ss."statusId"
       LEFT JOIN "User" ub ON ub.id = ss."updatedById"
       LEFT JOIN LATERAL (
-        SELECT rounds.label, ci."rejectionReason" AS reason
-        FROM "CompanyInterview" ci JOIN rounds ON rounds.id = ci."roundId"
+        SELECT rounds.label, NULLIF(concat_ws(' — ', t.label, NULLIF(TRIM(ci."rejectionReason"), '')), '') AS reason
+        FROM "CompanyInterview" ci JOIN rounds ON rounds.id = ci."roundId" LEFT JOIN "RejectionReasonTag" t ON t.id = ci."rejectionTagId"
         WHERE ci."nominationId" = f.nomination_id AND ci.outcome = 'REJECTED'
         ORDER BY rounds.sort DESC LIMIT 1
       ) rr ON TRUE
@@ -86,6 +88,7 @@ export const rsaReportsService = {
       candidateCode: row.candidate_code,
       category: row.category,
       inPool: row.in_pool,
+      product: row.product,
       tier: row.tier,
       jobRequestId: row.job_id,
       jobCode: row.job_code,

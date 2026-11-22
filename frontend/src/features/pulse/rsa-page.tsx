@@ -23,6 +23,7 @@ import { guidanceApi } from "../../services/tracking-api";
 import type { RsaFilters, RsaProgress, RsaSegment, RsaStudent } from "../../types/pulse";
 import { downloadCsv } from "../../utils/csv";
 import { ManageStatusesDialog, SupportBadge } from "../tracking/student-support";
+import { ProductBadge } from "../../components/student-tags";
 
 const today = () => format(new Date(), "yyyy-MM-dd");
 const SEGMENT_LABELS: Record<RsaSegment, string> = { ACADEMY_OR_POOL: "Academy + assessed pool", ACADEMY: "Academy", POOL: "Assessed pool", EVERYONE: "Everyone (incl. external)" };
@@ -208,6 +209,7 @@ export function RsaPage() {
                   <tr key={student.applicationId} className="align-top">
                     <td className="px-4 py-2.5">
                       <Link to={`/candidates/${student.candidateId}`} className="font-medium text-slate-900 hover:text-indigo-700">{student.fullName}</Link>
+                      <div className="mt-0.5"><ProductBadge products={student.product} /></div>
                       <span className="block text-xs text-slate-500">{segmentText(student)}{student.candidateCode ? ` · ${student.candidateCode}` : ""}</span>
                     </td>
                     <td className="pr-3 pt-2.5 text-xs"><Link to={`/job-requests/${student.jobRequestId}?tab=notes`} className="text-slate-800 hover:text-indigo-700">{student.companyName}</Link><span className="block text-slate-500">{student.roleTitle} · {student.month}</span></td>

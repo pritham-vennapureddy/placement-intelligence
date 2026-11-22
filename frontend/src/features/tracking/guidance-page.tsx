@@ -16,6 +16,7 @@ import { guidanceApi } from "../../services/tracking-api";
 import type { GuidanceView, StudentSupportInput, SupportStatusOption } from "../../types/tracking";
 import { ManageStatusesDialog, NOT_RECORDED, SupportBadge, SupportCell, SupportDialog } from "./student-support";
 import { CompanyStatusCell, RecordGuidanceDialog, useTrackingRefresh } from "./tracking-dialogs";
+import { ProductBadge } from "../../components/student-tags";
 
 const day = (value: string) => format(new Date(value), "d MMM yyyy");
 const KINDS: StudentSupportKind[] = ["GUIDANCE", "RSA"];
@@ -206,7 +207,7 @@ export function GuidancePage() {
                       <Link to={`/candidates/${student.candidate.id}`} className="font-medium text-slate-800 hover:text-indigo-700">{student.candidate.fullName}</Link>
                       <p className="font-mono text-[10px] text-slate-400">{student.candidate.candidateCode}</p>
                     </td>
-                    <td className="px-3 py-2 text-xs text-slate-500">{student.product?.name ?? "—"}</td>
+                    <td className="px-3 py-2 text-xs text-slate-500"><ProductBadge products={student.product ? [student.product] : null} /></td>
                     <td className="px-3 py-2"><CompanyStatusCell shareStatus={student.shareStatus} pipelineStatus={student.pipelineStatus} /></td>
                     {KINDS.map((kind) => (
                       <td key={kind} className="px-3 py-2">

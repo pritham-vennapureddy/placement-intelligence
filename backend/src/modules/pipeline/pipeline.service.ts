@@ -7,8 +7,9 @@ import { ApiError } from "../../utils/api-error.js";
 import { definedOnly } from "../../utils/object.js";
 import { recordAudit, type AuditContext } from "../audit/audit.service.js";
 import { candidateSummarySelect } from "../screening/screening.repository.js";
+import { assertUsableTag } from "../rejection-tags/rejection-tags.service.js";
 import { syncJobProcessDates } from "./job-process-dates.js";
-import type { BulkProcessDatesInput, CreateRoundInput, DirectShareInput, InterviewInput, NominateInput, PipelineStatusInput, ProcessDatesInput, UpdateRoundInput } from "./pipeline.validators.js";
+import type { BulkInterviewInput, BulkProcessDatesInput, CreateRoundInput, DirectShareInput, InterviewInput, NominateInput, PipelineStatusInput, ProcessDatesInput, UpdateRoundInput } from "./pipeline.validators.js";
 
 /** Date fields each status records. */
 const STATUS_DATES: Partial<Record<PipelineStatus, "submittedAt" | "offerReleasedAt" | "offerAcceptedAt" | "joinedAt">> = {
@@ -62,7 +63,7 @@ export const pipelineService = {
               stageOutcomes: { where: { stage: { stage: "FINAL_SHORTLIST" } }, select: { outcome: true, priority: true } },
             },
           },
-          interviews: { select: { roundId: true, outcome: true, scheduledAt: true, interviewerName: true, feedback: true, rejectionReason: true } },
+          interviews: { select: { roundId: true, outcome: true, scheduledAt: true, interviewerName: true, feedback: true, rejectionReason: true, rejectionDocUrl: true, rejectionTag: { select: { id: true, label: true, archivedAt: true } } } },
           stageHistory: {
             select: { fromStatus: true, toStatus: true, notes: true, source: true, changedAt: true, changedBy: { select: { fullName: true } } },
             orderBy: { changedAt: "desc" },
@@ -332,20 +333,59 @@ export const pipelineService = {
   async recordInterview(user: AuthenticatedUser, jobRequestId: string, nominationId: string, roundId: string, input: InterviewInput, audit: AuditContext) {
     const { job } = await loadJobForUser(user, jobRequestId, "pipeline:write");
     const nomination = await loadNomination(job.id, nominationId);
-    const round = await prisma.companyInterviewRound.findFirst({ where: { id: roundId, jobRequestId: job.id }, select: { id: true, name: true } });
-    if (!round) throw new ApiError(404, "ROUND_NOT_FOUND", "The round was not found.");
-    const data = definedOnly({
-      outcome: input.outcome,
-      scheduledAt: input.scheduledAt === undefined ? undefined : input.scheduledAt ? new Date(input.scheduledAt) : null,
-      interviewerName: input.interviewerName,
-      feedback: input.feedback,
-      rejectionReason: input.rejectionReason,
-      source: "MANUAL" as const,
+    return saveRoundResults(user, job.id, roundId, [nomination], input, audit);
+  },
+
+  /** The same round result for several students at once. */
+  async recordInterviewsBulk(user: AuthenticatedUser, jobRequestId: string, roundId: string, input: BulkInterviewInput, audit: AuditContext) {
+    const { job } = await loadJobForUser(user, jobRequestId, "pipeline:write");
+    const ids = [...new Set(input.nominationIds)];
+    const nominations = await prisma.companyNomination.findMany({
+      where: { jobRequestId: job.id, id: { in: ids } },
+      select: { id: true, applicationId: true, pipelineStatus: true },
     });
-    await inTransaction(async (transaction) => {
+    if (nominations.length !== ids.length) throw new ApiError(404, "NOMINATION_NOT_FOUND", "Some of these students are not nominated on this job.");
+    const { nominationIds: _ids, ...result } = input;
+    return saveRoundResults(user, job.id, roundId, nominations, result, audit);
+  },
+};
+
+type RoundResultInput = Omit<InterviewInput, "interviewerName" | "feedback"> & Partial<Pick<InterviewInput, "interviewerName" | "feedback">>;
+
+async function saveRoundResults(
+  user: AuthenticatedUser,
+  jobRequestId: string,
+  roundId: string,
+  nominations: { id: string; applicationId: string; pipelineStatus: PipelineStatus }[],
+  input: RoundResultInput,
+  audit: AuditContext,
+) {
+  const round = await prisma.companyInterviewRound.findFirst({ where: { id: roundId, jobRequestId }, select: { id: true, name: true } });
+  if (!round) throw new ApiError(404, "ROUND_NOT_FOUND", "The round was not found.");
+  const rejected = input.outcome === "REJECTED";
+  if (rejected && input.rejectionTagId) {
+    const current = await prisma.companyInterview.findMany({
+      where: { roundId: round.id, nominationId: { in: nominations.map((row) => row.id) } },
+      select: { rejectionTagId: true },
+    });
+    await assertUsableTag(input.rejectionTagId, current.map((row) => row.rejectionTagId));
+  }
+  const data = definedOnly({
+    outcome: input.outcome,
+    scheduledAt: input.scheduledAt === undefined ? undefined : input.scheduledAt ? new Date(input.scheduledAt) : null,
+    interviewerName: input.interviewerName,
+    feedback: input.feedback,
+    // A reason only belongs to a rejection; any other result clears it.
+    rejectionTagId: rejected ? input.rejectionTagId : null,
+    rejectionReason: rejected ? input.rejectionReason : null,
+    rejectionDocUrl: rejected ? input.rejectionDocUrl : null,
+    source: "MANUAL" as const,
+  });
+  await inTransaction(async (transaction) => {
+    for (const nomination of nominations) {
       await transaction.companyInterview.upsert({
         where: { nominationId_roundId: { nominationId: nomination.id, roundId: round.id } },
-        create: { nominationId: nomination.id, roundId: round.id, jobRequestId: job.id, outcome: input.outcome, ...data },
+        create: { nominationId: nomination.id, roundId: round.id, jobRequestId, ...data, outcome: input.outcome },
         update: data,
       });
       // Having outcomes means the company has the profile.
@@ -359,10 +399,10 @@ export const pipelineService = {
         action: "INTERVIEW_RECORDED",
         entityType: "Application",
         entityId: nomination.applicationId,
-        metadata: { round: round.name, outcome: input.outcome },
+        metadata: { round: round.name, outcome: input.outcome, ...(rejected && input.rejectionTagId ? { rejectionTagId: input.rejectionTagId } : {}) },
       });
-      await syncJobProcessDates(transaction, job.id);
-    });
-    return { ok: true };
-  },
-};
+    }
+    await syncJobProcessDates(transaction, jobRequestId);
+  });
+  return { ok: true, updated: nominations.length };
+}

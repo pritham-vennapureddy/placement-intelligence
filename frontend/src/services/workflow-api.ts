@@ -27,6 +27,15 @@ const json = (method: string, body: unknown, idempotencyKey?: string) => ({
   ...(idempotencyKey ? { idempotencyKey } : {}),
 });
 
+export interface RoundResultInput {
+  outcome: InterviewOutcome;
+  scheduledAt?: string | null;
+  /** Why the company rejected: a reason from the list, a note and a doc link. */
+  rejectionTagId?: string | null;
+  rejectionReason?: string | null;
+  rejectionDocUrl?: string | null;
+}
+
 export const screeningApi = {
   async get(jobRequestId: string): Promise<ScreeningProcess> {
     return (await request<Data<{ process: ScreeningProcess }>>(`/job-requests/${jobRequestId}/screening`)).data.process;
@@ -130,9 +139,13 @@ export const pipelineApi = {
     jobRequestId: string,
     nominationId: string,
     roundId: string,
-    input: { outcome: InterviewOutcome; scheduledAt?: string | null; interviewerName?: string | null; feedback?: string | null; rejectionReason?: string | null },
+    input: RoundResultInput & { interviewerName?: string | null; feedback?: string | null },
   ) {
     await request(`/job-requests/${jobRequestId}/pipeline/nominations/${nominationId}/interviews/${roundId}`, json("PUT", input));
+  },
+  /** The same round result for several students at once. */
+  async recordInterviewsBulk(jobRequestId: string, roundId: string, input: RoundResultInput & { nominationIds: string[] }) {
+    await request(`/job-requests/${jobRequestId}/pipeline/rounds/${roundId}/results`, json("PUT", input));
   },
 };
 

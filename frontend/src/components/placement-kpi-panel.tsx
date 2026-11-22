@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Award, Building2, Percent, Target } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { HiredDateNotice } from "./hired-date-notice";
@@ -7,7 +7,9 @@ import { dashboardApi } from "../services/api";
 import type { PlacementKpiValues, PlacementSegmentKey } from "../types/api";
 import { cn } from "../utils/cn";
 import { Card, CardContent, CardTitle } from "./ui/card";
+import { KpiCard } from "./kpi-card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
 const ALL_TIME = "__all__";
 const numberFormat = new Intl.NumberFormat("en-IN");
@@ -25,30 +27,46 @@ function monthRange(month: string) {
 
 const KPI_COLUMNS: {
   label: string;
+  /** Short plain-language definition shown on the KPI card. */
+  card: string;
+  icon: typeof Award;
+  tone: "emerald" | "indigo" | "sky" | "amber";
   hint: string;
   value: (kpis: PlacementKpiValues) => string;
   detail: (kpis: PlacementKpiValues) => string;
 }[] = [
   {
     label: "KPI 1 · Placements",
+    card: "Students hired, counted in the month their interviews finished",
+    icon: Award,
+    tone: "emerald",
     hint: "Candidates the company selected (selected, offer released, offer accepted or joined).",
     value: (kpis) => numberFormat.format(kpis.placements),
     detail: () => "selected",
   },
   {
     label: "KPI 2 · % Positions closed",
+    card: "Openings filled, on drives whose company process has ended",
+    icon: Target,
+    tone: "indigo",
     hint: "Fulfilment rate on jobs whose company process ended in the period: openings filled ÷ openings. Jobs not started or still running are left out. Each job counts at most its own openings.",
     value: (kpis) => percent(kpis.positionsClosedPct),
     detail: (kpis) => `${numberFormat.format(kpis.positionsClosed)} of ${numberFormat.format(kpis.positions)} positions (process ended)`,
   },
   {
     label: "KPI 3 · % Hired conversion",
+    card: "Companies that hired at least one student, of those whose process ended",
+    icon: Building2,
+    tone: "sky",
     hint: "Companies whose process ended in the period that hired at least one student ÷ companies whose process ended. Process end = the company process end date, else the day the process was marked done, else the day a filled/closed job was last changed.",
     value: (kpis) => percent(kpis.hiredConversionPct),
     detail: (kpis) => `${numberFormat.format(kpis.companiesEndedHired)} of ${numberFormat.format(kpis.companiesProcessEnded)} process-ended companies`,
   },
   {
     label: "KPI 4 · Profiles → hired",
+    card: "Placements out of all profiles we considered",
+    icon: Percent,
+    tone: "amber",
     hint: "Placements ÷ profiles considered (applications that were not withdrawn).",
     value: (kpis) => percent(kpis.profileToHirePct),
     detail: (kpis) => `${numberFormat.format(kpis.placements)} of ${numberFormat.format(kpis.profilesConsidered)} profiles`,
@@ -148,7 +166,19 @@ export function PlacementKpiPanel() {
         </div>
       )}
 
-      <TableShell title={`Scorecard · ${periodLabel}`} subtitle="Choose a row to see its monthly and company breakdown. Hover a heading for its definition.">
+      {data && (
+        <div>
+          <p className="mb-2 text-xs font-medium text-slate-500">{segmentLabel} · {periodLabel}</p>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {KPI_COLUMNS.map((column) => (
+              <KpiCard key={column.label} label={column.label} value={column.value(data.totals[segment])} icon={column.icon} tone={column.tone}
+                hint={`${column.detail(data.totals[segment])}. ${column.card}.`} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <TableShell title={`All teams · ${periodLabel}`} subtitle="Click a team to change the cards above and the month / company tables below. Hover a heading for the full definition.">
         <thead className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400">
           <tr><th className="px-5 py-3 font-semibold">Team</th><KpiHeaderCells /></tr>
         </thead>
@@ -174,7 +204,13 @@ export function PlacementKpiPanel() {
         </tbody>
       </TableShell>
 
-      <TableShell title={`Monthly · ${segmentLabel}`} subtitle="Every month with job requests or hires, newest first.">
+      <Tabs defaultValue="month">
+        <TabsList>
+          <TabsTrigger value="month">By month</TabsTrigger>
+          <TabsTrigger value="company">By company ({companies.length})</TabsTrigger>
+        </TabsList>
+        <TabsContent value="month">
+      <TableShell title={`Month by month · ${segmentLabel}`} subtitle="Every month with job requests or hires, newest first.">
         <thead className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400">
           <tr><th className="px-5 py-3 font-semibold">Month</th><KpiHeaderCells /></tr>
         </thead>
@@ -188,6 +224,8 @@ export function PlacementKpiPanel() {
           {allTime.data && allTime.data.monthly.length === 0 && <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-slate-500">No job requests yet.</td></tr>}
         </tbody>
       </TableShell>
+        </TabsContent>
+        <TabsContent value="company">
 
       <TableShell title={`Companies · ${segmentLabel} · ${periodLabel}`} subtitle="Companies this team worked with in the period, most placements first.">
         <thead className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400">
@@ -205,6 +243,8 @@ export function PlacementKpiPanel() {
           {data && companies.length === 0 && <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-slate-500">No companies for {segmentLabel} in {periodLabel}.</td></tr>}
         </tbody>
       </TableShell>
+        </TabsContent>
+      </Tabs>
     </section>
   );
 }

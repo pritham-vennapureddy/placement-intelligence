@@ -20,12 +20,13 @@ import type { CompanyRejectStage, InsightCategory, InsightDateBasis, InsightFilt
 import { downloadCsv, type CsvValue } from "../../utils/csv";
 import { BigPicture } from "./big-picture";
 import { CompanyStatusCell } from "./tracking-dialogs";
+import { ProductBadge } from "../../components/student-tags";
 
 const ALL = "__all__";
 const CATEGORY_LABELS: Record<string, string> = { ACADEMY: "Academy", ACADEMY_INTENSIVE: "Academy Intensive", EXTERNAL: "External", UNKNOWN: "Unknown" };
 const STATUS_LABELS: Record<StudentStatusFilter, string> = {
-  INTERNAL_REJECTED: "Rejected internally (RS/SC/AS)",
-  FINAL_SHORTLIST: "Final shortlist (SP)",
+  INTERNAL_REJECTED: "Rejected in our shortlisting",
+  FINAL_SHORTLIST: "Made our final shortlist",
   NOT_SHARED: "Not shared with company",
   SHARED: "Shared with company",
   DIRECT: "Direct to company (skipped shortlisting)",
@@ -41,30 +42,30 @@ const pct = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / 
 type Column = { key: string; label: string; title?: string; render: (row: InsightMetrics) => ReactNode; when?: (row: InsightMetrics) => number };
 const n = (value: number, tone?: string) => <span className={value === 0 ? "text-slate-300" : tone}>{value}</span>;
 const COMPANY_REJECT_STAGES: [CompanyRejectStage, string, string][] = [
-  ["CV", "Co. CV rej.", "Rejected at the company's CV / resume screen"],
-  ["ASSESSMENT", "Co. assess. rej.", "Rejected at the company's assessment / assignment"],
-  ["TR1", "TR1 rej.", "Rejected in the first technical round"],
-  ["TR2", "TR2 rej.", "Rejected in the second technical round"],
-  ["TR3", "TR3+ rej.", "Rejected in the third or a later technical round"],
-  ["MR", "MR rej.", "Rejected in the managerial round"],
-  ["CLIENT", "Client rej.", "Rejected in the client round"],
-  ["HR", "HR rej.", "Rejected in the HR round"],
-  ["OTHER", "Other round rej.", "Rejected in a round of type Other"],
-  ["UNKNOWN", "Co. rej. (no round)", "Rejected in the company's final status, with no round result recorded"],
+  ["CV", "Company CV screen rejected", "Rejected at the company's CV / resume screen"],
+  ["ASSESSMENT", "Company assessment rejected", "Rejected at the company's assessment / assignment"],
+  ["TR1", "Technical round 1 rejected", "Rejected in the first technical round"],
+  ["TR2", "Technical round 2 rejected", "Rejected in the second technical round"],
+  ["TR3", "Technical round 3+ rejected", "Rejected in the third or a later technical round"],
+  ["MR", "Managerial round rejected", "Rejected in the managerial round"],
+  ["CLIENT", "Client round rejected", "Rejected in the client round"],
+  ["HR", "HR round rejected", "Rejected in the HR round"],
+  ["OTHER", "Other round rejected", "Rejected in a round of type Other"],
+  ["UNKNOWN", "Company rejected (round not recorded)", "Rejected in the company's final status, with no round result recorded"],
 ];
 
 const METRIC_COLUMNS: Column[] = [
-  { key: "ta", label: "TA", title: "Applications", render: (row) => n(row.applications) },
-  { key: "academy", label: "Academy TA", render: (row) => n(row.academyApplications) },
-  { key: "rej", label: "Int. rejected", title: "Rejected at RS, SC or AS", render: (row) => <>{n(row.internalRejected, "text-rose-600")} <span className="text-[11px] text-slate-400">{pct(row.internalRejected, row.applications)}</span></> },
+  { key: "ta", label: "Applied", title: "Applications", render: (row) => n(row.applications) },
+  { key: "academy", label: "Academy applied", render: (row) => n(row.academyApplications) },
+  { key: "rej", label: "Rejected by us", title: "Rejected at resume shortlist, screening or assignment", render: (row) => <>{n(row.internalRejected, "text-rose-600")} <span className="text-[11px] text-slate-400">{pct(row.internalRejected, row.applications)}</span></> },
   { key: "arej", label: "Academy int. rejected", render: (row) => <>{n(row.academyInternalRejected, "font-semibold text-rose-700")} <span className="text-[11px] text-slate-400">{pct(row.academyInternalRejected, row.academyApplications)}</span></> },
-  { key: "rs", label: "RS rej.", render: (row) => n(row.rejectedAt.RS) },
-  { key: "sc", label: "SC rej.", render: (row) => n(row.rejectedAt.SC) },
-  { key: "as", label: "AS rej.", render: (row) => n(row.rejectedAt.AS) },
-  { key: "ns", label: "SC no-show", render: (row) => n(row.screeningNoShow) },
-  { key: "sp", label: "SP", render: (row) => n(row.finalShortlisted) },
+  { key: "rs", label: "Resume rejected", render: (row) => n(row.rejectedAt.RS) },
+  { key: "sc", label: "Screening rejected", render: (row) => n(row.rejectedAt.SC) },
+  { key: "as", label: "Assignment rejected", render: (row) => n(row.rejectedAt.AS) },
+  { key: "ns", label: "Missed screening", render: (row) => n(row.screeningNoShow) },
+  { key: "sp", label: "Final shortlist", render: (row) => n(row.finalShortlisted) },
   { key: "shared", label: "Shared", render: (row) => n(row.shared) },
-  { key: "direct", label: "Direct", title: "With the company without the internal shortlist (SP)", render: (row) => n(row.direct, "text-sky-700") },
+  { key: "direct", label: "Direct", title: "Reached the company without our final shortlist", render: (row) => n(row.direct, "text-sky-700") },
   { key: "notshared", label: "Not shared", render: (row) => n(row.notShared, "font-semibold text-amber-700") },
   { key: "inproc", label: "In process", render: (row) => n(row.inProcess) },
   { key: "corej", label: "Co. rejected", title: "Rejected by the company, all rounds", render: (row) => <>{n(row.companyRejected, "text-rose-600")} <span className="text-[11px] text-slate-400">{pct(row.companyRejected, row.shared)}</span></> },
@@ -77,20 +78,20 @@ const METRIC_COLUMNS: Column[] = [
 ];
 
 const METRIC_CSV: [string, (row: InsightMetrics) => CsvValue][] = [
-  ["TA", (row) => row.applications],
-  ["Academy TA", (row) => row.academyApplications],
+  ["Applied", (row) => row.applications],
+  ["Academy applied", (row) => row.academyApplications],
   ["Internally rejected", (row) => row.internalRejected],
   ["Internally rejected %", (row) => pct(row.internalRejected, row.applications)],
   ["Academy internally rejected", (row) => row.academyInternalRejected],
   ["Academy internally rejected %", (row) => pct(row.academyInternalRejected, row.academyApplications)],
-  ["RS rejected", (row) => row.rejectedAt.RS],
-  ["SC rejected", (row) => row.rejectedAt.SC],
-  ["AS rejected", (row) => row.rejectedAt.AS],
-  ["SC no-show", (row) => row.screeningNoShow],
-  ["SP", (row) => row.finalShortlisted],
+  ["Resume shortlist rejected", (row) => row.rejectedAt.RS],
+  ["Screening rejected", (row) => row.rejectedAt.SC],
+  ["Assignment rejected", (row) => row.rejectedAt.AS],
+  ["Missed screening", (row) => row.screeningNoShow],
+  ["Final shortlist", (row) => row.finalShortlisted],
   ["Shared", (row) => row.shared],
   ["Not shared", (row) => row.notShared],
-  ["Direct to company (no SP)", (row) => row.direct],
+  ["Direct to company (no final shortlist)", (row) => row.direct],
   ["In process", (row) => row.inProcess],
   ["Company rejected", (row) => row.companyRejected],
   ...COMPANY_REJECT_STAGES.map(([stage, label]): [string, (row: InsightMetrics) => CsvValue] => [label, (row) => row.companyRejectedAt[stage]]),
@@ -114,7 +115,7 @@ function downloadInsightsTab(tab: string, data: Insights, filters: InsightFilter
   else if (tab === "months") metricsCsv(csvName("by-month", filters), [["Month", (row) => row.month], ["Companies", (row) => row.companies], ["Jobs", (row) => row.jobs]], data.byMonth);
   else if (tab === "categories") metricsCsv(csvName("by-category", filters), [["Category", (row) => CATEGORY_LABELS[row.category] ?? row.category]], data.byCategory);
   else if (tab === "skipped") {
-    downloadCsv(csvName("screening-skipped", filters), ["Company", "Role", "Month", "PSM", "Reason", "Note", "SP"],
+    downloadCsv(csvName("screening-skipped", filters), ["Company", "Role", "Month", "PSM", "Reason", "Note", "Final shortlist"],
       data.screeningSkipped.jobs.map((row) => [row.companyName, row.roleTitle, row.month, row.ownerName, skipReasonLabel(row.reason), row.note, row.finalShortlisted]));
   } else if (tab === "reasons") {
     downloadCsv(csvName("funnels-and-reasons", filters), ["Type", "Stage / round / status", "Reason", "Count", "Appeared", "Cleared", "Rejected", "No-show", "Scheduled"], [
@@ -127,7 +128,9 @@ function downloadInsightsTab(tab: string, data: Insights, filters: InsightFilter
   }
 }
 
-const internalResult = (row: StudentInsight) => (row.rejectedAt ? `Rejected at ${row.rejectedAt}` : row.finalShortlisted ? "SP" : row.screeningNoShow ? "SC no-show" : "");
+const STEP_WORDS: Record<string, string> = { RS: "resume shortlist", SC: "screening", AS: "assignment" };
+const rejectedAtText = (step: string) => `Rejected at ${STEP_WORDS[step] ?? step}`;
+const internalResult = (row: StudentInsight) => (row.rejectedAt ? rejectedAtText(row.rejectedAt) : row.finalShortlisted ? "Final shortlist" : row.screeningNoShow ? "Missed screening" : "");
 const companyResult = (row: StudentInsight) => row.shareStatus === "NOT_SHARED" ? "Not shared with company"
   : row.shareStatus === "SHARED" ? (!row.pipelineStatus || row.pipelineStatus === "NOT_SUBMITTED" ? "Shared · sheet pending"
     : `${PIPELINE_STATUS_LABELS[row.pipelineStatus]}${row.companyRejectedRound ? ` at ${row.companyRejectedRound}` : ""}`) : "";
@@ -262,15 +265,16 @@ function StudentsTable({ filters, companyName, onClearCompany }: { filters: Insi
                 <tr key={row.applicationId} className="border-t border-slate-100 align-top">
                   <td className="px-4 py-2">
                     <Link to={`/candidates/${row.candidateId}`} className="font-medium text-slate-800 hover:text-indigo-700">{row.fullName}</Link>
+                    <div className="mt-0.5"><ProductBadge products={row.productName} /></div>
                     <p className="text-xs text-slate-400">{row.mobile ?? row.candidateCode}</p>
                   </td>
                   <td className="px-3 py-2 text-xs text-slate-600">{CATEGORY_LABELS[row.category] ?? row.category}{row.productName && row.category !== "ACADEMY" && <p className="text-slate-400">{row.productName}</p>}</td>
                   <td className="px-3 py-2 text-xs"><Link to={`/companies/${row.companyId}`} className="font-medium text-slate-700 hover:text-indigo-700">{row.companyName}</Link><p className="text-slate-500">{row.roleTitle}</p></td>
                   <td className="whitespace-nowrap px-3 py-2 text-xs text-slate-500">{monthLabel(row.month)}</td>
                   <td className="px-3 py-2 text-xs">
-                    {row.rejectedAt ? <span className="text-rose-600">Rejected at {row.rejectedAt}{row.rejectionReason && <span className="block text-slate-500">{row.rejectionReason}</span>}</span>
-                      : row.finalShortlisted ? <span className="text-emerald-700">SP</span>
-                        : row.screeningNoShow ? <span className="text-violet-700">SC no-show</span> : !row.directShare && <span className="text-slate-300">—</span>}
+                    {row.rejectedAt ? <span className="text-rose-600">{rejectedAtText(row.rejectedAt)}{row.rejectionReason && <span className="block text-slate-500">{row.rejectionReason}</span>}</span>
+                      : row.finalShortlisted ? <span className="text-emerald-700">Final shortlist</span>
+                        : row.screeningNoShow ? <span className="text-violet-700">Missed screening</span> : !row.directShare && <span className="text-slate-300">—</span>}
                     {row.directShare && (
                       <span className={`block ${row.directShare.reason ? "text-sky-700" : "text-amber-700"}`} title="Reached the company without the internal shortlist">
                         Direct to company<span className="block text-slate-500">{directLabel(row.directShare.reason)}</span>
@@ -305,6 +309,7 @@ export function InsightsPage() {
   const [filters, setFilters] = useState<InsightFilters>({});
   const [companyName, setCompanyName] = useState<string | null>(null);
   const [tab, setTab] = useState("companies");
+  const [moreNumbers, setMoreNumbers] = useState(false);
   const overview = useQuery({ queryKey: ["insights", "overview", filters], queryFn: () => insightsApi.overview(filters), placeholderData: keepPreviousData });
   const set = (patch: Partial<InsightFilters>) => setFilters((current) => ({ ...current, ...patch }));
   const [jobIdsText, setJobIdsText] = useState("");
@@ -318,8 +323,8 @@ export function InsightsPage() {
         eyebrow="Stakeholder view"
         title="Placement insights"
         description={filters.dateBy === "processEnd"
-          ? "Internal screening and company outcomes by company, month and student. Showing jobs whose company process has ended; a drive counts in the month it ended."
-          : "Internal screening and company outcomes by company, month and student. A drive counts in the month its job was requested."}
+          ? "How students moved through our shortlisting and the companies' rounds, by company, month and student. Showing drives whose company process has ended, in the month it ended."
+          : "How students moved through our shortlisting and the companies' rounds, by company, month and student. A drive counts in the month its job was requested."}
       />
 
       <Card className="flex flex-wrap items-end gap-3 p-4">
@@ -363,15 +368,18 @@ export function InsightsPage() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <KpiCard label="Applications" value={t.applications} hint={`${t.students} students · ${t.academyApplications} Academy`} icon={Users} />
               <KpiCard label="Academy rejected internally" value={t.academyInternalRejected} hint={`${pct(t.academyInternalRejected, t.academyApplications)} of Academy · ${t.internalRejected} all categories`} icon={UserMinus} tone="rose" />
-              <KpiCard label="Final shortlist (SP)" value={t.finalShortlisted} hint={`${t.shared} shared · ${t.notShared} not shared`} icon={ListChecks} tone="sky" />
-              <KpiCard label="Selects" value={t.selected} hint={`${t.offers} offers · ${t.joined} joined · ${pct(t.selected, t.shared)} of shared`} icon={Award} tone="emerald" />
+              <KpiCard label="Made our final shortlist" value={t.finalShortlisted} hint={`${t.shared} shared · ${t.notShared} not shared`} icon={ListChecks} tone="sky" />
+              <KpiCard label="Selected by companies" value={t.selected} hint={`${t.offers} offers · ${t.joined} joined · ${pct(t.selected, t.shared)} of shared`} icon={Award} tone="emerald" />
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <KpiCard label="Rejected at RS / SC / AS" value={`${t.rejectedAt.RS} / ${t.rejectedAt.SC} / ${t.rejectedAt.AS}`} hint={`${t.screeningNoShow} SC no-shows`} icon={UserMinus} tone="slate" />
-              <KpiCard label="Not shared after SP" value={t.notShared} hint="Shortlisted, but the job is still at “Yet to share CVs” or the imported company sheet does not list them" icon={UserX} tone="amber" />
-              <KpiCard label="Shared with company" value={t.shared} hint={`${t.inProcess} in process · ${t.companyRejected} rejected · ${t.direct} direct (no SP)`} icon={Send} tone="sky" />
+            <div className="-mt-3 flex justify-end">
+              <Button size="sm" variant="ghost" className="h-7 text-xs text-slate-500" onClick={() => setMoreNumbers(!moreNumbers)}>{moreNumbers ? "Hide extra numbers" : "Show more numbers"}</Button>
+            </div>
+            {moreNumbers && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <KpiCard label="Rejected by us: resume / screening / assignment" value={`${t.rejectedAt.RS} / ${t.rejectedAt.SC} / ${t.rejectedAt.AS}`} hint={`${t.screeningNoShow} missed screening`} icon={UserMinus} tone="slate" />
+              <KpiCard label="Shortlisted but not shared" value={t.notShared} hint="Shortlisted, but the job is still at “Yet to share CVs” or the imported company sheet does not list them" icon={UserX} tone="amber" />
+              <KpiCard label="Shared with company" value={t.shared} hint={`${t.inProcess} in process · ${t.companyRejected} rejected · ${t.direct} sent direct (skipped our shortlist)`} icon={Send} tone="sky" />
               <KpiCard label="Drives with screening skipped" value={data.screeningSkipped.total} hint={data.screeningSkipped.byReason[0] ? `Most often: ${data.screeningSkipped.byReason[0].reason === "UNSPECIFIED" ? "no reason chosen" : SCREENING_SKIP_REASON_LABELS[data.screeningSkipped.byReason[0].reason]}` : "Every drive was screened"} icon={GraduationCap} tone="slate" />
-            </div>
+            </div>}
 
             <Tabs value={tab} onValueChange={setTab}>
               <div className="flex flex-wrap items-start gap-2">
@@ -381,7 +389,7 @@ export function InsightsPage() {
                 <TabsTrigger value="categories">By category</TabsTrigger>
                 {can("candidate:read") && <TabsTrigger value="students">Students</TabsTrigger>}
                 <TabsTrigger value="skipped">Screening skipped ({data.screeningSkipped.total})</TabsTrigger>
-                <TabsTrigger value="reasons">Funnels &amp; reasons</TabsTrigger>
+                <TabsTrigger value="reasons">Rounds &amp; rejection reasons</TabsTrigger>
               </TabsList>
               {tab !== "students" && (
                 <Button size="sm" variant="outline" className="ml-auto" onClick={() => downloadInsightsTab(tab, data, filters)}><Download size={13} /> Download CSV</Button>
@@ -480,7 +488,7 @@ export function InsightsPage() {
                   <Card className="overflow-hidden">
                     <div className="border-b border-slate-100 px-4 py-3">
                       <p className="text-sm font-semibold text-slate-800">Direct to company · why shortlisting was skipped</p>
-                      <p className="text-xs text-slate-500">Profiles with the company that were not selected at SP, e.g. shared straight into the company sheet.</p>
+                      <p className="text-xs text-slate-500">Profiles with the company that were not on our final shortlist, e.g. added straight to the company sheet.</p>
                     </div>
                     {data.directByReason.length === 0 ? <p className="px-4 py-4 text-xs text-slate-400">Every profile with the company came through the internal shortlist.</p> : (
                       <ul className="divide-y divide-slate-100">

@@ -8,6 +8,7 @@ import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { trackingApi } from "../../services/tracking-api";
 import { ProcessBadge, ProcessDates, ProcessStatusDialog, RecordGuidanceDialog } from "./tracking-dialogs";
+import { ProductBadge } from "../../components/student-tags";
 
 const day = (value: string) => format(new Date(value), "d MMM yyyy");
 
@@ -93,7 +94,7 @@ export function JobTrackingPanel({ jobRequestId, roleTitle, companyName, rounds 
                 {notShared.map((row) => (
                   <tr key={row.id} className="border-t border-slate-100">
                     <td className="px-4 py-2"><Link to={`/candidates/${row.candidate.id}`} className="font-medium text-slate-800 hover:text-indigo-700">{row.candidate.fullName}</Link></td>
-                    <td className="px-3 py-2 text-xs text-slate-500">{row.product?.name ?? "—"}</td>
+                    <td className="px-3 py-2 text-xs text-slate-500"><ProductBadge products={row.product ? [row.product] : null} /></td>
                     <td className="px-3 py-2 text-xs text-slate-500">{row.priority ?? "—"}</td>
                     <td className="px-3 py-2 text-xs text-slate-500">{row.selectionBasis ?? "—"}</td>
                     <td className="px-4 py-2 text-xs text-amber-700">{row.reason}</td>

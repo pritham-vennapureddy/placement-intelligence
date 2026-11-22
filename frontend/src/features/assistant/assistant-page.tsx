@@ -14,6 +14,7 @@ const SUGGESTIONS = [
   "How many unique Academy students are in the pipeline this month, and how many got interviews?",
   "Which companies are in the pipeline this month? Show openings and Academy students shared and in process.",
   "At which round are most Academy students getting rejected, company wise?",
+  "What are the main reasons companies rejected our students this month?",
   "Who are the Academy students still in a company process right now?",
   "What are our placement KPIs this month and how do they compare with last month?",
   "Which potential companies are confirmed or starting this month, and what did CRM say?",
@@ -28,6 +29,7 @@ const TOOL_LABELS: Record<string, string> = {
   get_insights: "insights",
   search_jobs: "job requests",
   get_drive_notes: "CRM & RSA notes",
+  get_rejection_reasons: "company rejection reasons",
 };
 
 type Turn = ChatMessage & { toolsUsed?: string[]; failed?: boolean };

@@ -14,7 +14,7 @@ import {
   type RoundType,
 } from "@placement/shared";
 import { format } from "date-fns";
-import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, CornerDownRight, Plus, Send, Tag, Trash2, UploadCloud } from "lucide-react";
+import { ArrowDown, ArrowUp, CalendarDays, ChevronDown, ClipboardCheck, CornerDownRight, FileText, Plus, Send, Tag, Trash2, UploadCloud } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -36,6 +36,8 @@ import { JobTrackingPanel } from "../tracking/job-tracking-panel";
 import { ProcessDates } from "../tracking/tracking-dialogs";
 import { InterviewBadge, PipelineBadge } from "../screening/badges";
 import { PipelineOverview, productOf, segmentOf, SEGMENT_LABELS, type PipelineFilter, type Segment } from "./pipeline-overview";
+import { ProductBadge } from "../../components/student-tags";
+import { docUrlError, emptyRejection, RejectionReasonFields, rejectionPayload, type RejectionValue } from "./rejection-reason-fields";
 
 function useRefresh(jobRequestId: string) {
   const queryClient = useQueryClient();
@@ -143,7 +145,7 @@ function NominateDialog({ jobRequestId, open, onOpenChange }: { jobRequestId: st
                 <span className="ml-2 text-xs text-slate-400">{app.candidate.mobile ?? app.candidate.email}</span>
               </span>
               {app.finalPriority && <span className="text-xs text-slate-500">{app.finalPriority}</span>}
-              <span className="text-xs text-slate-400">{app.product?.name ?? ""}</span>
+              <ProductBadge products={app.product ? [app.product] : app.candidate.products} />
             </label>
           ))}
           {eligible.isPending && <p className="p-6 text-center text-sm text-slate-400">Loading…</p>}
@@ -165,27 +167,28 @@ function InterviewDialog({ jobRequestId, target, onClose }: { jobRequestId: stri
   const [outcome, setOutcome] = useState<InterviewOutcome>("SCHEDULED");
   const [interviewer, setInterviewer] = useState("");
   const [feedback, setFeedback] = useState("");
-  const [reason, setReason] = useState("");
+  const [rejection, setRejection] = useState<RejectionValue>(emptyRejection);
   const [roundDate, setRoundDate] = useState("");
   useEffect(() => {
     setRoundDate(existing?.scheduledAt?.slice(0, 10) ?? "");
     setOutcome(existing?.outcome ?? "SCHEDULED");
     setInterviewer(existing?.interviewerName ?? "");
     setFeedback(existing?.feedback ?? "");
-    setReason(existing?.rejectionReason ?? "");
+    setRejection({ tagId: existing?.rejectionTag?.id ?? null, note: existing?.rejectionReason ?? "", docUrl: existing?.rejectionDocUrl ?? "" });
   }, [target]); // eslint-disable-line react-hooks/exhaustive-deps
   const save = useMutation({
     mutationFn: () => pipelineApi.recordInterview(jobRequestId, target!.nomination.id, target!.round.id, {
       outcome,
       // A calendar day, stored at midnight UTC so it reads back as the same day.
       scheduledAt: roundDate ? `${roundDate}T00:00:00.000Z` : null,
-      interviewerName: interviewer.trim() || null, feedback: feedback.trim() || null, rejectionReason: reason.trim() || null,
+      interviewerName: interviewer.trim() || null, feedback: feedback.trim() || null,
+      ...(outcome === "REJECTED" ? rejectionPayload(rejection) : {}),
     }),
     onSuccess: async () => { await refresh(); toast.success("Round result saved"); onClose(); },
   });
   return (
     <Dialog open={Boolean(target)} onOpenChange={(open) => !open && !save.isPending && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{target?.round.name}</DialogTitle>
           <DialogDescription>{target?.nomination.application.candidate.fullName}. Round results do not change the overall status; use “Change status” for that.</DialogDescription>
@@ -202,12 +205,12 @@ function InterviewDialog({ jobRequestId, target, onClose }: { jobRequestId: stri
           </FormField>
           <FormField id="round-interviewer" label="Interviewer"><Input id="round-interviewer" value={interviewer} onChange={(event) => setInterviewer(event.target.value)} /></FormField>
           <FormField id="round-feedback" label="Feedback"><Textarea id="round-feedback" rows={3} value={feedback} onChange={(event) => setFeedback(event.target.value)} /></FormField>
-          {outcome === "REJECTED" && <FormField id="round-reason" label="Rejection reason"><Input id="round-reason" value={reason} onChange={(event) => setReason(event.target.value)} /></FormField>}
+          {outcome === "REJECTED" && <RejectionReasonFields idPrefix="round" value={rejection} onChange={setRejection} />}
         </div>
         {save.error && <p role="alert" className="text-sm text-rose-600">{save.error.message}</p>}
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={save.isPending}>Cancel</Button>
-          <Button onClick={() => save.mutate()} disabled={save.isPending}>Save result</Button>
+          <Button onClick={() => save.mutate()} disabled={save.isPending || (outcome === "REJECTED" && Boolean(docUrlError(rejection.docUrl)))}>Save result</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -301,6 +304,7 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
   const [directTarget, setDirectTarget] = useState<Nomination[] | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [bulkDates, setBulkDates] = useState<Nomination[] | null>(null);
+  const [bulkRound, setBulkRound] = useState<Nomination[] | null>(null);
   const [filter, setFilter] = useState<PipelineFilter>({ segment: "ALL", product: "ALL" });
   const pipeline = useQuery({ queryKey: ["pipeline", jobRequestId], queryFn: () => pipelineApi.get(jobRequestId) });
 
@@ -395,7 +399,8 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
         {canEdit && pickedList.length > 0 && (
           <div className="flex flex-wrap items-center gap-2 border-b border-indigo-100 bg-indigo-50/70 px-4 py-2 text-xs text-indigo-900">
             <span className="font-medium">{pickedList.length} selected</span>
-            <Button size="sm" className="h-7" onClick={() => setBulkDates(pickedList)}><CalendarDays size={13} /> Set process dates</Button>
+            {rounds.length > 0 && <Button size="sm" className="h-7" onClick={() => setBulkRound(pickedList)}><ClipboardCheck size={13} /> Record round result</Button>}
+            <Button size="sm" variant="outline" className="h-7 bg-white" onClick={() => setBulkDates(pickedList)}><CalendarDays size={13} /> Set process dates</Button>
             <Button size="sm" variant="ghost" className="h-7" onClick={() => setPicked(new Set())}>Clear</Button>
           </div>
         )}
@@ -433,7 +438,10 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
                       )}
                       <td className="px-4 py-2.5">
                         <Link to={`/candidates/${nomination.application.candidate.id}`} className="font-medium text-slate-800 hover:text-indigo-700">{nomination.application.candidate.fullName}</Link>
-                        <p className="text-xs text-slate-400">{nomination.application.product?.name ?? ""}{nomination.source === "IMPORT" ? " · from company sheet" : ""}</p>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                          <ProductBadge products={nomination.application.product ? [nomination.application.product] : nomination.application.candidate.products} />
+                          {nomination.source === "IMPORT" && <span className="text-[11px] text-slate-400">from company sheet</span>}
+                        </div>
                         {isDirectShare(nomination) && (
                           <button type="button" disabled={!canEdit} onClick={() => setDirectTarget([nomination])}
                             title={nomination.directShareNote ?? (canEdit ? "Say why this profile skipped the internal shortlist" : undefined)}
@@ -453,7 +461,16 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
                               className="rounded-md p-0.5 hover:bg-slate-100 disabled:cursor-default disabled:hover:bg-transparent" title={result?.feedback ?? "Record result"}>
                               {result ? <InterviewBadge outcome={result.outcome} /> : <span className="text-xs text-slate-300">—</span>}
                               {result?.scheduledAt && <p className="mt-0.5 whitespace-nowrap text-[10px] text-slate-400">{format(new Date(`${result.scheduledAt.slice(0, 10)}T00:00:00`), "d MMM yyyy")}</p>}
+                              {result?.outcome === "REJECTED" && (
+                                <p className={`mt-0.5 max-w-32 truncate text-left text-[10px] ${result.rejectionTag ? "text-rose-700" : "font-medium text-amber-700"}`}
+                                  title={[result.rejectionTag?.label, result.rejectionReason].filter(Boolean).join(" — ") || undefined}>
+                                  {result.rejectionTag?.label ?? (canEdit ? "Add reason" : "No reason")}
+                                </p>
+                              )}
                             </button>
+                            {result?.rejectionDocUrl && (
+                              <a href={result.rejectionDocUrl} target="_blank" rel="noreferrer" className="mt-0.5 inline-flex items-center gap-0.5 text-[10px] text-indigo-600 hover:underline"><FileText size={10} /> Doc</a>
+                            )}
                           </td>
                         );
                       })}
@@ -507,8 +524,72 @@ export function PipelineTab({ jobRequestId, roleTitle = "", companyName = "" }: 
       <WithdrawDialog jobRequestId={jobRequestId} nomination={withdrawing} onClose={() => setWithdrawing(null)} />
       <StudentProcessDatesDialog jobRequestId={jobRequestId} nomination={datesTarget} onClose={() => setDatesTarget(null)} />
       <BulkProcessDatesDialog jobRequestId={jobRequestId} targets={bulkDates} onClose={(saved) => { setBulkDates(null); if (saved) setPicked(new Set()); }} />
+      <BulkRoundResultDialog jobRequestId={jobRequestId} rounds={rounds} targets={bulkRound} onClose={(saved) => { setBulkRound(null); if (saved) setPicked(new Set()); }} />
       <DirectShareDialog jobRequestId={jobRequestId} targets={directTarget} untagged={untagged} onClose={() => setDirectTarget(null)} />
     </div>
+  );
+}
+
+/** One round result (and, for rejections, the reason) for many students at once. */
+function BulkRoundResultDialog({ jobRequestId, rounds, targets, onClose }: { jobRequestId: string; rounds: Round[]; targets: Nomination[] | null; onClose: (saved: boolean) => void }) {
+  const refresh = useRefresh(jobRequestId);
+  const [roundId, setRoundId] = useState("");
+  const [outcome, setOutcome] = useState<InterviewOutcome>("REJECTED");
+  const [roundDate, setRoundDate] = useState("");
+  const [rejection, setRejection] = useState<RejectionValue>(emptyRejection);
+  useEffect(() => {
+    setRoundId(rounds[0]?.id ?? "");
+    setOutcome("REJECTED");
+    setRoundDate("");
+    setRejection(emptyRejection());
+  }, [targets]); // eslint-disable-line react-hooks/exhaustive-deps
+  const round = rounds.find((entry) => entry.id === roundId);
+  const alreadyRecorded = round ? (targets ?? []).filter((nomination) => nomination.interviews.some((entry) => entry.roundId === round.id)).length : 0;
+  const save = useMutation({
+    mutationFn: () => pipelineApi.recordInterviewsBulk(jobRequestId, roundId, {
+      nominationIds: (targets ?? []).map((nomination) => nomination.id),
+      outcome,
+      ...(roundDate ? { scheduledAt: `${roundDate}T00:00:00.000Z` } : {}),
+      ...(outcome === "REJECTED" ? rejectionPayload(rejection) : {}),
+    }),
+    onSuccess: async () => { await refresh(); toast.success(`Saved ${round?.name ?? "round"} result for ${targets?.length ?? 0} students`); onClose(true); },
+  });
+  return (
+    <Dialog open={Boolean(targets)} onOpenChange={(open) => !open && !save.isPending && onClose(false)}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Record a round result for {targets?.length ?? 0} students</DialogTitle>
+          <DialogDescription>Use this when the company gives the same result for several students, e.g. everyone rejected in the technical round.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField id="bulk-round" label="Round" required>
+              <Select value={roundId} onValueChange={setRoundId}>
+                <SelectTrigger id="bulk-round" className="h-10 w-full"><SelectValue placeholder="Choose a round" /></SelectTrigger>
+                <SelectContent>{rounds.map((entry) => <SelectItem key={entry.id} value={entry.id}>{entry.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </FormField>
+            <FormField id="bulk-outcome" label="Result" required>
+              <Select value={outcome} onValueChange={(value) => setOutcome(value as InterviewOutcome)}>
+                <SelectTrigger id="bulk-outcome" className="h-10 w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>{INTERVIEW_OUTCOMES.map((value) => <SelectItem key={value} value={value}>{value === "SCHEDULED" ? "Scheduled / in progress" : INTERVIEW_OUTCOME_LABELS[value]}</SelectItem>)}</SelectContent>
+              </Select>
+            </FormField>
+          </div>
+          <FormField id="bulk-round-date" label="Round date" hint="Leave blank to keep each student's own date.">
+            <Input id="bulk-round-date" type="date" value={roundDate} onChange={(event) => setRoundDate(event.target.value)} />
+          </FormField>
+          {outcome === "REJECTED" && <RejectionReasonFields idPrefix="bulk-round" value={rejection} onChange={setRejection} />}
+          {alreadyRecorded > 0 && <p className="text-xs text-amber-700">{alreadyRecorded} of these students already have a {round?.name} result; it will be replaced.</p>}
+          <p className="text-xs text-slate-500">{targets?.map((nomination) => nomination.application.candidate.fullName).join(", ")}</p>
+        </div>
+        {save.error && <p role="alert" className="text-sm text-rose-600">{save.error.message}</p>}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onClose(false)} disabled={save.isPending}>Cancel</Button>
+          <Button onClick={() => save.mutate()} disabled={!roundId || save.isPending || (outcome === "REJECTED" && Boolean(docUrlError(rejection.docUrl)))}>Save for {targets?.length ?? 0}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

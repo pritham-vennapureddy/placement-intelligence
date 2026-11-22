@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { sendCreated, sendData, sendNoContent } from "../../utils/http.js";
 import { auditContextFrom } from "../audit/audit.service.js";
 import { pipelineService } from "./pipeline.service.js";
-import type { BulkProcessDatesInput, CreateRoundInput, DirectShareInput, InterviewInput, NominateInput, PipelineStatusInput, ProcessDatesInput, UpdateRoundInput } from "./pipeline.validators.js";
+import type { BulkInterviewInput, BulkProcessDatesInput, CreateRoundInput, DirectShareInput, InterviewInput, NominateInput, PipelineStatusInput, ProcessDatesInput, UpdateRoundInput } from "./pipeline.validators.js";
 
 const jobOf = (request: Request) => request.params.jobRequestId as string;
 const param = (request: Request, name: string) => request.params[name] as string;
@@ -45,6 +45,9 @@ export const pipelineController = {
   },
   async withdraw(request: Request, response: Response) {
     sendData(response, await pipelineService.withdraw(request.user!, jobOf(request), param(request, "nominationId"), (request.body as { notes: string }).notes, auditContextFrom(request)));
+  },
+  async recordInterviewsBulk(request: Request, response: Response) {
+    sendData(response, await pipelineService.recordInterviewsBulk(request.user!, jobOf(request), param(request, "roundId"), request.body as BulkInterviewInput, auditContextFrom(request)));
   },
   async recordInterview(request: Request, response: Response) {
     sendData(response, await pipelineService.recordInterview(

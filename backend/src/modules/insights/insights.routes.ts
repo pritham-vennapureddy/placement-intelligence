@@ -4,10 +4,12 @@ import { requirePermission } from "../../middleware/authorize.js";
 import { validateParams, validateQuery } from "../../middleware/validate.js";
 import { sendData } from "../../utils/http.js";
 import { academyInsightsService } from "./academy-insights.service.js";
+import { companyReasonsService } from "./company-reasons.service.js";
 import { insightsService } from "./insights.service.js";
 import {
   academyCandidatesQuerySchema,
   academyQuerySchema,
+  companyReasonsQuerySchema,
   academyStudentApplicationsQuerySchema,
   academyStudentParamsSchema,
   insightsQuerySchema,
@@ -34,6 +36,11 @@ insightsRouter.get("/students", requirePermission("candidate:read"), validateQue
 /** Academy & assessed-pool review: funnel, segments, stack, CTC, pool coverage and RSA. */
 insightsRouter.get("/academy", validateQuery(academyQuerySchema), async (request: Request, response: Response) => {
   sendData(response, await academyInsightsService.overview(request.user!, request.query as unknown as AcademyQuery));
+});
+
+/** Company-round rejections grouped by reason tag (Academy filters apply). */
+insightsRouter.get("/academy/company-reasons", validateQuery(companyReasonsQuerySchema), async (request: Request, response: Response) => {
+  sendData(response, await companyReasonsService.overview(request.user!, request.query as unknown as AcademyQuery & { tagId?: string }));
 });
 
 insightsRouter.get(

@@ -13,6 +13,8 @@ export const candidateSummarySelect = {
   resumeUrl: true,
   category: true,
   poolMemberships: { select: { poolType: true } },
+  // Shown next to the student's name everywhere.
+  products: { select: { product: { select: { name: true } } }, orderBy: { firstSeenAt: "asc" } },
 } satisfies Prisma.CandidateSelect;
 
 export const screeningRepository = {

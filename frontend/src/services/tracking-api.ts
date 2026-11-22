@@ -1,6 +1,6 @@
 import type { CompanyProcessPhase, PaginationMeta, StudentSupportKind } from "@placement/shared";
 import type { GuidanceJobOption, GuidanceView, InsightFilters, Insights, JobTracking, MyWork, StudentInsight, StudentInsightsPage, StudentStatusFilter, StudentSupportInput, SupportStatusOption } from "../types/tracking";
-import type { AcademyCandidate, AcademyCandidateView, AcademyFilters, AcademyInsights, AcademyStudentApplication } from "../types/academy";
+import type { AcademyCandidate, AcademyCandidateFilters, AcademyFilters, AcademyInsights, AcademyStudentApplication, CompanyReasons } from "../types/academy";
 import { newIdempotencyKey, request, toQueryString } from "./api";
 
 type Data<T> = { data: T };
@@ -81,7 +81,10 @@ export const academyInsightsApi = {
     const { academyCategory: _category, segment: _segment, ...period } = filters;
     return (await request<Data<{ items: AcademyStudentApplication[] }>>(`/insights/academy/candidates/${candidateId}/applications${toQueryString({ ...period })}`)).data.items;
   },
-  async candidates(filters: AcademyFilters & { view: AcademyCandidateView; q?: string | undefined }): Promise<AcademyCandidate[]> {
+  async candidates(filters: AcademyFilters & AcademyCandidateFilters): Promise<AcademyCandidate[]> {
     return (await request<Data<{ items: AcademyCandidate[] }>>(`/insights/academy/candidates${toQueryString({ ...filters })}`)).data.items;
+  },
+  async companyReasons(filters: AcademyFilters & { tagId?: string | undefined }): Promise<CompanyReasons> {
+    return (await request<Data<CompanyReasons>>(`/insights/academy/company-reasons${toQueryString({ ...filters })}`)).data;
   },
 };

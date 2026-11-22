@@ -22,6 +22,7 @@ import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { Textarea } from "../../components/ui/textarea";
 import { useDebouncedValue } from "../../hooks/use-debounced-value";
@@ -32,6 +33,7 @@ import type { GuidanceJobOption } from "../../types/tracking";
 import type { DriveStages, DriveStepCounts, MonthlyPipeline, MonthlyStudent, MonthlyStudentGroup, PipelineEntry } from "../../types/pulse";
 import { cn } from "../../utils/cn";
 import { downloadCsv } from "../../utils/csv";
+import { PoolBadge, ProductBadge } from "../../components/student-tags";
 
 const currentMonth = () => format(new Date(), "yyyy-MM");
 const monthText = (month: string) => format(new Date(`${month}-01T00:00:00`), "MMMM yyyy");
@@ -315,8 +317,8 @@ function DriveStagesTable({ stages }: { stages: DriveStages }) {
   ] as const;
   const steps: { label: string; value: (counts: DriveStepCounts) => number; tone?: string }[] = [
     { label: "Applied", value: (counts) => counts.applied },
-    { label: "Rejected in our process (RS/SC/AS)", value: (counts) => counts.internalRejected, tone: "text-rose-600" },
-    { label: "Shortlisted by us (SP)", value: (counts) => counts.finalShortlisted },
+    { label: "Rejected in our shortlisting", value: (counts) => counts.internalRejected, tone: "text-rose-600" },
+    { label: "Made our final shortlist", value: (counts) => counts.finalShortlisted },
     { label: "Shared with company", value: (counts) => counts.shared },
     { label: "Got an interview", value: (counts) => counts.interviewed },
   ];
@@ -347,10 +349,10 @@ function DriveStagesTable({ stages }: { stages: DriveStages }) {
               <td className="pb-1 pt-3 font-medium">Company rounds</td>
               {groups.map((group) => (
                 <Fragment key={group.key}>
-                  <td className="px-1 pt-3 text-right" title="Attended">Att.</td>
-                  <td className="px-1 pt-3 text-right text-emerald-700" title="Cleared">Clr.</td>
-                  <td className="px-1 pt-3 text-right text-rose-600" title="Rejected">Rej.</td>
-                  <td className="px-1 pt-3 text-right" title="Scheduled, not yet attended">Sch.</td>
+                  <td className="px-1 pt-3 text-right" title="Attended">Attended</td>
+                  <td className="px-1 pt-3 text-right text-emerald-700" title="Cleared">Cleared</td>
+                  <td className="px-1 pt-3 text-right text-rose-600" title="Rejected">Rejected</td>
+                  <td className="px-1 pt-3 text-right" title="Scheduled, not yet attended">Scheduled</td>
                 </Fragment>
               ))}
             </tr>
@@ -409,12 +411,12 @@ function Drives({ data }: { data: MonthlyPipeline }) {
             <thead className="border-b border-slate-200 text-left text-xs text-slate-500">
               <tr>
                 <th className="py-2 pr-3 font-medium">Company · role</th><th className="pr-3 font-medium">Status</th><th className="pr-3 font-medium">Process dates</th><th className="pr-2 text-right font-medium">Openings</th>
-                <th className="pr-2 text-right font-medium" title="Unique Academy students who applied">Academy</th>
-                <th className="pr-2 text-right font-medium" title="Academy students shared with the company">Acad. shared</th>
-                <th className="pr-2 text-right font-medium" title="Academy students who attended at least one company round">Acad. interviewed</th>
-                <th className="pr-2 text-right font-medium" title="Academy students still in the company process">Acad. in process</th>
-                <th className="pr-2 text-right font-medium" title="Academy students selected">Acad. selected</th>
-                <th className="pr-2 text-right font-medium" title="Assessed-pool students who applied">Pool</th>
+                <th className="pr-2 text-right font-medium" title="Unique Academy students who applied">Academy applied</th>
+                <th className="pr-2 text-right font-medium" title="Academy students shared with the company">Academy shared</th>
+                <th className="pr-2 text-right font-medium" title="Academy students who attended at least one company round">Academy interviewed</th>
+                <th className="pr-2 text-right font-medium" title="Academy students still in the company process">Academy in process</th>
+                <th className="pr-2 text-right font-medium" title="Academy students selected">Academy selected</th>
+                <th className="pr-2 text-right font-medium" title="Assessed-pool students who applied">Pool applied</th>
                 <th className="pr-3 text-right font-medium" title="All students shared with the company">All shared</th>
                 <th className="pr-3 font-medium">Latest CRM remark</th><th className="font-medium">RSA review</th>
               </tr>
@@ -518,7 +520,7 @@ function Placements({ data }: { data: MonthlyPipeline }) {
                   </td>
                   <td className="pr-3 pt-2.5">
                     <Link to={`/candidates/${person.candidateId}`} className="font-medium text-slate-900 hover:text-indigo-700">{person.fullName}</Link>
-                    <p className="text-xs text-slate-500">{CATEGORY_TEXT[person.category] ?? person.category}{person.inPool ? " · assessed pool" : ""}</p>
+                    <div className="mt-0.5 flex flex-wrap gap-1"><ProductBadge products={person.product} />{person.inPool && <span className="rounded-full bg-amber-50 px-1.5 py-px text-[10px] font-medium text-amber-700">Assessed pool</span>}</div>
                   </td>
                   <td className="pr-3 pt-2.5">
                     <Link to={`/job-requests/${person.jobRequestId}?tab=pipeline`} className="text-slate-800 hover:text-indigo-700">{person.companyName}</Link>
@@ -539,7 +541,7 @@ function Placements({ data }: { data: MonthlyPipeline }) {
 function GroupFunnel({ title, group, tone }: { title: string; group: MonthlyStudentGroup; tone: string }) {
   const steps = [
     { label: "In pipeline (applied)", value: group.students },
-    { label: "Shortlisted by us (SP)", value: group.finalShortlisted },
+    { label: "Made our final shortlist", value: group.finalShortlisted },
     { label: "Shared with company", value: group.shared },
     { label: "Got an interview (any company round)", value: group.interviewed },
     { label: "Still in company process", value: group.inProcess },
@@ -549,7 +551,7 @@ function GroupFunnel({ title, group, tone }: { title: string; group: MonthlyStud
   return (
     <div className="rounded-lg border border-slate-200 p-4">
       <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
-      <p className="text-xs text-slate-500">Distinct students · {group.applications} applications · {group.internalRejected} rejected internally (RS/SC/AS) · {group.companyRejected} rejected by companies</p>
+      <p className="text-xs text-slate-500">Distinct students · {group.applications} applications · {group.internalRejected} rejected in our shortlisting · {group.companyRejected} rejected by companies</p>
       <div className="mt-3 grid gap-1.5">
         {steps.map((step) => (
           <div key={step.label} className="grid grid-cols-[1fr_auto] items-center gap-3 text-xs">
@@ -576,7 +578,7 @@ function GroupFunnel({ title, group, tone }: { title: string; group: MonthlyStud
 }
 
 const INTERNAL_LABELS: Record<MonthlyStudent["internal"], string> = {
-  SP: "Shortlisted (SP)", AS_REJECTED: "Rejected at AS", SC_REJECTED: "Rejected at SC", SC_NO_SHOW: "SC no-show", RS_REJECTED: "Rejected at RS", IN_PROGRESS: "In our process",
+  SP: "On our final shortlist", AS_REJECTED: "Rejected at our assignment", SC_REJECTED: "Rejected at our screening", SC_NO_SHOW: "Missed our screening", RS_REJECTED: "Rejected at our resume shortlist", IN_PROGRESS: "In our shortlisting",
 };
 type PeopleView = "ALL" | "SHARED" | "INTERVIEWED" | "SELECTED" | "INTERNAL_REJECTED" | "COMPANY_REJECTED";
 const VIEW_LABELS: Record<PeopleView, string> = { ALL: "Everyone", SHARED: "Shared with company", INTERVIEWED: "Got an interview", SELECTED: "Selected", INTERNAL_REJECTED: "Rejected internally", COMPANY_REJECTED: "Rejected by company" };
@@ -595,8 +597,8 @@ function positionOf(person: MonthlyStudent): { rank: number; label: string } {
     return { rank: 5, label: person.pipelineStatus === "ON_HOLD" ? "On hold with company" : "Shared, waiting for company" };
   }
   if (person.shared && person.pipelineStatus !== "REJECTED" && person.pipelineStatus !== "DROPPED") return { rank: 5, label: "Shared with company" };
-  if (person.internal === "SP") return { rank: 4, label: "Shortlisted by us (SP), not shared yet" };
-  if (person.internal === "IN_PROGRESS") return { rank: 3, label: "In our process (TA/RS/SC/AS)" };
+  if (person.internal === "SP") return { rank: 4, label: "On our final shortlist, not shared yet" };
+  if (person.internal === "IN_PROGRESS") return { rank: 3, label: "In our shortlisting (resume, screening, assignment)" };
   if (person.pipelineStatus === "REJECTED") return { rank: 2, label: person.lastRound ? `Rejected by company at ${person.lastRound}` : "Rejected by company" };
   if (person.pipelineStatus === "DROPPED") return { rank: 2, label: "Dropped" };
   return { rank: 1, label: INTERNAL_LABELS[person.internal] };
@@ -678,7 +680,7 @@ function Students({ data }: { data: MonthlyPipeline }) {
             <tbody className="divide-y divide-slate-100">
               {students.map((student) => (
                 <tr key={student.candidateId} className="align-top">
-                  <td className="py-2 pr-3"><Link to={`/candidates/${student.candidateId}`} className="font-medium text-slate-900 hover:text-indigo-700">{student.fullName}</Link>{student.candidateCode && <span className="block text-xs text-slate-400">{student.candidateCode}</span>}</td>
+                  <td className="py-2 pr-3"><Link to={`/candidates/${student.candidateId}`} className="font-medium text-slate-900 hover:text-indigo-700">{student.fullName}</Link><div className="mt-0.5 flex flex-wrap gap-1"><ProductBadge products={student.best.product} /><PoolBadge source={student.best.poolSource} /></div></td>
                   <td className="pr-3 pt-2 text-xs text-slate-600">{segmentText(student)}</td>
                   <td className="pr-3 pt-2 text-xs">
                     <span className={cn("font-medium", student.best.selected ? "text-emerald-700" : positionOf(student.best).rank <= 2 ? "text-rose-600" : "text-slate-800")}>{student.position}</span>
@@ -707,7 +709,7 @@ function Students({ data }: { data: MonthlyPipeline }) {
             <tbody className="divide-y divide-slate-100">
               {rows.map((person) => (
                 <tr key={person.applicationId}>
-                  <td className="py-2 pr-3"><Link to={`/candidates/${person.candidateId}`} className="font-medium text-slate-900 hover:text-indigo-700">{person.fullName}</Link>{person.candidateCode && <span className="block text-xs text-slate-400">{person.candidateCode}</span>}</td>
+                  <td className="py-2 pr-3"><Link to={`/candidates/${person.candidateId}`} className="font-medium text-slate-900 hover:text-indigo-700">{person.fullName}</Link><div className="mt-0.5 flex flex-wrap gap-1"><ProductBadge products={person.product} /><PoolBadge source={person.poolSource} /></div></td>
                   <td className="pr-3 text-xs text-slate-600">{segmentText(person)}</td>
                   <td className="pr-3 text-xs"><Link to={`/job-requests/${person.jobRequestId}`} className="text-slate-800 hover:text-indigo-700">{person.companyName}</Link><span className="block text-slate-500">{person.roleTitle}</span></td>
                   <td className="pr-3 text-xs text-slate-600">{INTERNAL_LABELS[person.internal]}</td>
@@ -728,6 +730,7 @@ function Students({ data }: { data: MonthlyPipeline }) {
 export function MonthlyPipelinePage() {
   const [params, setParams] = useSearchParams();
   const month = params.get("month") ?? currentMonth();
+  const tab = params.get("tab") ?? "drives";
   const query = useQuery({ queryKey: ["monthly-pipeline", month], queryFn: () => monthlyPipelineApi.month(month), placeholderData: keepPreviousData });
   const data = query.data;
   const loading = query.isPending;
@@ -736,11 +739,11 @@ export function MonthlyPipelinePage() {
       <PageHeader
         eyebrow="Workspace"
         title="Monthly pipeline"
-        description="Companies CRM expects this month, the drives running, and how Academy and assessed-pool students are doing in them."
+        description="Pick a month to see the job drives running, how Academy and assessed-pool students are doing in them, placements, and CRM's potential companies."
         actions={(
           <label className="flex items-center gap-2 text-sm text-slate-600">
             Month
-            <Input type="month" className="w-40" value={month} onChange={(event) => event.target.value && setParams({ month: event.target.value })} />
+            <Input type="month" className="w-40" value={month} onChange={(event) => event.target.value && setParams((current) => { const next = new URLSearchParams(current); next.set("month", event.target.value); return next; })} />
           </label>
         )}
       />
@@ -757,10 +760,18 @@ export function MonthlyPipelinePage() {
           </div>
           {loading || !data ? <Card><LoadingRows rows={8} /></Card> : (
             <>
-              <PotentialList data={data} />
-              <Placements data={data} />
-              <Drives data={data} />
-              <Students data={data} />
+              <Tabs value={tab} onValueChange={(value) => setParams((current) => { const next = new URLSearchParams(current); next.set("tab", value); return next; })}>
+                <TabsList className="max-w-full flex-wrap justify-start group-data-[orientation=horizontal]/tabs:h-auto">
+                  <TabsTrigger value="drives">Job drives ({data.drives.summary.live})</TabsTrigger>
+                  <TabsTrigger value="students">Academy & pool students</TabsTrigger>
+                  <TabsTrigger value="placements">Placements ({data.placements.total})</TabsTrigger>
+                  <TabsTrigger value="potential">Potential companies · CRM ({data.potential.summary.active})</TabsTrigger>
+                </TabsList>
+                <TabsContent value="drives"><Drives data={data} /></TabsContent>
+                <TabsContent value="students"><Students data={data} /></TabsContent>
+                <TabsContent value="placements"><Placements data={data} /></TabsContent>
+                <TabsContent value="potential"><PotentialList data={data} /></TabsContent>
+              </Tabs>
             </>
           )}
         </>

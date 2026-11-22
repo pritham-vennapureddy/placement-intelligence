@@ -11,7 +11,7 @@ import { Prisma } from "../../generated/prisma/client.js";
 import type { AuthenticatedUser } from "../../middleware/authenticate.js";
 import { ApiError } from "../../utils/api-error.js";
 import { recordAudit, type AuditContext } from "../audit/audit.service.js";
-import { academyFacts } from "../insights/academy-insights.service.js";
+import { academyFacts, APPLICATION_PRODUCT, POOL_SOURCE, PRODUCT_NAMES } from "../insights/academy-insights.service.js";
 import { ROUND_LABELS } from "../insights/company-rounds.js";
 import { ownerFilter } from "../insights/insights.service.js";
 import type { AcademyQuery } from "../insights/insights.validators.js";
@@ -146,12 +146,15 @@ async function students(month: string, owners: Prisma.Sql) {
       ORDER BY sort`,
     prisma.$queryRaw<{
       application_id: string; candidate_id: string; full_name: string; candidate_code: string | null; category: string; academy: boolean; in_pool: boolean; tier: string | null;
+      product: string | null; pool_source: string | null;
       job_id: string; job_code: string; role_title: string; company_id: string; company_name: string;
       rs_rej: boolean; sc_rej: boolean; as_rej: boolean; sc_no_show: boolean; sp: boolean; shared: boolean; interviewed: boolean; selected: boolean; pipeline: string | null;
       last_round: string | null; last_outcome: string | null;
     }[]>`
       ${people}
       SELECT ppl.application_id, ppl.candidate_id, c."fullName" AS full_name, c."candidateCode" AS candidate_code, ppl.category, ppl.academy, ppl.in_pool, ppl.tier,
+        ${APPLICATION_PRODUCT(Prisma.sql`ppl.application_id`, Prisma.sql`c.id`)} AS product,
+        (SELECT ${POOL_SOURCE(Prisma.sql`r`)} FROM "AssessedPoolRecord" r WHERE r.mobile = c.mobile LIMIT 1) AS pool_source,
         ppl.job_id, j."jobId" AS job_code, j."roleTitle" AS role_title, co.id AS company_id, co.name AS company_name,
         ppl.rs_rej, ppl.sc_rej, ppl.as_rej, ppl.sc_no_show, ppl.sp, ppl.shared, ppl.interviewed, ppl.selected, ppl.pipeline,
         lr.label AS last_round, lr.outcome AS last_outcome
@@ -196,6 +199,8 @@ async function students(month: string, owners: Prisma.Sql) {
       category: row.category,
       academy: row.academy,
       inPool: row.in_pool,
+      poolSource: row.pool_source,
+      product: row.product,
       tier: row.tier,
       jobRequestId: row.job_id,
       jobCode: row.job_code,
@@ -367,13 +372,14 @@ async function placements(month: string, owners: Prisma.Sql) {
   const start = `${month}-01`;
   const end = `${nextMonthKey(month)}-01`;
   const rows = await prisma.$queryRaw<{
-    application_id: string; candidate_id: string; full_name: string; candidate_code: string | null; category: string; in_pool: boolean;
+    application_id: string; candidate_id: string; full_name: string; candidate_code: string | null; category: string; in_pool: boolean; product: string | null;
     job_id: string; job_code: string; role_title: string; company_id: string; company_name: string; ctc: number | null;
     pipeline: string; hired_on: Date; source: "STUDENT" | "ROUND" | "JOB" | "REQUEST";
   }[]>`
     SELECT a.id AS application_id, c.id AS candidate_id, c."fullName" AS full_name, c."candidateCode" AS candidate_code,
       COALESCE(p.category::text, c.category::text, 'EXTERNAL') AS category,
       EXISTS (SELECT 1 FROM "AssessedPoolRecord" r WHERE r.mobile = c.mobile) AS in_pool,
+      COALESCE(p.name, ${PRODUCT_NAMES(Prisma.sql`c.id`)}) AS product,
       j.id AS job_id, j."jobId" AS job_code, j."roleTitle" AS role_title, co.id AS company_id, co.name AS company_name, j."ctcLpa" AS ctc,
       n."pipelineStatus"::text AS pipeline, h.hired_on, h.source
     FROM "CompanyNomination" n
@@ -400,6 +406,7 @@ async function placements(month: string, owners: Prisma.Sql) {
     candidateCode: row.candidate_code,
     category: row.category,
     inPool: row.in_pool,
+    product: row.product,
     jobRequestId: row.job_id,
     jobCode: row.job_code,
     roleTitle: row.role_title,

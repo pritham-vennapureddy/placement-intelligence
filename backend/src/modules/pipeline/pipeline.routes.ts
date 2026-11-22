@@ -4,7 +4,8 @@ import { requirePermission } from "../../middleware/authorize.js";
 import { idempotency } from "../../middleware/idempotency.js";
 import { validateBody, validateParams } from "../../middleware/validate.js";
 import { pipelineController } from "./pipeline.controller.js";
-import { bulkProcessDatesSchema,
+import { bulkInterviewSchema,
+  bulkProcessDatesSchema,
   createRoundSchema,
   directShareSchema,
   interviewParamsSchema,
@@ -32,6 +33,7 @@ pipelineRouter.post("/rounds", write, validateParams(jobParamsSchema), validateB
 pipelineRouter.put("/rounds/order", write, validateParams(jobParamsSchema), validateBody(reorderRoundsSchema), pipelineController.reorderRounds);
 pipelineRouter.patch("/rounds/:roundId", write, validateParams(roundParamsSchema), validateBody(updateRoundSchema), pipelineController.updateRound);
 pipelineRouter.delete("/rounds/:roundId", write, validateParams(roundParamsSchema), pipelineController.deleteRound);
+pipelineRouter.put("/rounds/:roundId/results", write, validateParams(roundParamsSchema), validateBody(bulkInterviewSchema), pipelineController.recordInterviewsBulk);
 pipelineRouter.post("/nominations", write, validateParams(jobParamsSchema), validateBody(nominateSchema), pipelineController.nominate);
 pipelineRouter.post("/nominations/:nominationId/status", write, validateParams(nominationParamsSchema), validateBody(pipelineStatusSchema), pipelineController.changeStatus);
 pipelineRouter.put("/nominations/:nominationId/process-dates", write, validateParams(nominationParamsSchema), validateBody(processDatesSchema), pipelineController.setProcessDates);

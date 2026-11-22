@@ -80,11 +80,25 @@ export const academyQuerySchema = z
   .object(academyFilters)
   .refine(({ from, to }) => !from || !to || from <= to, { message: "`from` must be on or before `to`.", path: ["to"] });
 
+export const companyReasonsQuerySchema = z
+  .object({ ...academyFilters, tagId: z.union([z.uuid(), z.literal("untagged")]).optional() })
+  .refine(({ from, to }) => !from || !to || from <= to, { message: "`from` must be on or before `to`.", path: ["to"] });
+
+export const ACADEMY_STAGE_FILTERS = [
+  "RESUME_REJECTED", "SCREENING_REJECTED", "SCREENING_NO_SHOW", "ASSIGNMENT_REJECTED", "INTERNAL_REJECTED",
+  "FINAL_SHORTLISTED", "SHARED", "NOT_SHARED", "INTERVIEWED", "COMPANY_REJECTED", "SELECTED",
+] as const;
+export type AcademyStageFilter = (typeof ACADEMY_STAGE_FILTERS)[number];
+
 export const academyCandidatesQuerySchema = z
   .object({
     ...academyFilters,
     view: z.enum(ACADEMY_CANDIDATE_VIEWS).default("ALL"),
     q: z.string().trim().min(1).max(100).optional(),
+    poolSource: z.enum(["ANY", "NONE", "OFFLINE", "COMPETENCY", "BOTH"]).optional(),
+    product: z.string().trim().min(1).max(120).optional(),
+    stage: z.enum(ACADEMY_STAGE_FILTERS).optional(),
+    reasonTagId: z.union([z.uuid(), z.literal("untagged")]).optional(),
   })
   .refine(({ from, to }) => !from || !to || from <= to, { message: "`from` must be on or before `to`.", path: ["to"] });
 

@@ -25,7 +25,7 @@ import type { DashboardSummary } from "../types/api";
 const numberFormat = new Intl.NumberFormat("en-IN");
 
 const pageDetails: Record<string, { title: string; subtitle: string }> = {
-  "/": { title: "Companies", subtitle: "Every company with its JDs and each JD's hiring status. Open a company for its applicants and Google Sheets analytics." },
+  "/": { title: "Overview", subtitle: "Placement numbers for the period you pick, then every company with its job requests and where each hiring process stands." },
   "/assessed-pool": { title: "Assessed candidate pool", subtitle: "Candidates from the assessed pools synced from Google Sheets." },
   "/sheets": { title: "Spreadsheet connections", subtitle: "Set up the source sheets that will keep your placement data in sync." },
   "/my-work": { title: "My work dashboard", subtitle: "Your owned companies, candidate actions and upcoming placement priorities." },
@@ -77,15 +77,15 @@ function CompanyTable({ onSelect }: { onSelect: (companyId: string) => void }) {
       <CardContent className="p-0">
         <div className="flex flex-col justify-between gap-3 border-b border-slate-100 p-5 sm:flex-row sm:items-center">
           <div>
-            <CardTitle>Companies and their JDs</CardTitle>
-            <p className="mt-1 text-xs text-slate-400">{companies.length} companies · {jdCount} JDs. Each JD has its own hiring status{canChange ? "; use Change to update it" : ""}.</p>
+            <CardTitle>Companies and their job requests</CardTitle>
+            <p className="mt-1 text-xs text-slate-400">{companies.length} companies · {jdCount} job requests. Each job request has its own hiring status{canChange ? "; click Change to update it" : ""}. Click a company name to open it.</p>
           </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-left">
             <thead className="bg-slate-50/80 text-[10px] uppercase tracking-wider text-slate-400">
               <tr>
-                <th className="px-5 py-3 font-semibold">Company / JD</th>
+                <th className="px-5 py-3 font-semibold">Company / job request</th>
                 <th className="px-3 py-3 font-semibold">Owner</th>
                 <th className="px-3 py-3 font-semibold">Applicants</th>
                 <th className="px-3 py-3 font-semibold">Openings</th>
@@ -102,7 +102,7 @@ function CompanyTable({ onSelect }: { onSelect: (companyId: string) => void }) {
                         <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-100 text-sm font-bold text-indigo-700">{company.name.slice(0, 1).toUpperCase()}</span>
                         <div>
                           <p className="text-sm font-semibold text-slate-800">{company.name}</p>
-                          <p className="text-[11px] text-slate-400">{company.jobRequests.length} JD{company.jobRequests.length === 1 ? "" : "s"}</p>
+                          <p className="text-[11px] text-slate-400">{company.jobRequests.length} job request{company.jobRequests.length === 1 ? "" : "s"}</p>
                         </div>
                       </div>
                     </td>

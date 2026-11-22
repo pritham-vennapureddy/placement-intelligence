@@ -60,12 +60,29 @@ export const directShareSchema = z.object({
 
 export const withdrawSchema = z.object({ notes: z.string().trim().min(2, "Say why the nomination is withdrawn.").max(1000) });
 
+const docUrl = z.string().trim().max(1000).regex(/^https?:\/\/\S+$/i, "Paste a full link starting with http:// or https://.");
+
+/** Why the company rejected the student: a reason from the list, a note and a doc link. */
+const rejectionFields = {
+  rejectionTagId: z.uuid().nullable().optional(),
+  rejectionReason: z.string().trim().max(1000).nullable().optional(),
+  rejectionDocUrl: docUrl.nullable().optional(),
+};
+
 export const interviewSchema = z.object({
   outcome: z.enum(INTERVIEW_OUTCOMES),
   scheduledAt: z.iso.datetime({ offset: true }).nullable().optional(),
   interviewerName: z.string().trim().max(160).nullable().optional(),
   feedback: z.string().trim().max(2000).nullable().optional(),
-  rejectionReason: z.string().trim().max(1000).nullable().optional(),
+  ...rejectionFields,
+});
+
+/** One result for many students in the same round (e.g. 7 rejected at TR Round 1). */
+export const bulkInterviewSchema = z.object({
+  nominationIds: z.array(z.uuid()).min(1).max(500),
+  outcome: z.enum(INTERVIEW_OUTCOMES),
+  scheduledAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  ...rejectionFields,
 });
 
 export type CreateRoundInput = z.infer<typeof createRoundSchema>;
@@ -74,5 +91,6 @@ export type NominateInput = z.infer<typeof nominateSchema>;
 export type PipelineStatusInput = z.infer<typeof pipelineStatusSchema>;
 export type BulkProcessDatesInput = z.infer<typeof bulkProcessDatesSchema>;
 export type InterviewInput = z.infer<typeof interviewSchema>;
+export type BulkInterviewInput = z.infer<typeof bulkInterviewSchema>;
 export type ProcessDatesInput = z.infer<typeof processDatesSchema>;
 export type DirectShareInput = z.infer<typeof directShareSchema>;

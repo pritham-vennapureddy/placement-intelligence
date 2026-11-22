@@ -26,6 +26,7 @@ import { CATEGORY_LABELS, OutcomeBadge, StageStatusBadge } from "./badges";
 import { RefreshFromGoogleButton } from "../imports/refresh-button";
 import { RecruitmentBatchesPanel } from "./recruitment-batches";
 import { ScreeningSkipDialog, useUndoScreeningSkip } from "./screening-dialogs";
+import { ProductBadge } from "../../components/student-tags";
 
 const ALL = "__all__";
 
@@ -132,6 +133,7 @@ function StageCandidates({ jobRequestId, stage }: { jobRequestId: string; stage:
                 <tr key={row.application.id} className="border-t border-slate-100 align-top">
                   <td className="px-4 py-2.5">
                     <Link to={`/candidates/${row.application.candidate.id}`} className="font-medium text-slate-800 hover:text-indigo-700">{row.application.candidate.fullName}</Link>
+                    <div className="mt-0.5"><ProductBadge products={row.application.product ? [row.application.product] : row.application.candidate.products} /></div>
                     <p className="text-xs text-slate-400">{[row.application.candidate.mobile, row.application.candidate.email].filter(Boolean).join(" · ")}</p>
                     {!!row.application.candidate.poolMemberships?.length && (
                       <p className="mt-1 text-[10px] text-indigo-600">

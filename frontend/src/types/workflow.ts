@@ -23,6 +23,7 @@ export interface CandidateSummary {
   resumeUrl: string | null;
   category: "ACADEMY" | "ACADEMY_INTENSIVE" | "EXTERNAL" | null;
   poolMemberships?: { poolType: "BUCKET" | "TR" | "COMPETENCY" }[];
+  products?: { product: { name: string } }[];
 }
 
 export interface StageView {
@@ -198,7 +199,12 @@ export interface Nomination {
     candidate: CandidateSummary;
     stageOutcomes: { outcome: StageOutcome; priority: Priority | null }[];
   };
-  interviews: { roundId: string; outcome: InterviewOutcome; scheduledAt: string | null; interviewerName: string | null; feedback: string | null; rejectionReason: string | null }[];
+  interviews: {
+    roundId: string; outcome: InterviewOutcome; scheduledAt: string | null; interviewerName: string | null; feedback: string | null;
+    /** The note on a rejection; the reason itself is rejectionTag. */
+    rejectionReason: string | null; rejectionDocUrl: string | null;
+    rejectionTag: { id: string; label: string; archivedAt: string | null } | null;
+  }[];
   stageHistory: { fromStatus: PipelineStatus | null; toStatus: PipelineStatus; notes: string | null; source: string; changedAt: string; changedBy: { fullName: string } | null }[];
 }
 

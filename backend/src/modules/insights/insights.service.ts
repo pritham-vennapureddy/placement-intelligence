@@ -260,12 +260,13 @@ export const insightsService = {
         GROUP BY rounds.label ORDER BY 2`,
       prisma.$queryRaw<{ round: string; sort: number; reason: string; count: number }[]>`
         ${facts}
-        SELECT rounds.label AS round, MIN(rounds.sort)::int AS sort, TRIM(ci."rejectionReason") AS reason, COUNT(*)::int AS count
+        SELECT rounds.label AS round, MIN(rounds.sort)::int AS sort, COALESCE(t.label, TRIM(ci."rejectionReason")) AS reason, COUNT(*)::int AS count
         FROM f
         JOIN "CompanyInterview" ci ON ci."nominationId" = f.nomination_id
         JOIN rounds ON rounds.id = ci."roundId"
-        WHERE pipeline IS NOT NULL AND ci.outcome = 'REJECTED' AND NULLIF(TRIM(ci."rejectionReason"), '') IS NOT NULL
-        GROUP BY rounds.label, TRIM(ci."rejectionReason") ORDER BY 4 DESC LIMIT 15`,
+        LEFT JOIN "RejectionReasonTag" t ON t.id = ci."rejectionTagId"
+        WHERE pipeline IS NOT NULL AND ci.outcome = 'REJECTED' AND (t.id IS NOT NULL OR NULLIF(TRIM(ci."rejectionReason"), '') IS NOT NULL)
+        GROUP BY rounds.label, COALESCE(t.label, TRIM(ci."rejectionReason")) ORDER BY 4 DESC LIMIT 15`,
       prisma.$queryRaw<{ reason: string; count: number }[]>`
         ${facts}
         SELECT COALESCE(direct_reason, 'UNTAGGED') AS reason, COUNT(*)::int AS count
