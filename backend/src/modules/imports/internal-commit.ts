@@ -298,6 +298,27 @@ export async function commitInternalImport(
     }
   }
 
+  // Students the sheets give a user ID for keep it as their ID instead of the generated
+  // code. Last step, so every link above still used the code the plan knew; an ID another
+  // student already has is left alone.
+  const userIds = appRows.flatMap((row) => {
+    const candidateId = idByCode.get(row.candidateCode.toLowerCase());
+    return candidateId && row.userId && row.candidateCode.startsWith("GEN-") ? [{ candidateId, userId: row.userId }] : [];
+  });
+  if (userIds.length > 0) {
+    await db.$executeRaw`
+      UPDATE "Candidate" AS c SET "candidateCode" = v.user_id, "updatedAt" = NOW()
+      FROM (SELECT DISTINCT ON (user_id) * FROM UNNEST(${userIds.map((item) => item.candidateId)}::uuid[], ${userIds.map((item) => item.userId)}::text[]) AS t(id, user_id)) AS v
+      WHERE c."id" = v.id AND c."candidateCode" LIKE 'GEN-%'
+        AND NOT EXISTS (SELECT 1 FROM "Candidate" o WHERE lower(o."candidateCode") = lower(v.user_id))`;
+    // Pool sheets list students by user ID: link the ones that now match.
+    await db.$executeRaw`
+      UPDATE "CandidatePoolMembership" AS membership SET "candidateId" = c."id"
+      FROM "Candidate" AS c
+      WHERE membership."candidateId" IS NULL AND lower(membership."candidateCode") = lower(c."candidateCode")
+        AND c."id" = ANY(${userIds.map((item) => item.candidateId)}::uuid[])`;
+  }
+
   // Assessed-pool students are Academy even when their product is missing or external.
   await markPoolStudentsAcademy(db);
   return {

@@ -425,6 +425,7 @@ export const jobRequestsService = {
           openings: input.openings,
           requiredCandidateCount: input.requiredCandidateCount,
           ctcLpa: input.ctcLpa ?? null,
+          jobType: input.jobType ?? null,
           description: input.description,
           requestDate: toDate(input.requestDate),
           deadline: input.deadline ? toDate(input.deadline) : null,

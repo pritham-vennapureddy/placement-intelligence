@@ -113,23 +113,41 @@ export async function studentPositions(jobIds: string[], owners: Prisma.Sql) {
   return result;
 }
 
+export interface ReasonCount { tagId: string | null; label: string; academy: number; pool: number; total: number }
+
 /**
- * Why Academy / assessed-pool students were not selected on the month's drives:
- * one count per student per drive, by the RSA team's reason (else the round's).
+ * Why Academy / assessed-pool students were not selected, per drive: one count
+ * per student per drive, by the RSA team's reason (else the round's). Summing
+ * drives stays exact, so the page can re-total for whatever drives it filters to.
  */
-export async function notSelectedReasons(jobIds: string[], owners: Prisma.Sql) {
-  if (jobIds.length === 0) return [];
+export async function notSelectedReasonsByJob(jobIds: string[], owners: Prisma.Sql) {
+  if (jobIds.length === 0) return new Map<string, ReasonCount[]>();
   const query = { dateBy: "requested", academyCategory: "ALL_ACADEMY", segment: "ALL" } as AcademyQuery;
-  const rows = await prisma.$queryRaw<{ tag_id: string | null; label: string; academy: number; pool: number; total: number }[]>`
+  const rows = await prisma.$queryRaw<{ job_id: string; tag_id: string | null; label: string; academy: number; pool: number; total: number }[]>`
     ${academyFacts(query, owners, Prisma.sql`j.id = ANY(${jobIds}::uuid[])`)}, ${ROUND_LABELS}
-    SELECT rt.id AS tag_id, COALESCE(rt.label, ${UNTAGGED}) AS label,
+    SELECT f.job_id, rt.id AS tag_id, COALESCE(rt.label, ${UNTAGGED}) AS label,
       COUNT(*) FILTER (WHERE f.category IN ('ACADEMY', 'ACADEMY_INTENSIVE'))::int AS academy,
       COUNT(*) FILTER (WHERE f.in_pool)::int AS pool,
       COUNT(*)::int AS total
     FROM f
     ${APPLICATION_REASON(Prisma.sql`f`)}
     WHERE (f.category IN ('ACADEMY', 'ACADEMY_INTENSIVE') OR f.in_pool) AND NOT f.selected AND ${NOT_SELECTED(Prisma.sql`f`)}
-    GROUP BY rt.id, rt.label
-    ORDER BY (rt.id IS NULL), COUNT(*) DESC`;
-  return rows.map((row) => ({ tagId: row.tag_id, label: row.label, academy: row.academy, pool: row.pool, total: row.total }));
+    GROUP BY f.job_id, rt.id, rt.label`;
+  const byJob = new Map<string, ReasonCount[]>();
+  for (const row of rows) {
+    byJob.set(row.job_id, [...(byJob.get(row.job_id) ?? []), { tagId: row.tag_id, label: row.label, academy: row.academy, pool: row.pool, total: row.total }]);
+  }
+  return byJob;
+}
+
+/** Adds up per-drive reason counts; untagged last, then most common first. */
+export function sumReasons(lists: ReasonCount[][]): ReasonCount[] {
+  const totals = new Map<string, ReasonCount>();
+  for (const row of lists.flat()) {
+    const key = row.tagId ?? "";
+    const known = totals.get(key);
+    if (known) { known.academy += row.academy; known.pool += row.pool; known.total += row.total; }
+    else totals.set(key, { ...row });
+  }
+  return [...totals.values()].sort((x, y) => Number(x.tagId === null) - Number(y.tagId === null) || y.total - x.total);
 }

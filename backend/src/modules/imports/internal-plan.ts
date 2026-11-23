@@ -67,6 +67,11 @@ export interface ApplicationRowData {
   /** Blank fields on the existing candidate that this row fills in. */
   fill: Partial<CandidateFields> & { category?: string };
   createApplication: boolean;
+  /**
+   * The student's platform user ID from the sheets, when the stored code is a
+   * generated one ("GEN-…"). The commit replaces the generated code with it.
+   */
+  userId?: string | null;
   resumeAssessment?: { analyzedAt: string | null; scores: Record<string, string>; skills: string[]; projects: string[]; details: Record<string, string> } | null;
   additionalProfiles?: { classification: string; sourceSheet: string; data: Record<string, string> }[];
 }
@@ -650,6 +655,23 @@ export function planInternalImport(config: InternalMapping, read: Reader, contex
       issues,
       included: !skipped,
     });
+  }
+
+  // User IDs: the candidate ID (UUID) on the TA / student-detail tabs that belongs to this
+  // applicant's mobile and no one else's. Job IDs (also UUIDs) point at everyone, so they drop out.
+  const jobIdKeys = new Set([context.job.jobId, ...context.jobLabels.keys(), ...otherJobs.keys()].map((id) => id.toLowerCase()));
+  const userIdsByMobile = new Map<string, Set<string>>();
+  for (const [uuid, mobiles] of mobilesByUuid) {
+    if (mobiles.size !== 1 || jobIdKeys.has(uuid)) continue;
+    const owner = [...mobiles][0]!;
+    (userIdsByMobile.get(owner) ?? userIdsByMobile.set(owner, new Set()).get(owner)!).add(uuid);
+  }
+  for (const planned of rows) {
+    const data = planned.data;
+    if (data.kind !== "application" || !data.candidate.mobile || !data.candidateCode.startsWith("GEN-")) continue;
+    const ids = userIdsByMobile.get(data.candidate.mobile);
+    if (ids?.size === 1) data.userId = [...ids][0]!;
+    else if (ids && ids.size > 1) planned.issues.push({ severity: "INFO", code: "SEVERAL_USER_IDS", message: `More than one user ID points to mobile ${data.candidate.mobile} (${[...ids].join(", ")}); the user ID was not saved.` });
   }
 
   if (config.productsLookup) {

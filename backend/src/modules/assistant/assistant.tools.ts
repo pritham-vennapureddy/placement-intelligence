@@ -21,13 +21,13 @@ export const TOOL_DECLARATIONS: FunctionDeclaration[] = [
   {
     name: "get_month_overview",
     description:
-      "Everything for one month: CRM's potential companies list (status, remarks), the job drives live that month (company, role, openings, process status, process dates, unique Academy / assessed-pool / all students at each step and in each company round, latest CRM remark), unique Academy and pool student funnels, and placements of the month by hired date. Use for questions about a month, companies in pipeline, openings, how students did at a company or a round.",
+      "Everything for one month: CRM's potential companies list (status, remarks), the job drives on that list (company, role, openings, process status, process dates, unique Academy / assessed-pool / all students at each step and in each company round, latest CRM remark), unique Academy and pool student funnels on those drives, and placements of the month by hired date (any drive). Drives not on the month's potential list are not included. Use for questions about a month, companies in pipeline, openings, how students did at a company or a round.",
     parameters: { type: "object", properties: { month: MONTH }, required: ["month"] },
   },
   {
     name: "list_students",
     description:
-      "Unique Academy / assessed-pool students in one month's drives with where each one is now (their furthest point across companies) and their stage at every company. Use to answer 'who are they' questions. Returns up to 60 students plus the total.",
+      "Unique Academy / assessed-pool students in the drives on one month's potential list with where each one is now (their furthest point across companies) and their stage at every company. Use to answer 'who are they' questions. Returns up to 60 students plus the total.",
     parameters: {
       type: "object",
       properties: {

@@ -25,6 +25,16 @@ export function jobTransitionNeedsReason(from: JobRequestStatus, to: JobRequestS
   return to === "ON_HOLD" || to === "CANCELLED" || (to === "OPEN" && (from === "FILLED" || from === "CLOSED"));
 }
 
+export const JOB_TYPES = ["FULL_TIME", "INTERNSHIP", "INTERNSHIP_TO_FULL_TIME", "CONTRACT"] as const;
+export type JobType = (typeof JOB_TYPES)[number];
+
+export const JOB_TYPE_LABELS: Record<JobType, string> = {
+  FULL_TIME: "Full-time",
+  INTERNSHIP: "Internship",
+  INTERNSHIP_TO_FULL_TIME: "Internship + full-time",
+  CONTRACT: "Contract",
+};
+
 export const JOB_STATUS_LABELS: Record<JobRequestStatus, string> = {
   DRAFT: "Draft",
   OPEN: "Open",

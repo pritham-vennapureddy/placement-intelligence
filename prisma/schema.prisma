@@ -155,6 +155,14 @@ enum CompanyStatus {
   INACTIVE
 }
 
+/// Full-time job, internship, internship that converts to full-time, or contract.
+enum JobType {
+  FULL_TIME
+  INTERNSHIP
+  INTERNSHIP_TO_FULL_TIME
+  CONTRACT
+}
+
 enum JobRequestStatus {
   DRAFT
   OPEN
@@ -515,6 +523,8 @@ model JobRequest {
   // Offered CTC in lakhs per annum (upper bound when the company gives a range).
   // Drives the < 8 LPA placement KPIs; null means not entered yet.
   ctcLpa                  Float?
+  // Null until the PSM picks it on the job form.
+  jobType                 JobType?
   description             String
   psmOwnerId              String?                      @db.Uuid
   requestDate             DateTime                     @db.Date

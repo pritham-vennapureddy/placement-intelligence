@@ -1,15 +1,16 @@
-import { Award, Briefcase, Building2, GraduationCap, UserRoundCheck } from "lucide-react";
+import { POTENTIAL_COMPANY_STATUS_LABELS, POTENTIAL_COMPANY_STATUSES, type PotentialCompanyStatus } from "@placement/shared";
+import { Briefcase, Building2, ClipboardList, GraduationCap, UserRoundCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Card } from "../../components/ui/card";
-import type { MonthBigPicture, StudentPositionCounts } from "../../types/pulse";
 import { cn } from "../../utils/cn";
+import { PROCESS_STATE_LABELS, type BoardSummary, type PositionCounts, type ProcessState, type Split } from "./potential-board";
 
-const PROCESS = [
-  { key: "STARTED", label: "Process started", dot: "bg-sky-500", text: "text-sky-700" },
-  { key: "YET_TO_START", label: "Yet to start", dot: "bg-amber-500", text: "text-amber-700" },
-  { key: "ENDED", label: "Process ended", dot: "bg-slate-400", text: "text-slate-600" },
-] as const;
+const PROCESS: { key: ProcessState; dot: string; text: string }[] = [
+  { key: "YET_TO_START", dot: "bg-amber-500", text: "text-amber-700" },
+  { key: "STARTED", dot: "bg-sky-500", text: "text-sky-700" },
+  { key: "ENDED", dot: "bg-slate-400", text: "text-slate-600" },
+];
 
 /** Furthest point, in order; each student is counted once. */
 const POSITIONS = [
@@ -17,51 +18,89 @@ const POSITIONS = [
   { key: "NOT_SHARED_DRIVE_OVER", label: "Not shared, drive over", hint: "Never shared with the company and those drives have ended", color: "#cbd5e1" },
   { key: "REJECTED_INTERNALLY", label: "Rejected in our shortlisting", hint: "Rejected at resume shortlist, screening or assignment in every drive", color: "#f59e0b" },
   { key: "IN_PROCESS", label: "In company process", hint: "Shared and the company has not finished with them", color: "#0ea5e9" },
-  { key: "ENDED_NOT_SELECTED", label: "Process ended, not selected", hint: "Rejected or dropped, or the company process is over", color: "#e0475b" },
+  { key: "ENDED_NOT_SELECTED", label: "Process completed, not selected", hint: "Rejected or dropped, or the company process is over", color: "#e0475b" },
   { key: "SELECTED", label: "Selected", hint: "Selected, offered or joined", color: "#16a34a" },
 ] as const;
 
-function Stat({ icon: Icon, label, value, children }: { icon: typeof Building2; label: string; value: number; children?: ReactNode }) {
+export const STATUS_TONE: Record<PotentialCompanyStatus, string> = {
+  POTENTIAL: "border-slate-200 bg-slate-50 text-slate-700",
+  IN_DISCUSSION: "border-sky-200 bg-sky-50 text-sky-700",
+  CONFIRMED: "border-indigo-200 bg-indigo-50 text-indigo-700",
+  PROCESS_STARTED: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  ON_HOLD: "border-amber-200 bg-amber-50 text-amber-700",
+  NO_RESPONSE: "border-orange-200 bg-orange-50 text-orange-700",
+  DROPPED: "border-rose-200 bg-rose-50 text-rose-700",
+};
+
+export type StudentView = "IN_PROCESS" | "COMPLETED" | "SELECTED" | "NOT_SHARED";
+
+export interface BigPictureActions {
+  /** Narrow the grid to one process stage (Yet to start / In process / Ended). */
+  onProcess: (state: ProcessState) => void;
+  onCrmStatus: (status: PotentialCompanyStatus) => void;
+  /** Open the students list for one group and outcome. */
+  onStudents: (group: "ACADEMY" | "POOL", view: StudentView | "ALL") => void;
+  activeProcess: string[] | undefined;
+  activeCrmStatus: string[] | undefined;
+}
+
+function Tile({ icon: Icon, label, value, children }: { icon: typeof Building2; label: string; value: number; children?: ReactNode }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
-      <p className="flex items-center gap-1.5 text-xs font-medium text-slate-500"><Icon size={14} /> {label}</p>
+      <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-500"><Icon size={14} /> {label}</p>
       <p className="mt-1 text-3xl font-semibold tabular-nums text-slate-900">{value}</p>
       {children}
     </div>
   );
 }
 
-/** Builds a link to this month's page with the given tab and filter. */
-export type MonthLink = (params: Record<string, string>) => string;
-
-function Split({ counts, link }: { counts: { YET_TO_START: number; STARTED: number; ENDED: number }; link: MonthLink }) {
+function ProcessSplit({ counts, actions, unit }: { counts: Split; actions: BigPictureActions; unit: string }) {
   return (
-    <ul className="mt-2 space-y-0.5 text-xs">
-      {PROCESS.map((item) => (
-        <li key={item.key}>
-          <Link to={link({ tab: "drives", process: item.key })} className="flex items-center gap-1.5 rounded px-1 -mx-1 hover:bg-slate-50" title={`Show drives: ${item.label.toLowerCase()}`}>
-            <span className={cn("size-2 rounded-full", item.dot)} />
-            <span className="text-slate-600">{item.label}</span>
-            <span className={cn("ml-auto font-semibold tabular-nums", item.text)}>{counts[item.key]}</span>
-          </Link>
-        </li>
-      ))}
+    <ul className="mt-2 space-y-0.5 text-sm">
+      {PROCESS.map((item) => {
+        const on = actions.activeProcess?.includes(PROCESS_STATE_LABELS[item.key]);
+        return (
+          <li key={item.key}>
+            <button type="button" onClick={() => actions.onProcess(item.key)}
+              className={cn("-mx-1.5 flex w-[calc(100%+0.75rem)] items-center gap-2 rounded px-1.5 py-0.5 text-left hover:bg-slate-50", on && "bg-indigo-50 ring-1 ring-indigo-200")}
+              title={`Show only ${unit} ${PROCESS_STATE_LABELS[item.key].toLowerCase()}`}>
+              <span className={cn("size-2 rounded-full", item.dot)} />
+              <span className="text-slate-600">{PROCESS_STATE_LABELS[item.key]}</span>
+              <span className={cn("ml-auto font-semibold tabular-nums", item.text)}>{counts[item.key]}</span>
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 }
 
-function StudentPicture({ title, icon: Icon, counts, group, link }: { title: string; icon: typeof GraduationCap; counts: StudentPositionCounts; group: "ACADEMY" | "POOL"; link: MonthLink }) {
-  const ended = counts.SELECTED + counts.ENDED_NOT_SELECTED;
+function StudentCard({ title, icon: Icon, counts, group, actions }: { title: string; icon: typeof GraduationCap; counts: PositionCounts; group: "ACADEMY" | "POOL"; actions: BigPictureActions }) {
+  const completed = counts.SELECTED + counts.ENDED_NOT_SELECTED;
+  const notShared = counts.IN_SHORTLISTING + counts.REJECTED_INTERNALLY + counts.NOT_SHARED_DRIVE_OVER;
+  const box = "rounded-lg px-2 py-2.5 text-center transition hover:ring-2";
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="flex items-center gap-1.5 text-sm font-semibold text-slate-800"><Icon size={15} /> {title}</p>
-        <p className="text-xs text-slate-500"><span className="text-2xl font-semibold tabular-nums text-slate-900">{counts.students}</span> unique students</p>
+        <button type="button" onClick={() => actions.onStudents(group, "ALL")} className="text-xs text-slate-500 hover:text-indigo-700">
+          <span className="text-2xl font-semibold tabular-nums text-slate-900">{counts.students}</span> unique students →
+        </button>
       </div>
-      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-        <Link to={link({ tab: "students", view: "IN_SHORTLISTING", group })} className="rounded-lg bg-slate-50 py-2 hover:ring-1 hover:ring-slate-300"><p className="text-lg font-semibold tabular-nums text-slate-700">{counts.IN_SHORTLISTING + counts.REJECTED_INTERNALLY + counts.NOT_SHARED_DRIVE_OVER}</p><p className="text-[11px] text-slate-500">Not shared with a company</p></Link>
-        <Link to={link({ tab: "students", view: "IN_PROCESS", group })} className="rounded-lg bg-sky-50 py-2 hover:ring-1 hover:ring-sky-300" title="Open the list to prepare them"><p className="text-lg font-semibold tabular-nums text-sky-700">{counts.IN_PROCESS}</p><p className="text-[11px] text-sky-800">In company process →</p></Link>
-        <div className="rounded-lg bg-emerald-50 py-2"><p className="text-lg font-semibold tabular-nums text-emerald-700">{ended}</p><p className="text-[11px] text-emerald-800">Process ended · {counts.SELECTED} selected</p></div>
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <button type="button" onClick={() => actions.onStudents(group, "IN_PROCESS")} className={cn(box, "bg-sky-50 hover:ring-sky-300")}>
+          <p className="text-2xl font-semibold tabular-nums text-sky-700">{counts.IN_PROCESS}</p>
+          <p className="text-[11px] font-medium text-sky-800">In company process</p>
+        </button>
+        <button type="button" onClick={() => actions.onStudents(group, "COMPLETED")} className={cn(box, "bg-emerald-50 hover:ring-emerald-300")}>
+          <p className="text-2xl font-semibold tabular-nums text-emerald-700">{completed}</p>
+          <p className="text-[11px] font-medium text-emerald-800">Completed process</p>
+          <p className="text-[11px] text-emerald-700">{counts.SELECTED} selected</p>
+        </button>
+        <button type="button" onClick={() => actions.onStudents(group, "NOT_SHARED")} className={cn(box, "bg-slate-50 hover:ring-slate-300")}>
+          <p className="text-2xl font-semibold tabular-nums text-slate-700">{notShared}</p>
+          <p className="text-[11px] font-medium text-slate-600">Not shared with company</p>
+        </button>
       </div>
       {counts.students > 0 && (
         <div className="mt-3 flex h-2.5 overflow-hidden rounded-full bg-slate-100" aria-hidden>
@@ -82,40 +121,46 @@ function StudentPicture({ title, icon: Icon, counts, group, link }: { title: str
 }
 
 /**
- * The month at a glance: companies (CRM's potential list plus drives running),
- * whether their process started, openings, and where unique Academy and
- * assessed-pool students stand.
+ * The potential list at a glance: companies and openings by process stage, CRM
+ * status, and where unique Academy and assessed-pool students stand. Worked out
+ * from the rows the grid is showing, so filters change every number here.
  */
-export function MonthBigPictureCard({ data, placements, link }: { data: MonthBigPicture; placements: { total: number; academy: number; pool: number }; link: MonthLink }) {
+export function MonthBigPictureCard({ summary, actions, filtered, totalDrives }: { summary: BoardSummary; actions: BigPictureActions; filtered: boolean; totalDrives: number }) {
+  const statuses = POTENTIAL_COMPANY_STATUSES.filter((status) => (summary.byCrmStatus[status] ?? 0) > 0);
   return (
     <Card className="overflow-hidden">
-      <div className="border-b border-slate-100 px-4 py-3">
-        <p className="text-sm font-semibold text-slate-800">Big picture</p>
-        <p className="mt-0.5 text-xs text-slate-500">
-          Companies on CRM's potential list for this month plus drives running this month
-          ({data.onList} on the list{data.notOnList > 0 ? `, ${data.notOnList} running but not on the list` : ""}{data.droppedFromList > 0 ? `; ${data.droppedFromList} dropped or not responding are left out` : ""}).
-          Students count once, at the furthest point they reached.
-        </p>
-      </div>
-      <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
-        <Stat icon={Building2} label="Companies this month" value={data.companies.total}><Split counts={data.companies} link={link} /></Stat>
-        <Stat icon={Briefcase} label="Openings" value={data.openings.total}><Split counts={data.openings} link={link} /></Stat>
-        <Stat icon={Award} label="Placements (by hired date)" value={placements.total}>
-          <p className="mt-2 text-xs text-slate-600">{placements.academy} Academy · {placements.pool} assessed pool</p>
-          <p className="mt-0.5 text-xs text-slate-400">{data.drives.total} job drives · {data.drives.STARTED} running · {data.drives.YET_TO_START} yet to start · {data.drives.ENDED} ended</p>
-        </Stat>
+      <div className="grid gap-3 p-4 md:grid-cols-3">
+        <Tile icon={Building2} label="Potential companies" value={summary.companies.total}>
+          <ProcessSplit counts={summary.companies} actions={actions} unit="companies" />
+        </Tile>
+        <Tile icon={Briefcase} label="Total openings" value={summary.openings.total}>
+          <ProcessSplit counts={summary.openings} actions={actions} unit="openings" />
+        </Tile>
+        <Tile icon={ClipboardList} label="Job drives by CRM status" value={summary.drives.total}>
+          {statuses.length === 0 ? <p className="mt-2 text-xs text-slate-400">None</p> : (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {statuses.map((status) => (
+                <button key={status} type="button" onClick={() => actions.onCrmStatus(status)}
+                  className={cn("rounded-full border px-2 py-0.5 text-xs", STATUS_TONE[status], actions.activeCrmStatus?.includes(POTENTIAL_COMPANY_STATUS_LABELS[status]) && "ring-2 ring-indigo-400")}>
+                  {POTENTIAL_COMPANY_STATUS_LABELS[status]} <b className="tabular-nums">{summary.byCrmStatus[status]}</b>
+                </button>
+              ))}
+            </div>
+          )}
+          {filtered && <p className="mt-2 text-[11px] text-indigo-700">Filtered: {summary.drives.total} of {totalDrives} job drives</p>}
+        </Tile>
       </div>
       <div className="grid gap-3 px-4 pb-4 lg:grid-cols-2">
-        <StudentPicture title="Academy students" icon={GraduationCap} counts={data.students.academy} group="ACADEMY" link={link} />
-        <StudentPicture title="Assessed-pool students" icon={UserRoundCheck} counts={data.students.pool} group="POOL" link={link} />
+        <StudentCard title="Academy students" icon={GraduationCap} counts={summary.academy} group="ACADEMY" actions={actions} />
+        <StudentCard title="Assessed-pool students" icon={UserRoundCheck} counts={summary.pool} group="POOL" actions={actions} />
       </div>
-      <ReasonsMini rows={data.notSelectedReasons} />
+      <ReasonsMini rows={summary.reasons} />
     </Card>
   );
 }
 
-/** Why Academy / pool students were not selected this month, as bars. */
-function ReasonsMini({ rows }: { rows: MonthBigPicture["notSelectedReasons"] }) {
+/** Why Academy / pool students were not selected on these drives, as bars. */
+function ReasonsMini({ rows }: { rows: BoardSummary["reasons"] }) {
   const total = rows.reduce((sum, row) => sum + row.total, 0);
   const max = Math.max(0, ...rows.map((row) => row.total));
   return (
@@ -124,7 +169,7 @@ function ReasonsMini({ rows }: { rows: MonthBigPicture["notSelectedReasons"] }) 
         <p className="text-sm font-semibold text-slate-800">Why students were not selected</p>
         <Link to="/rsa" className="text-xs text-indigo-600 hover:underline">Tag reasons on the RSA team page →</Link>
       </div>
-      {total === 0 ? <p className="mt-1 text-xs text-slate-500">No student has been rejected on this month's drives yet.</p> : (
+      {total === 0 ? <p className="mt-1 text-xs text-slate-500">No student has been rejected on these drives yet.</p> : (
         <ul className="mt-2 grid gap-1.5 md:grid-cols-2">
           {rows.map((row) => (
             <li key={row.tagId ?? "untagged"} className="grid grid-cols-[minmax(0,11rem)_minmax(0,1fr)_4.5rem] items-center gap-2 text-xs" title={`${row.academy} Academy · ${row.pool} assessed pool`}>

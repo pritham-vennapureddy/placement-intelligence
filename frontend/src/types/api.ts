@@ -1,4 +1,4 @@
-import type { CompanyProcessPhase, JobRequestStatus } from "@placement/shared";
+import type { CompanyProcessPhase, JobRequestStatus, JobType } from "@placement/shared";
 
 export interface AuthUser {
   id: string;
@@ -406,6 +406,7 @@ export interface JobRequestDetail {
   openings: number;
   requiredCandidateCount: number;
   ctcLpa: number | null;
+  jobType: JobType | null;
   description: string;
   requestDate: string;
   deadline: string | null;
@@ -488,6 +489,7 @@ export interface JobRequestInput {
   openings: number;
   requiredCandidateCount: number;
   ctcLpa: number | null;
+  jobType: JobType | null;
   description: string;
   requestDate: string;
   deadline: string | null;

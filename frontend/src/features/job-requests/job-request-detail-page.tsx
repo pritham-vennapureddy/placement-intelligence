@@ -1,3 +1,4 @@
+import { JOB_TYPE_LABELS } from "@placement/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { differenceInCalendarDays, format } from "date-fns";
 import { ArrowLeft, ExternalLink, Pencil, RefreshCw, Trash2, UserRoundCog } from "lucide-react";
@@ -133,7 +134,7 @@ export function JobRequestDetailPage() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
           ["Employee owner", data.psmOwner?.fullName ?? "Unassigned"],
-          ["Openings", `${data.openings} · ${data.requiredCandidateCount} profiles required${data.ctcLpa !== null ? ` · ${data.ctcLpa} LPA` : ""}`],
+          ["Openings", `${data.openings} · ${data.requiredCandidateCount} profiles required${data.ctcLpa !== null ? ` · ${data.ctcLpa} LPA` : ""}${data.jobType ? ` · ${JOB_TYPE_LABELS[data.jobType]}` : ""}`],
           ["Requested", day(data.requestDate)],
           [
             "Deadline",

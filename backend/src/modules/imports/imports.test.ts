@@ -480,6 +480,22 @@ describe("internal sheet planning", () => {
     assert.equal(sc[2]?.issues[0]?.code, "NOT_AN_APPLICANT");
   });
 
+  test("a student's user ID from the sheet is kept as their ID; the job ID on every row is not mistaken for one", () => {
+    const uuid = "00000000-0000-4000-8000-0000000000aa";
+    const applied = [
+      APPLIED[0]!,
+      [uuid.toUpperCase(), JOB.jobId, "CCBP_INTENSIVE", "Asha Rao", "9876543210", "asha@example.com"],
+      APPLIED[2]!,
+    ];
+    const plan = planInternalImport(mapping(), reader({ Applied: applied, SC: SC }), context());
+    const app = (mobile: string) => plan.rows.find((row) => row.role === "APPLICATIONS" && row.rowRef === mobile)?.data as { candidateCode: string; userId?: string | null };
+    assert.equal(app("9876543210").userId, uuid);
+    // Rows whose only UUID is the job ID get no user ID and keep the generated code.
+    const other = plan.rows.find((row) => row.role === "APPLICATIONS" && row.rowRef !== "9876543210")?.data as { candidateCode: string; userId?: string | null };
+    assert.equal(other.userId, undefined);
+    assert.match(other.candidateCode, /^GEN-/);
+  });
+
   test("a TA row with “#N/A” for mobile gets the mobile and details its candidate ID has on a student-detail tab", () => {
     const uuid = "00000000-0000-4000-8000-000000000003";
     const applied = [

@@ -1,4 +1,4 @@
-import type { CompanyProcessPhase, CrmChannel, PipelineStatus, PotentialCompanyStatus } from "@placement/shared";
+import type { CompanyProcessPhase, CrmChannel, JobType, PipelineStatus, PotentialCompanyStatus } from "@placement/shared";
 import type { PersonRef } from "./api";
 
 export interface PipelineEntryHistory {
@@ -22,7 +22,7 @@ export interface PipelineEntry {
   updatedAt: string;
   company: { id: string; name: string };
   jobRequest: {
-    id: string; jobId: string; roleTitle: string; openings: number; processPhase: CompanyProcessPhase; companyProcessStartDate: string | null;
+    id: string; jobId: string; roleTitle: string; openings: number; processPhase: CompanyProcessPhase; companyProcessStartDate: string | null; companyProcessEndDate: string | null; companyId: string;
     processRound: { name: string } | null; psmOwner: PersonRef | null;
   };
   crmOwner: PersonRef | null;
@@ -62,11 +62,25 @@ export interface MonthlyDrive {
   requestedInMonth: boolean;
   students: { academy: number; pool: number; shared: number; interviewed: number; selected: number };
   crmRemarkCount: number;
-  lastCrmRemark: { on: string | null; remark: string } | null;
+  lastCrmRemark: { on: string | null; remark: string; by: string | null; nextStep: string | null } | null;
   hasRsaReview: boolean;
+  /** What went right / wrong with this drive and what to change (RSA review). */
+  review: { wentRight: string | null; wentWrong: string | null; actionItems: string | null };
+  ctcLpa: number | null;
+  companySheetUrl: string | null;
+  internalSheetUrl: string | null;
+  /** Products eligible to apply, comma separated as stored. */
+  products: string | null;
+  techStack: string | null;
+  processRoundId: string | null;
+  rounds: { id: string; name: string }[];
   onPotentialList: boolean;
   stages: DriveStages | null;
+  /** Why Academy / pool students were not selected on this drive (one per student). */
+  notSelectedReasons: ReasonCount[];
 }
+
+export interface ReasonCount { tagId: string | null; label: string; academy: number; pool: number; total: number }
 
 export interface MonthlyStudentGroup {
   students: number;
@@ -94,12 +108,23 @@ export interface MonthlyStudent {
   poolSource: "OFFLINE" | "COMPETENCY" | "BOTH" | null;
   product: string | null;
   tier: string | null;
+  /** Platform user ID when known (not a generated code). */
+  userId: string | null;
+  email: string | null;
+  mobile: string | null;
+  college: string | null;
+  /** Year of graduation. */
+  yog: number | null;
+  ctcLpa: number | null;
+  jobType: JobType | null;
   jobRequestId: string;
   jobCode: string;
   roleTitle: string;
   companyId: string;
   companyName: string;
   internal: InternalOutcome;
+  /** Rejected at our resume shortlist, screening or assignment. */
+  internalRejected: boolean;
   shared: boolean;
   interviewed: boolean;
   selected: boolean;
@@ -108,6 +133,16 @@ export interface MonthlyStudent {
   lastRoundOutcome: string | null;
   /** The student's own process end (interview done) date is set. */
   processEnded: boolean;
+  /** Cleared (or went past) our resume shortlist, screening, assignment and final shortlist. */
+  passed: { resume: boolean; screening: boolean; assignment: boolean; finalShortlist: boolean };
+  rejectedAt: { resume: boolean; screening: boolean; screeningNoShow: boolean; assignment: boolean };
+  /** Every company round the student had, in the job's order. */
+  rounds: { label: string; name: string; sequence: number; outcome: string }[];
+  rejectedRound: { label: string; name: string | null } | null;
+  /** Macro reason: the RSA team's tag, else the tag on the rejected round. */
+  reason: { id: string; label: string; fromRsa: boolean } | null;
+  rejectionNote: string | null;
+  rsa: { status: string; tone: string; done: boolean; reportUrl: string | null; summary: string | null } | null;
 }
 
 export interface MonthlyPlacement {
@@ -143,7 +178,7 @@ export interface MonthBigPicture {
   droppedFromList: number;
   students: { academy: StudentPositionCounts; pool: StudentPositionCounts };
   /** Why students were not selected on the month's drives (one per student per drive). */
-  notSelectedReasons: { tagId: string | null; label: string; academy: number; pool: number; total: number }[];
+  notSelectedReasons: ReasonCount[];
 }
 
 export interface MonthlyPipeline {

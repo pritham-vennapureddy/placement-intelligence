@@ -52,6 +52,7 @@ const jobFields = {
   requiredCandidateCount: z.number().int().min(1).max(100000),
   /** Offered CTC in LPA; the upper bound when the company gives a range. */
   ctcLpa: z.number().positive().max(500).nullable().optional(),
+  jobType: z.enum(["FULL_TIME", "INTERNSHIP", "INTERNSHIP_TO_FULL_TIME", "CONTRACT"]).nullable().optional(),
   description: z.string().trim().max(10000),
   requestDate: isoDate,
   deadline: isoDate.nullable().optional(),

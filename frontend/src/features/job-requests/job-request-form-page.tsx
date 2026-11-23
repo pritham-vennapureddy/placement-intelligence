@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { parseHubspotRecordId } from "@placement/shared";
+import { JOB_TYPE_LABELS, JOB_TYPES, parseHubspotRecordId, type JobType } from "@placement/shared";
 import { format } from "date-fns";
 import { ArrowLeft } from "lucide-react";
 import { useEffect, useMemo } from "react";
@@ -37,6 +37,7 @@ const schema = z
     openings: z.coerce.number().int().min(1, "At least 1."),
     requiredCandidateCount: z.coerce.number().int().min(1, "At least 1."),
     ctcLpa: z.string().trim().refine((value) => !value || (Number(value) > 0 && Number(value) <= 500), "Enter the CTC in LPA, e.g. 4.5."),
+    jobType: z.string(),
     requestDate: z.string().min(1, "Choose the request date."),
     deadline: z.string(),
     timeline: z.string().trim().max(80),
@@ -71,6 +72,7 @@ function defaultsFrom(job: JobRequestDetail | undefined, companyName = ""): Form
     openings: job?.openings ?? 1,
     requiredCandidateCount: job?.requiredCandidateCount ?? 5,
     ctcLpa: job?.ctcLpa?.toString() ?? "",
+    jobType: job?.jobType ?? "",
     requestDate: job?.requestDate.slice(0, 10) ?? format(new Date(), "yyyy-MM-dd"),
     deadline: job?.deadline?.slice(0, 10) ?? "",
     timeline: job?.timeline ?? "",
@@ -132,6 +134,7 @@ export function JobRequestFormPage() {
         openings: values.openings,
         requiredCandidateCount: values.requiredCandidateCount,
         ctcLpa: values.ctcLpa ? Number(values.ctcLpa) : null,
+        jobType: values.jobType ? (values.jobType as JobType) : null,
         description: values.description,
         requestDate: values.requestDate,
         deadline: nullIfBlank(values.deadline),
@@ -235,6 +238,21 @@ export function JobRequestFormPage() {
         </FormField>
         <FormField id="ctcLpa" label="CTC (LPA)" error={errors.ctcLpa?.message} hint="Offered CTC in lakhs per year; use the upper figure for a range. Decides the < 8 LPA KPIs.">
           <Input id="ctcLpa" type="number" inputMode="decimal" min={0} step="0.1" placeholder="e.g. 4.5" {...form.register("ctcLpa")} />
+        </FormField>
+        <FormField id="jobType" label="Job type">
+          <Controller
+            control={form.control}
+            name="jobType"
+            render={({ field }) => (
+              <Select value={field.value || "NONE"} onValueChange={(value) => field.onChange(value === "NONE" ? "" : value)}>
+                <SelectTrigger id="jobType" className="h-10 w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="NONE">Not set</SelectItem>
+                  {JOB_TYPES.map((value) => <SelectItem key={value} value={value}>{JOB_TYPE_LABELS[value]}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
+          />
         </FormField>
         <FormField id="description" label="Job description" error={errors.description?.message} className="sm:col-span-2">
           <Textarea id="description" rows={4} {...form.register("description")} />

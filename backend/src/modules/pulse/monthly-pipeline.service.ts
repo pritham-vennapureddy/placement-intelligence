@@ -12,10 +12,11 @@ import type { AuthenticatedUser } from "../../middleware/authenticate.js";
 import { ApiError } from "../../utils/api-error.js";
 import { recordAudit, type AuditContext } from "../audit/audit.service.js";
 import { academyFacts, APPLICATION_PRODUCT, POOL_SOURCE, PRODUCT_LABEL, PRODUCT_NAMES } from "../insights/academy-insights.service.js";
+import { APPLICATION_REASON } from "../insights/company-reasons.service.js";
 import { ROUND_LABELS } from "../insights/company-rounds.js";
 import { ownerFilter } from "../insights/insights.service.js";
 import type { AcademyQuery } from "../insights/insights.validators.js";
-import { companyAndOpeningCounts, notSelectedReasons, studentPositions, type MonthJob } from "./month-big-picture.js";
+import { companyAndOpeningCounts, notSelectedReasonsByJob, studentPositions, sumReasons, type MonthJob } from "./month-big-picture.js";
 import type { CarryForwardInput, CreateEntryInput, UpdateEntryInput } from "./pulse.validators.js";
 
 /** "2026-11" → 2026-11-01 (UTC, stored as a date). */
@@ -26,27 +27,6 @@ const day = (value: Date | null) => (value ? value.toISOString().slice(0, 10) : 
 
 function assertCanWrite(user: AuthenticatedUser) {
   if (!hasPermission(user.roles, "pipeline:write")) throw new ApiError(403, "FORBIDDEN", "You do not have permission to change the monthly pipeline.");
-}
-
-/**
- * A drive is live in a month when it was requested by the month's end, had not
- * started after it, and had not finished before it. "Finished" is the hand-entered
- * process end date, else the date the process was marked done, else the date a
- * closed / filled / cancelled job was last changed.
- */
-export function liveInMonth(month: string): Prisma.Sql {
-  const start = `${month}-01`;
-  const end = `${nextMonthKey(month)}-01`;
-  return Prisma.sql`
-    j."archivedAt" IS NULL
-    AND j."requestDate" < ${end}::date
-    AND (j."companyProcessStartDate" IS NULL OR j."companyProcessStartDate" < ${end}::date)
-    AND COALESCE(
-      j."companyProcessEndDate",
-      CASE WHEN j."processPhase" IN ('PROCESS_DONE_HIRED', 'PROCESS_DONE_NOT_HIRED') THEN j."processPhaseAt"::date END,
-      CASE WHEN j.status IN ('FILLED', 'CANCELLED', 'CLOSED') THEN j."updatedAt"::date END,
-      'infinity'::date
-    ) >= ${start}::date`;
 }
 
 const entrySelect = {
@@ -102,10 +82,13 @@ async function crmOwnerCheck(id: string | null | undefined) {
   if (!found) throw new ApiError(400, "USER_NOT_FOUND", "The CRM owner no longer has an account.");
 }
 
-/** Student numbers for Academy and assessed-pool students in the month's live drives. */
-async function students(month: string, owners: Prisma.Sql) {
+/** Only the job drives on the month's potential list. */
+const listScope = (jobIds: string[]) => (jobIds.length ? Prisma.sql`j.id = ANY(${jobIds}::uuid[])` : Prisma.sql`FALSE`);
+
+/** Student numbers for Academy and assessed-pool students in the given drives. */
+async function students(scope: Prisma.Sql, owners: Prisma.Sql) {
   const query = { dateBy: "requested", academyCategory: "ALL_ACADEMY", segment: "ALL" } as AcademyQuery;
-  const facts = academyFacts(query, owners, liveInMonth(month));
+  const facts = academyFacts(query, owners, scope);
   const people = Prisma.sql`
     ${facts},
     ${ROUND_LABELS},
@@ -147,23 +130,40 @@ async function students(month: string, owners: Prisma.Sql) {
       ORDER BY sort`,
     prisma.$queryRaw<{
       application_id: string; candidate_id: string; full_name: string; candidate_code: string | null; category: string; academy: boolean; in_pool: boolean; tier: string | null;
+      email: string | null; mobile: string | null; college: string | null; yog: number | null; ctc: number | null; job_type: string | null; pool_user_id: string | null;
       product: string | null; pool_source: string | null;
       job_id: string; job_code: string; role_title: string; company_id: string; company_name: string;
-      rs_rej: boolean; sc_rej: boolean; as_rej: boolean; sc_no_show: boolean; sp: boolean; shared: boolean; interviewed: boolean; selected: boolean; pipeline: string | null;
+      rs_rej: boolean; sc_rej: boolean; as_rej: boolean; sc_no_show: boolean; internal_rejected: boolean; sp: boolean;
+      rs_pass: boolean; sc_pass: boolean; as_pass: boolean;
+      rounds: { label: string; name: string; sequence: number; outcome: string }[];
+      rejected_round: string | null; rejected_round_name: string | null; tag_id: string | null; tag_label: string | null; tag_from_rsa: boolean; rejection_note: string | null;
+      rsa_status: string | null; rsa_tone: string | null; rsa_done: boolean | null; rsa_report_url: string | null; rsa_summary: string | null; shared: boolean; interviewed: boolean; selected: boolean; pipeline: string | null;
       last_round: string | null; last_outcome: string | null; student_ended: boolean;
     }[]>`
       ${people}
       SELECT ppl.application_id, ppl.candidate_id, c."fullName" AS full_name, c."candidateCode" AS candidate_code, ppl.category, ppl.academy, ppl.in_pool, ppl.tier,
+        c.email, c.mobile, c.college, c."graduationYear" AS yog, j."ctcLpa" AS ctc, j."jobType"::text AS job_type,
+        (SELECT NULLIF(TRIM(r."sourceUserId"), '') FROM "AssessedPoolRecord" r WHERE r.mobile = c.mobile LIMIT 1) AS pool_user_id,
         ${APPLICATION_PRODUCT(Prisma.sql`ppl.application_id`, Prisma.sql`c.id`)} AS product,
         (SELECT ${POOL_SOURCE(Prisma.sql`r`)} FROM "AssessedPoolRecord" r WHERE r.mobile = c.mobile LIMIT 1) AS pool_source,
         ppl.job_id, j."jobId" AS job_code, j."roleTitle" AS role_title, co.id AS company_id, co.name AS company_name,
-        ppl.rs_rej, ppl.sc_rej, ppl.as_rej, ppl.sc_no_show, ppl.sp, ppl.shared, ppl.interviewed, ppl.selected, ppl.pipeline,
+        ppl.rs_rej, ppl.sc_rej, ppl.as_rej, ppl.sc_no_show, ppl.internal_rejected, ppl.sp, ppl.shared, ppl.interviewed, ppl.selected, ppl.pipeline,
+        ppl.rs_pass, ppl.sc_pass, ppl.as_pass,
         lr.label AS last_round, lr.outcome AS last_outcome,
-        COALESCE((SELECT n."processEndDate" IS NOT NULL FROM "CompanyNomination" n WHERE n.id = ppl.nomination_id), FALSE) AS student_ended
+        COALESCE((SELECT n."processEndDate" IS NOT NULL FROM "CompanyNomination" n WHERE n.id = ppl.nomination_id), FALSE) AS student_ended,
+        COALESCE((
+          SELECT json_agg(json_build_object('label', rounds.label, 'name', cr.name, 'sequence', cr.sequence, 'outcome', ci.outcome::text) ORDER BY cr.sequence, cr.name)
+          FROM "CompanyInterview" ci JOIN "CompanyInterviewRound" cr ON cr.id = ci."roundId" JOIN rounds ON rounds.id = ci."roundId"
+          WHERE ci."nominationId" = ppl.nomination_id
+        ), '[]'::json) AS rounds,
+        rr.label AS rejected_round, rr.round_name AS rejected_round_name, rt.id AS tag_id, rt.label AS tag_label, (ra."rejectionTagId" IS NOT NULL) AS tag_from_rsa, rr.note AS rejection_note,
+        rso.label AS rsa_status, rso.tone AS rsa_tone, rso."countsAsDone" AS rsa_done, rs."reportUrl" AS rsa_report_url, rs."reportSummary" AS rsa_summary
       FROM ppl
       JOIN "Candidate" c ON c.id = ppl.candidate_id
       JOIN "JobRequest" j ON j.id = ppl.job_id
       JOIN "Company" co ON co.id = j."companyId"
+      ${APPLICATION_REASON(Prisma.sql`ppl`)}
+      LEFT JOIN "SupportStatusOption" rso ON rso.id = rs."statusId"
       LEFT JOIN LATERAL (
         SELECT rounds.label, ci.outcome::text AS outcome
         FROM "CompanyInterview" ci JOIN rounds ON rounds.id = ci."roundId"
@@ -198,6 +198,15 @@ async function students(month: string, owners: Prisma.Sql) {
       candidateId: row.candidate_id,
       fullName: row.full_name,
       candidateCode: row.candidate_code,
+      /** Platform user ID: the candidate's own code unless it was generated ("GEN-…"), else the assessed-pool sheet's. */
+      userId: row.candidate_code && !row.candidate_code.startsWith("GEN-") ? row.candidate_code : row.pool_user_id,
+      email: row.email,
+      mobile: row.mobile,
+      college: row.college,
+      /** Year of graduation. */
+      yog: row.yog,
+      ctcLpa: row.ctc,
+      jobType: row.job_type,
       category: row.category,
       academy: row.academy,
       inPool: row.in_pool,
@@ -211,6 +220,8 @@ async function students(month: string, owners: Prisma.Sql) {
       companyName: row.company_name,
       /** Where they stopped inside our process, or "SP" when shortlisted to the company. */
       internal: row.sp ? "SP" : row.as_rej ? "AS_REJECTED" : row.sc_rej ? "SC_REJECTED" : row.sc_no_show ? "SC_NO_SHOW" : row.rs_rej ? "RS_REJECTED" : "IN_PROGRESS",
+      /** Rejected at our resume shortlist, screening or assignment. */
+      internalRejected: Boolean(row.internal_rejected),
       shared: Boolean(row.shared),
       interviewed: Boolean(row.interviewed),
       selected: Boolean(row.selected),
@@ -218,6 +229,17 @@ async function students(month: string, owners: Prisma.Sql) {
       lastRound: row.last_round,
       processEnded: row.student_ended,
       lastRoundOutcome: row.last_outcome,
+      /** Cleared (or went past) our resume shortlist, screening, assignment and final shortlist. */
+      passed: { resume: row.rs_pass, screening: row.sc_pass, assignment: row.as_pass, finalShortlist: row.sp },
+      rejectedAt: { resume: row.rs_rej, screening: row.sc_rej, screeningNoShow: row.sc_no_show, assignment: row.as_rej },
+      /** Every company round the student had, in order (generic label + the job's own round name). */
+      rounds: row.rounds,
+      /** The company round they were rejected in, if any. */
+      rejectedRound: row.rejected_round ? { label: row.rejected_round, name: row.rejected_round_name } : null,
+      /** Macro reason: the RSA team's tag, else the tag on the rejected round. */
+      reason: row.tag_id ? { id: row.tag_id, label: row.tag_label!, fromRsa: row.tag_from_rsa } : null,
+      rejectionNote: row.rejection_note,
+      rsa: row.rsa_status ? { status: row.rsa_status, tone: row.rsa_tone ?? "slate", done: Boolean(row.rsa_done), reportUrl: row.rsa_report_url, summary: row.rsa_summary } : null,
     })),
   };
 }
@@ -231,9 +253,9 @@ const GROUPS = Prisma.sql`CROSS JOIN LATERAL (VALUES ('academy', f.category IN (
  * in process / rejected / selected) and in each of the company's own rounds, for
  * Academy, assessed-pool and all students.
  */
-async function driveStages(month: string, owners: Prisma.Sql) {
+async function driveStages(scope: Prisma.Sql, owners: Prisma.Sql) {
   const query = { dateBy: "requested", academyCategory: "ALL_ACADEMY", segment: "ALL" } as AcademyQuery;
-  const facts = academyFacts(query, owners, liveInMonth(month));
+  const facts = academyFacts(query, owners, scope);
   const [steps, rounds] = await Promise.all([
     prisma.$queryRaw<{ job_id: string; grp: GroupKey; applied: number; internal_rejected: number; sp: number; shared: number; interviewed: number; in_process: number; company_rejected: number; selected: number }[]>`
       ${facts}
@@ -293,18 +315,21 @@ async function driveStages(month: string, owners: Prisma.Sql) {
   }]));
 }
 
-async function drives(month: string, owners: Prisma.Sql) {
+/** The given drives with their process, openings, students, CRM remarks and RSA review. */
+async function drives(month: string, scope: Prisma.Sql, owners: Prisma.Sql) {
   const start = `${month}-01`;
   const end = `${nextMonthKey(month)}-01`;
   const query = { dateBy: "requested", academyCategory: "ALL_ACADEMY", segment: "ALL" } as AcademyQuery;
-  const stagesPromise = driveStages(month, owners);
+  const stagesPromise = driveStages(scope, owners);
   const rows = await prisma.$queryRaw<{
     id: string; job_code: string; role_title: string; company_id: string; company_name: string; psm: string | null; status: string; phase: string; round_name: string | null;
     request_date: Date; start_date: Date | null; end_date: Date | null; starts_in_month: boolean; ends_in_month: boolean; requested_in_month: boolean;
     openings: number; academy: number; pool: number; shared: number; interviewed: number; selected: number;
-    crm_count: number; crm_last_on: Date | null; crm_last: string | null; rsa_review: boolean; on_list: boolean;
+    crm_count: number; crm_last_on: Date | null; crm_last: string | null; crm_last_by: string | null; crm_next: string | null; rsa_review: boolean; on_list: boolean;
+    ctc: number | null; company_sheet: string | null; internal_sheet: string | null; products: string | null; skills: string | null;
+    round_id: string | null; job_rounds: { id: string; name: string }[]; went_right: string | null; went_wrong: string | null; action_items: string | null;
   }[]>`
-    ${academyFacts(query, owners, liveInMonth(month))},
+    ${academyFacts(query, owners, scope)},
     stu AS (
       SELECT job_id,
         COUNT(DISTINCT candidate_id) FILTER (WHERE category IN ('ACADEMY', 'ACADEMY_INTENSIVE'))::int AS academy,
@@ -323,7 +348,12 @@ async function drives(month: string, owners: Prisma.Sql) {
       j.openings, COALESCE(stu.academy, 0) AS academy, COALESCE(stu.pool, 0) AS pool, COALESCE(stu.shared, 0) AS shared,
       COALESCE(stu.interviewed, 0) AS interviewed, COALESCE(stu.selected, 0) AS selected,
       (SELECT COUNT(*)::int FROM "JobCrmRemark" r WHERE r."jobRequestId" = j.id) AS crm_count,
-      lc."interactionOn" AS crm_last_on, lc.remark AS crm_last,
+      lc."interactionOn" AS crm_last_on, lc.remark AS crm_last, lc.author AS crm_last_by, lc."nextStep" AS crm_next,
+      j."ctcLpa" AS ctc, j."companySheetUrl" AS company_sheet, j."internalSheetUrl" AS internal_sheet, j."processRoundId" AS round_id,
+      (SELECT string_agg(p.name, ', ' ORDER BY p.name) FROM "JobRequestProduct" jp JOIN "Product" p ON p.id = jp."productId" WHERE jp."jobRequestId" = j.id) AS products,
+      (SELECT string_agg(sk.name, ', ' ORDER BY js."isMandatory" DESC, sk.name) FROM "JobRequestSkill" js JOIN "Skill" sk ON sk.id = js."skillId" WHERE js."jobRequestId" = j.id) AS skills,
+      COALESCE((SELECT json_agg(json_build_object('id', cr.id, 'name', cr.name) ORDER BY cr.sequence, cr.name) FROM "CompanyInterviewRound" cr WHERE cr."jobRequestId" = j.id), '[]'::json) AS job_rounds,
+      rv."wentRight" AS went_right, rv."wentWrong" AS went_wrong, rv."actionItems" AS action_items,
       EXISTS (SELECT 1 FROM "JobRsaReview" rv WHERE rv."jobRequestId" = j.id AND (rv."wentRight" IS NOT NULL OR rv."wentWrong" IS NOT NULL OR rv."actionItems" IS NOT NULL)) AS rsa_review,
       EXISTS (SELECT 1 FROM "MonthlyPipelineEntry" me WHERE me."jobRequestId" = j.id AND me.month = ${start}::date) AS on_list
     FROM "JobRequest" j
@@ -332,10 +362,13 @@ async function drives(month: string, owners: Prisma.Sql) {
     LEFT JOIN "CompanyInterviewRound" pr ON pr.id = j."processRoundId"
     LEFT JOIN stu ON stu.job_id = j.id
     LEFT JOIN LATERAL (
-      SELECT r."interactionOn", r.remark FROM "JobCrmRemark" r WHERE r."jobRequestId" = j.id ORDER BY r."interactionOn" DESC, r."createdAt" DESC LIMIT 1
+      SELECT r."interactionOn", r.remark, r."nextStep", au."fullName" AS author
+      FROM "JobCrmRemark" r JOIN "User" au ON au.id = r."createdById"
+      WHERE r."jobRequestId" = j.id ORDER BY r."interactionOn" DESC, r."createdAt" DESC LIMIT 1
     ) lc ON TRUE
-    WHERE ${liveInMonth(month)} ${owners}
-    ORDER BY starts_in_month DESC, co.name, j."roleTitle"`;
+    LEFT JOIN "JobRsaReview" rv ON rv."jobRequestId" = j.id
+    WHERE ${scope} ${owners}
+    ORDER BY co.name, j."roleTitle"`;
 
   const stages = await stagesPromise;
   return rows.map((row) => ({
@@ -357,8 +390,18 @@ async function drives(month: string, owners: Prisma.Sql) {
     openings: row.openings,
     students: { academy: row.academy, pool: row.pool, shared: row.shared, interviewed: row.interviewed, selected: row.selected },
     crmRemarkCount: row.crm_count,
-    lastCrmRemark: row.crm_last ? { on: day(row.crm_last_on), remark: row.crm_last } : null,
+    lastCrmRemark: row.crm_last ? { on: day(row.crm_last_on), remark: row.crm_last, by: row.crm_last_by, nextStep: row.crm_next } : null,
     hasRsaReview: row.rsa_review,
+    /** What went right / wrong with this drive and what to change (RSA review). */
+    review: { wentRight: row.went_right, wentWrong: row.went_wrong, actionItems: row.action_items },
+    ctcLpa: row.ctc,
+    companySheetUrl: row.company_sheet,
+    internalSheetUrl: row.internal_sheet,
+    /** Products eligible to apply, as stored (the UI shows universal names). */
+    products: row.products,
+    techStack: row.skills,
+    processRoundId: row.round_id,
+    rounds: row.job_rounds,
     onPotentialList: row.on_list,
     /** Unique students per step and per company round, for Academy, pool and everyone. */
     stages: stages.get(row.id) ?? null,
@@ -433,54 +476,57 @@ async function placements(month: string, owners: Prisma.Sql) {
 }
 
 export const monthlyPipelineService = {
-  /** Everything the Monthly page shows for one month. */
+  /**
+   * Everything the Monthly page shows for one month. Only the job drives on CRM's
+   * potential list for the month count: drives, students and the big picture
+   * all come from that list. The big picture leaves out dropped / no response.
+   */
   async month(user: AuthenticatedUser, month: string) {
     const date = monthDate(month);
     const owners = await ownerFilter(user);
-    const [entries, driveRows, studentData, placed] = await Promise.all([
-      prisma.monthlyPipelineEntry.findMany({ where: { month: date }, select: entrySelect, orderBy: [{ company: { name: "asc" } }, { createdAt: "asc" }] }),
-      drives(month, owners),
-      students(month, owners),
-      placements(month, owners),
-    ]);
+    const entries = await prisma.monthlyPipelineEntry.findMany({ where: { month: date }, select: entrySelect, orderBy: [{ company: { name: "asc" } }, { createdAt: "asc" }] });
+    const jobIds = [...new Set(entries.map((entry) => entry.jobRequest.id))];
+    const scope = listScope(jobIds);
     const companyIds = [...new Set(entries.map((entry) => entry.company.id))];
-    const firsts = companyIds.length
-      ? await prisma.monthlyPipelineEntry.groupBy({ by: ["companyId"], where: { companyId: { in: companyIds } }, _min: { month: true } })
-      : [];
+    const active = entries.filter((entry) => ACTIVE_POTENTIAL_STATUSES.includes(entry.status));
+    const activeJobIds = [...new Set(active.map((entry) => entry.jobRequest.id))];
+
+    const [driveRows, studentData, placed, reasonsByJob, positions, firsts] = await Promise.all([
+      drives(month, scope, owners),
+      students(scope, owners),
+      placements(month, owners),
+      notSelectedReasonsByJob(jobIds, owners),
+      studentPositions(activeJobIds, owners),
+      companyIds.length
+        ? prisma.monthlyPipelineEntry.groupBy({ by: ["companyId"], where: { companyId: { in: companyIds } }, _min: { month: true } })
+        : Promise.resolve([]),
+    ]);
     const firstListed = new Map(firsts.map((row) => [row.companyId, row._min.month!]));
 
     const byStatus = Object.fromEntries(Object.keys(POTENTIAL_COMPANY_STATUS_LABELS).map((status) => [status, entries.filter((entry) => entry.status === status).length])) as Record<PotentialCompanyStatus, number>;
-    const active = entries.filter((entry) => ACTIVE_POTENTIAL_STATUSES.includes(entry.status));
     const companies = (list: typeof entries) => new Set(list.map((entry) => entry.company.id)).size;
 
-    // The month's drives: on CRM's list (not dropped / no response) plus everything running this month.
-    const monthJobs = new Map<string, MonthJob>();
-    for (const row of driveRows) {
-      monthJobs.set(row.jobRequestId, {
-        jobRequestId: row.jobRequestId, companyId: row.companyId, phase: row.phase, openings: row.openings,
-        processStartDate: row.processStartDate, processEndDate: row.processEndDate, onList: row.onPotentialList, running: true,
-      });
-    }
-    for (const entry of active) {
-      const job = entry.jobRequest;
-      const known = monthJobs.get(job.id);
-      if (known) { known.onList = true; continue; }
-      monthJobs.set(job.id, {
-        jobRequestId: job.id, companyId: job.companyId, phase: job.processPhase, openings: job.openings,
-        processStartDate: day(job.companyProcessStartDate), processEndDate: day(job.companyProcessEndDate), onList: true, running: false,
-      });
-    }
-    const jobsOfMonth = [...monthJobs.values()];
+    const driveById = new Map(driveRows.map((row) => [row.jobRequestId, row]));
+    const activeJobs: MonthJob[] = activeJobIds.map((id) => {
+      const job = active.find((entry) => entry.jobRequest.id === id)!.jobRequest;
+      const row = driveById.get(id);
+      return {
+        jobRequestId: id, companyId: job.companyId, phase: job.processPhase, openings: job.openings,
+        processStartDate: row?.processStartDate ?? day(job.companyProcessStartDate), processEndDate: row?.processEndDate ?? day(job.companyProcessEndDate),
+        onList: true, running: Boolean(row),
+      };
+    });
     const bigPicture = {
-      ...companyAndOpeningCounts(jobsOfMonth),
+      ...companyAndOpeningCounts(activeJobs),
       droppedFromList: companies(entries.filter((entry) => entry.status === "DROPPED" || entry.status === "NO_RESPONSE")),
-      students: await studentPositions(jobsOfMonth.map((job) => job.jobRequestId), owners),
-      notSelectedReasons: await notSelectedReasons(jobsOfMonth.map((job) => job.jobRequestId), owners),
+      students: positions,
+      notSelectedReasons: sumReasons(activeJobIds.map((id) => reasonsByJob.get(id) ?? [])),
     };
 
+    const items = driveRows.map((row) => ({ ...row, notSelectedReasons: reasonsByJob.get(row.jobRequestId) ?? [] }));
     return {
       month,
-      /** Companies, drives, openings and where unique students stand, for the whole month. */
+      /** Companies, drives, openings and where unique students stand, for the active potential list. */
       bigPicture,
       potential: {
         entries: entries.map((entry) => present(entry, firstListed)),
@@ -496,20 +542,22 @@ export const monthlyPipelineService = {
           byStatus,
         },
       },
+      /** The list's job drives (every status), one row per job. */
       drives: {
-        items: driveRows,
+        items,
         summary: {
-          live: driveRows.length,
-          companies: new Set(driveRows.map((row) => row.companyId)).size,
-          startingThisMonth: driveRows.filter((row) => row.startsInMonth).length,
-          startingCompanies: new Set(driveRows.filter((row) => row.startsInMonth).map((row) => row.companyId)).size,
-          endingThisMonth: driveRows.filter((row) => row.endsInMonth).length,
-          requestedThisMonth: driveRows.filter((row) => row.requestedInMonth).length,
-          openings: driveRows.reduce((sum, row) => sum + row.openings, 0),
+          live: items.length,
+          companies: new Set(items.map((row) => row.companyId)).size,
+          startingThisMonth: items.filter((row) => row.startsInMonth).length,
+          startingCompanies: new Set(items.filter((row) => row.startsInMonth).map((row) => row.companyId)).size,
+          endingThisMonth: items.filter((row) => row.endsInMonth).length,
+          requestedThisMonth: items.filter((row) => row.requestedInMonth).length,
+          openings: items.reduce((sum, row) => sum + row.openings, 0),
         },
       },
+      /** Academy and assessed-pool students on the list's drives. */
       students: studentData,
-      /** Placements of the month by hired (interview done) date. */
+      /** Placements of the month by hired (interview done) date, on any drive. */
       placements: placed,
     };
   },
