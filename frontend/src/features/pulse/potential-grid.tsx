@@ -180,7 +180,7 @@ interface Column {
   key: string;
   label: string;
   /** Group header shown above (Academy / pool). */
-  group?: "academy" | "pool";
+  group?: "all" | "academy" | "pool";
   align?: "right";
   filter?: FilterKey;
   sort?: (row: BoardRow) => string | number;
@@ -197,6 +197,8 @@ const COLUMNS: Column[] = [
     cell: (row) => row.products.length ? <div className="flex flex-wrap gap-1">{row.products.map((name) => <span key={name} className="rounded bg-violet-50 px-1.5 py-px text-[10px] font-medium text-violet-700">{name}</span>)}</div> : <span className="text-slate-300">—</span> },
   { key: "ctc", label: "CTC", align: "right", sort: (row) => row.ctcLpa ?? -1,
     cell: (row) => row.ctcLpa === null ? <span className="text-slate-300">—</span> : <span className="tabular-nums">{row.ctcLpa} LPA</span> },
+  { key: "requestDate", label: "Job requested date", filter: "requestMonth", sort: (row) => row.requestDate ?? "", className: "whitespace-nowrap",
+    cell: (row) => dateText(row.requestDate) },
   { key: "techStack", label: "Tech stack", filter: "techStack", sort: (row) => row.techStack.join(), className: "min-w-[180px] max-w-[240px]",
     cell: (row) => row.techStack.length ? <p className="line-clamp-2 text-slate-600" title={row.techStack.join(", ")}>{row.techStack.join(", ")}</p> : <span className="text-slate-300">—</span> },
   { key: "crmStatus", label: "CRM status", filter: "crmStatus", sort: (row) => POTENTIAL_COMPANY_STATUSES.indexOf(row.crmStatus),
@@ -207,6 +209,12 @@ const COLUMNS: Column[] = [
     cell: (row, ctx) => <StageCell row={row} canEdit={ctx.canWrite} /> },
   { key: "openings", label: "Openings", align: "right", sort: (row) => row.openings,
     cell: (row) => <span className="font-semibold tabular-nums text-slate-900">{row.openings}</span>, footer: (rows) => sum(rows, (row) => row.openings) },
+  { key: "allTotal", label: "Total", group: "all", align: "right", sort: (row) => row.all.total,
+    cell: (row) => num(row.all.total, "font-medium text-slate-800"), footer: (rows) => sum(rows, (row) => row.all.total) },
+  { key: "allInProcess", label: "In process", group: "all", align: "right", sort: (row) => row.all.inProcess,
+    cell: (row) => num(row.all.inProcess, "font-medium text-sky-700"), footer: (rows) => <span className="text-sky-700">{sum(rows, (row) => row.all.inProcess)}</span> },
+  { key: "allCompleted", label: "Completed", group: "all", align: "right", sort: (row) => row.all.completed,
+    cell: (row) => completedCell(row.all), footer: (rows) => <>{sum(rows, (row) => row.all.completed)} <span className="text-emerald-700">({sum(rows, (row) => row.all.selected)}✓)</span></> },
   { key: "academyTotal", label: "Total", group: "academy", align: "right", sort: (row) => row.academy.total,
     cell: (row) => num(row.academy.total, "font-medium text-slate-800"), footer: (rows) => sum(rows, (row) => row.academy.total) },
   { key: "academyInProcess", label: "In process", group: "academy", align: "right", sort: (row) => row.academy.inProcess,
@@ -223,8 +231,6 @@ const COLUMNS: Column[] = [
     cell: (row) => row.crmOwner === "Not set" ? <span className="text-slate-400">Not set</span> : row.crmOwner },
   { key: "psm", label: "Placement owner", filter: "psm", sort: (row) => row.psm, defaultHidden: true,
     cell: (row) => row.psm === "Not set" ? <span className="text-slate-400">Not set</span> : row.psm },
-  { key: "requestDate", label: "Requested on", sort: (row) => row.requestDate ?? "", defaultHidden: true, className: "whitespace-nowrap",
-    cell: (row) => dateText(row.requestDate) },
   { key: "expectedStart", label: "Expected start", sort: (row) => row.entry.expectedStartDate ?? "9999",
     cell: (row, ctx) => <ExpectedStartCell row={row} canWrite={ctx.canWrite} /> },
   { key: "processStart", label: "Started on", sort: (row) => row.processStart ?? "9999", className: "whitespace-nowrap",
@@ -259,7 +265,8 @@ export function sortRows(rows: BoardRow[], sort: GridSort | null) {
   });
 }
 
-const STORAGE_KEY = "monthly.hiddenColumns";
+// v2: "Job requested date" became a default column, so earlier saved choices are reset once.
+const STORAGE_KEY = "monthly.hiddenColumns.v2";
 
 /** Which columns are hidden, remembered on this computer. */
 export function useHiddenColumns() {
@@ -276,7 +283,7 @@ export function useHiddenColumns() {
 
 export function ColumnPicker({ hidden, onChange }: { hidden: Set<string>; onChange: (next: Set<string>) => void }) {
   const toggle = (key: string) => { const next = new Set(hidden); if (next.has(key)) next.delete(key); else next.add(key); onChange(next); };
-  const label = (column: Column) => (column.group ? `${column.group === "academy" ? "Academy" : "Pool"} · ${column.label.toLowerCase()}` : column.label);
+  const label = (column: Column) => (column.group ? `${column.group === "all" ? "All students" : column.group === "academy" ? "Academy" : "Pool"} · ${column.label.toLowerCase()}` : column.label);
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -333,7 +340,7 @@ export function PotentialGrid({
     <ColumnFilter
       title={title}
       align={align}
-      values={filterKey ? valuesFor(filterKey) : []}
+      values={filterKey ? () => valuesFor(filterKey) : []}
       selected={filterKey ? filters[filterKey] : undefined}
       onChange={(next) => filterKey && onFilter(filterKey, next)}
       sort={sort?.key === sortKey ? sort.dir : null}
@@ -343,13 +350,13 @@ export function PotentialGrid({
   const ctx = { canWrite, canNote };
   const span = columns.length + 2;
   // Group header cells: consecutive columns with the same group share one cell.
-  const groups: { group: "academy" | "pool" | undefined; span: number }[] = [];
+  const groups: { group: "all" | "academy" | "pool" | undefined; span: number }[] = [];
   for (const column of columns) {
     const last = groups[groups.length - 1];
     if (last && last.group === column.group) last.span++;
     else groups.push({ group: column.group, span: 1 });
   }
-  const groupStyle = { academy: "bg-indigo-50/70 text-indigo-700", pool: "bg-emerald-50/70 text-emerald-700" };
+  const groupStyle = { all: "bg-slate-100 text-slate-700", academy: "bg-indigo-50/70 text-indigo-700", pool: "bg-emerald-50/70 text-emerald-700" };
   const th = "whitespace-nowrap px-2 py-2 text-left text-xs font-medium text-slate-600";
   const edge = (column: Column, index: number) => column.group && columns[index - 1]?.group !== column.group ? "border-l border-slate-200" : column.group === undefined && columns[index - 1]?.group ? "border-l border-slate-200" : "";
 
@@ -361,7 +368,7 @@ export function PotentialGrid({
             <th colSpan={2} className="sticky left-0 z-30 bg-slate-50" />
             {groups.map((item, index) => (
               <th key={index} colSpan={item.span} className={cn("px-2 pt-1.5 text-center font-semibold", item.group ? cn(groupStyle[item.group], "border-l border-slate-200") : "")}>
-                {item.group === "academy" ? "Academy students" : item.group === "pool" ? "Assessed-pool students" : ""}
+                {item.group === "all" ? "All students (incl. External)" : item.group === "academy" ? "Academy students" : item.group === "pool" ? "Assessed-pool students" : ""}
               </th>
             ))}
           </tr>
@@ -588,7 +595,7 @@ function CompanyFunnel({ row, canWrite }: { row: BoardRow; canWrite: boolean }) 
           {fact("CTC", row.ctcLpa === null ? "—" : `${row.ctcLpa} LPA`)}
           {fact("Openings", `${entry.jobRequest.openings}${entry.expectedOpenings ? ` (CRM expects ${entry.expectedOpenings})` : ""}`)}
           {fact("CRM", row.crmOwner)}
-          {fact("Requested on", dateText(row.requestDate))}
+          {fact("Job requested date", dateText(row.requestDate))}
           {fact("Expected start", dateText(entry.expectedStartDate))}
           {fact("Started on", dateText(row.processStart))}
           {fact("Done on", dateText(row.processEnd))}

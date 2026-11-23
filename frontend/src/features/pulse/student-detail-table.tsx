@@ -1,4 +1,5 @@
 import { JOB_TYPE_LABELS } from "@placement/shared";
+import { format } from "date-fns";
 import { Download, X } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -10,7 +11,7 @@ import { cn } from "../../utils/cn";
 import { downloadCsv } from "../../utils/csv";
 import { ColumnFilter, type SortDir } from "./column-filter";
 import { applicationEnded, type BoardRow } from "./potential-board";
-import { facts, type FunnelUnit, type Stage } from "./student-funnel";
+import type { FactsOf, FunnelUnit, Stage } from "./student-funnel";
 
 const BLANK = "(blank)";
 const OUTCOME_TEXT: Record<string, string> = { CLEARED: "Cleared", REJECTED: "Rejected", NO_SHOW: "No show", ON_HOLD: "On hold", SCHEDULED: "Scheduled" };
@@ -41,7 +42,7 @@ const userId = (person: MonthlyStudent) => person.userId ?? "";
  * companies shows three times), with the student's details and the result of
  * every stage of our process and the company's. Each column filters like Excel.
  */
-export function StudentDetailTable({ units, stages, rows }: { units: FunnelUnit[]; stages: Stage[]; rows: BoardRow[] }) {
+export function StudentDetailTable({ units, stages, rows, facts }: { units: FunnelUnit[]; stages: Stage[]; rows: BoardRow[]; facts: FactsOf }) {
   const [filters, setFilters] = useState<Record<string, string[] | undefined>>({});
   const [sort, setSort] = useState<{ key: string; dir: SortDir } | null>(null);
   const [limit, setLimit] = useState(500);
@@ -51,7 +52,9 @@ export function StudentDetailTable({ units, stages, rows }: { units: FunnelUnit[
     const stageText = (person: MonthlyStudent, stage: Stage) => {
       const fact = facts(person, stage.key);
       const over = applicationEnded(person, jobs.get(person.jobRequestId)?.state === "ENDED");
-      if (stage.key === "shared") return fact.cleared || person.shared ? "Shared" : fact.rejected ? "Rejected" : fact.reached ? "Not shared" : "";
+      if (stage.key === "shared") return fact.rejected ? "Rejected" : person.shared ? "Shared" : fact.reached ? "Not shared" : "";
+      // Students added from the company sheet never went through our shortlisting.
+      if (person.fromCompanySheet && stage.group === "ours") return "Did not apply";
       if (fact.rejected) return "Rejected";
       if (fact.noShow) return "No show";
       if (fact.cleared) return "Cleared";
@@ -73,12 +76,14 @@ export function StudentDetailTable({ units, stages, rows }: { units: FunnelUnit[
       };
       return { key: `round${index}`, label, value, filter: true, stage: true };
     });
-    const internal = stages.filter((stage) => stage.group === "ours" && stage.key !== "applied" || stage.key === "shared");
+    const internal = stages.filter((stage) => (stage.group === "ours" && stage.key !== "applied") || stage.key === "shared");
     return [
       { key: "company", label: "Company name", value: (person) => person.companyName, filter: true, className: "font-medium text-slate-900",
         render: (person) => <Link to={`/job-requests/${person.jobRequestId}?tab=pipeline`} className="font-medium text-slate-900 hover:text-indigo-700">{person.companyName}</Link> },
       { key: "role", label: "Role", value: (person) => person.roleTitle, filter: true, className: "max-w-[180px] truncate" },
       { key: "ctc", label: "CTC", value: (person) => (person.ctcLpa === null ? "" : `${person.ctcLpa} LPA`), filter: true, numeric: true },
+      { key: "requestDate", label: "Job requested date", value: (person) => jobs.get(person.jobRequestId)?.requestDate ?? "", filter: true,
+        render: (person) => { const date = jobs.get(person.jobRequestId)?.requestDate; return date ? format(new Date(`${date}T00:00:00`), "d MMM yy") : null; } },
       { key: "jobType", label: "Job type", value: (person) => (person.jobType ? JOB_TYPE_LABELS[person.jobType] : ""), filter: true },
       { key: "userId", label: "User ID", value: userId, className: "font-mono text-[10px] text-slate-500" },
       { key: "name", label: "Student name", value: (person) => person.fullName,
@@ -90,6 +95,8 @@ export function StudentDetailTable({ units, stages, rows }: { units: FunnelUnit[
       { key: "mobile", label: "Mobile number", value: (person) => person.mobile ?? "", className: "font-mono text-[11px]" },
       { key: "email", label: "Email", value: (person) => person.email ?? "", className: "max-w-[200px] truncate" },
       { key: "college", label: "College name", value: (person) => person.college ?? "", filter: true, className: "max-w-[220px] truncate" },
+      { key: "cameVia", label: "Came via", value: (person) => (person.fromCompanySheet ? "Company sheet (did not apply)" : "Applied"), filter: true,
+        render: (person) => person.fromCompanySheet ? <span className="rounded-full bg-violet-50 px-1.5 py-px text-[10px] font-medium text-violet-700">Company sheet (did not apply)</span> : <span className="text-slate-500">Applied</span> },
       ...internal.map((stage) => ({ key: `stage:${stage.key}`, label: stage.label, value: (person: MonthlyStudent) => stageText(person, stage), filter: true, stage: true })),
       ...roundColumns,
       { key: "result", label: "Selected", value: (person) => (person.selected ? "Selected" : ""), filter: true, stage: true },
@@ -99,34 +106,35 @@ export function StudentDetailTable({ units, stages, rows }: { units: FunnelUnit[
       { key: "rsa", label: "RSA", value: (person) => person.rsa?.status ?? "", filter: true,
         render: (person) => person.rsa ? (person.rsa.reportUrl ? <a href={person.rsa.reportUrl} target="_blank" rel="noreferrer" className="text-indigo-700 hover:underline">{person.rsa.status}</a> : person.rsa.status) : null },
     ];
-  }, [stages, rows, jobs]);
+  }, [stages, rows, jobs, facts]);
 
-  const cellText = (column: DetailColumn, unit: FunnelUnit) => column.value(unit.person, unit) || BLANK;
-  const filtered = (except?: string) => units.filter((unit) => columns.every((column) => {
-    if (column.key === except) return true;
-    const allowed = filters[column.key];
-    return !allowed || allowed.length === 0 || allowed.includes(cellText(column, unit));
-  }));
-  const visible = (() => {
+  // Every cell's text, worked out once per data change; filters, sorting and the CSV read from it.
+  const texts = useMemo(() => new Map(units.map((unit) => [unit.key, columns.map((column) => column.value(unit.person, unit))])), [units, columns]);
+  const textOf = (unit: FunnelUnit, index: number) => texts.get(unit.key)![index]!;
+  const activeFilters = columns.map((column, index) => ({ index, key: column.key, allowed: filters[column.key] })).filter((item) => item.allowed && item.allowed.length > 0);
+  const filtered = (except?: string) => units.filter((unit) => activeFilters.every(({ index, key, allowed }) => key === except || allowed!.includes(textOf(unit, index) || BLANK)));
+  const visible = useMemo(() => {
     const list = filtered();
-    const column = sort && columns.find((item) => item.key === sort.key);
-    if (!column || !sort) return list;
+    const index = sort ? columns.findIndex((item) => item.key === sort.key) : -1;
+    if (index < 0 || !sort) return list;
+    const numeric = columns[index]!.numeric;
     const sign = sort.dir === "asc" ? 1 : -1;
     return [...list].sort((x, y) => {
-      const a = column.value(x.person, x);
-      const b = column.value(y.person, y);
+      const a = textOf(x, index);
+      const b = textOf(y, index);
       if (!a !== !b) return a ? -1 : 1; // blanks last
-      return (column.numeric ? (parseFloat(a) || 0) - (parseFloat(b) || 0) : a.localeCompare(b)) * sign;
+      return (numeric ? (parseFloat(a) || 0) - (parseFloat(b) || 0) : a.localeCompare(b)) * sign;
     });
-  })();
+  }, [texts, filters, sort]); // texts covers units and columns
   const valuesFor = (column: DetailColumn) => {
+    const index = columns.indexOf(column);
     const counts = new Map<string, number>();
-    for (const unit of filtered(column.key)) { const value = cellText(column, unit); counts.set(value, (counts.get(value) ?? 0) + 1); }
+    for (const unit of filtered(column.key)) { const value = textOf(unit, index) || BLANK; counts.set(value, (counts.get(value) ?? 0) + 1); }
     return [...counts].map(([value, count]) => ({ value, count }))
       .sort((x, y) => Number(x.value === BLANK) - Number(y.value === BLANK) || (column.numeric ? (parseFloat(x.value) || 0) - (parseFloat(y.value) || 0) : x.value.localeCompare(y.value)));
   };
   const active = columns.filter((column) => filters[column.key]?.length);
-  const download = () => downloadCsv("student-funnel-applications", columns.map((column) => column.label), visible.map((unit) => columns.map((column) => column.value(unit.person, unit))));
+  const download = () => downloadCsv("student-funnel-applications", columns.map((column) => column.label), visible.map((unit) => texts.get(unit.key)!));
 
   return (
     <div className="grid gap-2">
@@ -149,7 +157,7 @@ export function StudentDetailTable({ units, stages, rows }: { units: FunnelUnit[
                 <th key={column.key} className={cn("whitespace-nowrap border-b border-slate-200 px-2 py-2 text-left font-medium text-slate-600", column.stage && "bg-sky-50/60", index === 0 && "sticky left-0 z-30 bg-slate-50")}>
                   <ColumnFilter
                     title={column.label}
-                    values={column.filter ? valuesFor(column) : []}
+                    values={column.filter ? () => valuesFor(column) : []}
                     selected={filters[column.key]}
                     onChange={(next) => setFilters((current) => ({ ...current, [column.key]: next }))}
                     sort={sort?.key === column.key ? sort.dir : null}
@@ -163,7 +171,7 @@ export function StudentDetailTable({ units, stages, rows }: { units: FunnelUnit[
             {visible.slice(0, limit).map((unit) => (
               <tr key={unit.key} className="group hover:bg-indigo-50/30">
                 {columns.map((column, index) => {
-                  const text = column.value(unit.person, unit);
+                  const text = textOf(unit, index);
                   const outcome = text.includes(": ") ? text.split(": ").pop()! : text;
                   return (
                     <td key={column.key} className={cn("whitespace-nowrap border-b border-slate-100 px-2 py-1.5 text-slate-700", column.className, index === 0 && "sticky left-0 z-10 bg-white group-hover:bg-indigo-50/30")} title={text || undefined}>

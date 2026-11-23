@@ -85,6 +85,8 @@ export interface BoardRow {
   origin: string;
   academy: DriveStudentCounts;
   pool: DriveStudentCounts;
+  /** Everyone on the drive: Academy, pool, External, and students added from the company sheet. */
+  all: DriveStudentCounts;
   people: MonthlyStudent[];
   lastUpdate: { on: string | null; text: string } | null;
 }
@@ -137,6 +139,7 @@ export function buildRows(data: MonthlyPipeline): BoardRow[] {
       origin: entry.carriedFrom ? "Carried in" : "New this month",
       academy: driveCounts(people.filter((person) => person.academy), over),
       pool: driveCounts(people.filter((person) => person.inPool), over),
+      all: driveCounts(people, over),
       people,
       lastUpdate,
     };
@@ -156,6 +159,7 @@ export const FILTER_COLUMNS: Record<string, { label: string; value: (row: BoardR
   psm: { label: "Placement owner", value: (row: BoardRow) => row.psm },
   origin: { label: "On list", value: (row: BoardRow) => row.origin },
   listedSince: { label: "On list since", value: (row: BoardRow) => row.listedSince },
+  requestMonth: { label: "Job requested month", value: (row: BoardRow) => (row.requestDate ? monthLabel(row.requestDate.slice(0, 7)) : "Not set") },
   review: { label: "Went right / wrong", value: (row: BoardRow) => (row.review.wentRight || row.review.wentWrong ? "Written" : "Not written") },
 };
 export type FilterKey = string;
@@ -230,6 +234,7 @@ export interface BoardSummary {
   byCrmStatus: Partial<Record<PotentialCompanyStatus, number>>;
   academy: PositionCounts;
   pool: PositionCounts;
+  all: PositionCounts;
   reasons: ReasonCount[];
 }
 
@@ -264,6 +269,7 @@ export function summarize(rows: BoardRow[]): BoardSummary {
     companies, drives, openings, byCrmStatus,
     academy: positions(rows, (person) => person.academy),
     pool: positions(rows, (person) => person.inPool),
+    all: positions(rows, () => true),
     reasons: [...reasons.values()].sort((x, y) => Number(x.tagId === null) - Number(y.tagId === null) || y.total - x.total),
   };
 }

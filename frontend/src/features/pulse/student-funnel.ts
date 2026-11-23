@@ -5,6 +5,12 @@ import { applicationEnded, type BoardRow } from "./potential-board";
  * Student funnel over the potential list's drives: our shortlisting (resume,
  * screening, assignment, final shortlist), sharing, each company round, and
  * selection. Counted per application ("by company") or per unique student.
+ *
+ * Two real-world cases are handled per job:
+ * - A job may skip a stage (no resume shortlist, no screening…). A stage only
+ *   applies to a job that recorded it, so nobody "fails" a stage that never ran.
+ * - Students can reach the company without applying (added from the company
+ *   sheet). They skip our shortlisting and join the funnel at "Shared".
  */
 
 export type StageKey = string;
@@ -12,66 +18,88 @@ export interface Stage { key: StageKey; label: string; group: "ours" | "company"
 export type StopKind = "rejected" | "noShow" | "waiting" | "ended" | "selected";
 export type FunnelMode = "applications" | "unique";
 
-const OUR_STAGES: Stage[] = [
-  { key: "applied", label: "Applied", group: "ours" },
-  { key: "resume", label: "Resume shortlist", group: "ours" },
-  { key: "screening", label: "Screening", group: "ours" },
-  { key: "assignment", label: "Assignment", group: "ours" },
-  { key: "final", label: "Final shortlist", group: "ours" },
-  { key: "shared", label: "Shared with company", group: "company" },
-];
+const INTERNAL = ["resume", "screening", "assignment", "final"] as const;
+type Internal = (typeof INTERNAL)[number];
+const INTERNAL_LABELS: Record<Internal, string> = { resume: "Resume shortlist", screening: "Screening", assignment: "Assignment", final: "Final shortlist" };
 
-interface AppFacts { reached: boolean; cleared: boolean; rejected: boolean; noShow: boolean }
-
-/** What happened to one application at one stage. */
-export function facts(person: MonthlyStudent, key: StageKey): AppFacts {
-  const none = { reached: false, cleared: false, rejected: false, noShow: false };
-  const resumeCleared = person.passed.resume || person.shared;
-  const screeningCleared = person.passed.screening || person.shared;
-  const assignmentCleared = person.passed.assignment || person.shared;
-  const finalCleared = person.passed.finalShortlist || person.shared;
-  switch (key) {
-    case "applied": return { reached: true, cleared: true, rejected: false, noShow: false };
-    case "resume": return { reached: true, cleared: resumeCleared, rejected: person.rejectedAt.resume && !resumeCleared, noShow: false };
-    case "screening": return { reached: resumeCleared, cleared: screeningCleared, rejected: person.rejectedAt.screening && !screeningCleared, noShow: person.rejectedAt.screeningNoShow && !screeningCleared && !person.rejectedAt.screening };
-    case "assignment": return { reached: screeningCleared, cleared: assignmentCleared, rejected: person.rejectedAt.assignment && !assignmentCleared, noShow: false };
-    case "final": return { reached: assignmentCleared, cleared: finalCleared, rejected: false, noShow: false };
-    // Rejected by the company with no round recorded counts here.
-    case "shared": return { reached: finalCleared, cleared: person.shared && (person.rounds.length > 0 || person.pipelineStatus !== "REJECTED"), rejected: person.shared && person.pipelineStatus === "REJECTED" && person.rounds.length === 0, noShow: false };
-    case "selected": return { reached: person.selected, cleared: person.selected, rejected: false, noShow: false };
-  }
-  if (key.startsWith("round:")) {
-    const name = key.slice(6);
-    const round = person.rounds.find((item) => item.name === name);
-    if (!round) return none;
-    return {
-      reached: round.outcome !== "SCHEDULED",
-      cleared: round.outcome === "CLEARED",
-      rejected: round.outcome === "REJECTED",
-      noShow: round.outcome === "NO_SHOW",
-    };
-  }
-  return none;
-}
+const passedAt = (person: MonthlyStudent, stage: Internal) =>
+  stage === "resume" ? person.passed.resume : stage === "screening" ? person.passed.screening : stage === "assignment" ? person.passed.assignment : person.passed.finalShortlist;
 
 /**
- * Stages for these drives: ours (screening, assignment and final shortlist only
- * when some drive records them), every company round of the drives (in each
- * job's order), then selected.
+ * Signs that a job really ran a stage. Passing a later stage implies the earlier
+ * flags, so those alone do not count; a rejection or a stop at the stage does.
  */
+const RAN: Record<Internal, (person: MonthlyStudent) => boolean> = {
+  resume: (person) => person.rejectedAt.resume || (person.passed.resume && !person.passed.screening),
+  screening: (person) => person.rejectedAt.screening || person.rejectedAt.screeningNoShow || (person.passed.screening && !person.passed.assignment),
+  assignment: (person) => person.rejectedAt.assignment || (person.passed.assignment && !person.passed.finalShortlist),
+  final: (person) => person.passed.finalShortlist,
+};
+
+interface AppFacts { reached: boolean; cleared: boolean; rejected: boolean; noShow: boolean }
+/** Returned (this exact object) when a stage does not apply to the application at all. */
+const NONE: AppFacts = Object.freeze({ reached: false, cleared: false, rejected: false, noShow: false });
+
+export type FactsOf = (person: MonthlyStudent, key: StageKey) => AppFacts;
+
+/** Which of our stages each job ran, in order. */
+function internalStagesByJob(rows: BoardRow[]): Map<string, Internal[]> {
+  return new Map(rows.map((row) => {
+    const applied = row.people.filter((person) => !person.fromCompanySheet);
+    return [row.jobRequestId, INTERNAL.filter((stage) => applied.some(RAN[stage]))];
+  }));
+}
+
+/** What happened to one application at one stage, given the stages its job ran. */
+export function factsFor(rows: BoardRow[]): FactsOf {
+  const byJob = internalStagesByJob(rows);
+  return (person, key) => {
+    const own = byJob.get(person.jobRequestId) ?? [];
+    const cleared = (stage: Internal) => passedAt(person, stage) || person.shared;
+    if (key === "applied") return person.fromCompanySheet ? NONE : { reached: true, cleared: true, rejected: false, noShow: false };
+    if (key === "direct") return person.fromCompanySheet ? { reached: true, cleared: true, rejected: false, noShow: false } : NONE;
+    if ((INTERNAL as readonly string[]).includes(key)) {
+      const stage = key as Internal;
+      const at = own.indexOf(stage);
+      if (person.fromCompanySheet || at < 0) return NONE;
+      const reached = at === 0 || cleared(own[at - 1]!);
+      const done = cleared(stage);
+      const rejected = !done && (stage === "resume" ? person.rejectedAt.resume : stage === "screening" ? person.rejectedAt.screening : stage === "assignment" ? person.rejectedAt.assignment : false);
+      const noShow = stage === "screening" && !done && !rejected && person.rejectedAt.screeningNoShow;
+      return { reached, cleared: done, rejected, noShow };
+    }
+    if (key === "shared") {
+      const reached = person.fromCompanySheet || own.length === 0 || cleared(own[own.length - 1]!);
+      // Rejected by the company with no round recorded counts here.
+      const rejected = person.shared && person.pipelineStatus === "REJECTED" && person.rounds.length === 0;
+      return { reached, cleared: person.shared && !rejected, rejected, noShow: false };
+    }
+    if (key === "selected") return { reached: person.selected, cleared: person.selected, rejected: false, noShow: false };
+    if (key.startsWith("round:")) {
+      const round = person.rounds.find((item) => item.name === key.slice(6));
+      if (!round) return NONE;
+      return { reached: round.outcome !== "SCHEDULED", cleared: round.outcome === "CLEARED", rejected: round.outcome === "REJECTED", noShow: round.outcome === "NO_SHOW" };
+    }
+    return NONE;
+  };
+}
+
+/** Stages for these drives: applied / added from the company sheet, the stages any job ran, sharing, every company round, selected. */
 export function stagesFor(rows: BoardRow[], people: MonthlyStudent[]): Stage[] {
+  const byJob = internalStagesByJob(rows);
+  const ran = new Set([...byJob.values()].flat());
   const rounds = new Map<string, number>();
   for (const row of rows) (row.drive?.rounds ?? []).forEach((round, at) => rounds.set(round.name, Math.min(rounds.get(round.name) ?? Infinity, at)));
   for (const person of people) for (const round of person.rounds) if (!rounds.has(round.name)) rounds.set(round.name, round.sequence);
   const companyRounds = [...rounds].sort((x, y) => x[1] - y[1] || x[0].localeCompare(y[0])).map(([name]) => ({ key: `round:${name}`, label: name, group: "company" as const }));
-  /** Signs that a drive actually ran the stage (later stages imply earlier passes, so those alone do not count). */
-  const recorded: Record<string, (person: MonthlyStudent) => boolean> = {
-    screening: (person) => person.rejectedAt.screening || person.rejectedAt.screeningNoShow || (person.passed.screening && !person.passed.assignment),
-    assignment: (person) => person.rejectedAt.assignment || (person.passed.assignment && !person.passed.finalShortlist),
-    final: (person) => person.passed.finalShortlist,
-  };
-  const ours = OUR_STAGES.filter((stage) => !recorded[stage.key] || people.some(recorded[stage.key]!));
-  return [...ours, ...companyRounds, { key: "selected", label: "Selected", group: "result" }];
+  return [
+    ...(people.some((person) => !person.fromCompanySheet) ? [{ key: "applied", label: "Applied", group: "ours" as const }] : []),
+    ...INTERNAL.filter((stage) => ran.has(stage)).map((stage) => ({ key: stage, label: INTERNAL_LABELS[stage], group: "ours" as const })),
+    ...(people.some((person) => person.fromCompanySheet) ? [{ key: "direct", label: "Added from company sheet (did not apply)", group: "company" as const }] : []),
+    { key: "shared", label: "Shared with company", group: "company" },
+    ...companyRounds,
+    { key: "selected", label: "Selected", group: "result" },
+  ];
 }
 
 export interface Stop { index: number; stage: Stage; kind: StopKind; label: string }
@@ -79,14 +107,18 @@ export interface Stop { index: number; stage: Stage; kind: StopKind; label: stri
 const STOP_RANK: Record<StopKind, number> = { selected: 4, waiting: 3, ended: 2, noShow: 1, rejected: 0 };
 
 /**
- * Where one application stopped: the first stage (of the ones its job has) it
- * has not cleared. Rejected or missed there, still waiting for it, or the drive
- * ended before it.
+ * Where one application stopped: the first stage that applies to it (its job's
+ * stages and rounds) that it has not cleared. Rejected or missed there, still
+ * waiting for it, or the drive ended before it.
  */
-function stopOf(person: MonthlyStudent, stages: Stage[], jobRounds: Set<string>, driveOver: boolean): Stop {
-  const mine = stages.map((stage, index) => ({ stage, index }))
-    .filter(({ stage }) => !stage.key.startsWith("round:") || jobRounds.has(stage.label) || person.rounds.some((round) => round.name === stage.label));
-  const first = mine.find(({ stage }) => stage.key !== "applied" && !facts(person, stage.key).cleared) ?? mine[mine.length - 1]!;
+function stopOf(person: MonthlyStudent, stages: Stage[], facts: FactsOf, jobRounds: Set<string>, driveOver: boolean): Stop {
+  const mine = stages.map((stage, index) => ({ stage, index })).filter(({ stage }) => {
+    if (stage.key === "applied" || stage.key === "direct") return false;
+    if (stage.group === "ours") return facts(person, stage.key) !== NONE;
+    if (stage.key.startsWith("round:")) return jobRounds.has(stage.label) || person.rounds.some((round) => round.name === stage.label);
+    return true;
+  });
+  const first = mine.find(({ stage }) => !facts(person, stage.key).cleared) ?? mine[mine.length - 1]!;
   const { stage, index } = first;
   const fact = facts(person, stage.key);
   const ended = applicationEnded(person, driveOver);
@@ -97,7 +129,7 @@ function stopOf(person: MonthlyStudent, stages: Stage[], jobRounds: Set<string>,
   else if (kind === "rejected") label = stage.key === "shared" ? "Rejected by company (round not recorded)" : stage.group === "ours" ? `Rejected at ${name}` : `Rejected by company at ${name}`;
   else if (kind === "noShow") label = `Missed ${name}`;
   else if (stage.key === "shared" && !fact.reached) label = ended ? "Not shortlisted for the company (drive over)" : "In our shortlisting";
-  else if (stage.key === "shared") label = ended ? "On final shortlist, never shared" : "On final shortlist, not shared yet";
+  else if (stage.key === "shared") label = person.fromCompanySheet ? "In company sheet, not submitted" : ended ? "Not shared with company (drive over)" : "Not shared with company yet";
   else if (stage.key === "selected") label = ended ? "Cleared every round, not selected" : "Cleared every round, waiting for result";
   else if (stage.group === "company") {
     const scheduled = person.rounds.some((round) => round.name === stage.label && round.outcome === "SCHEDULED");
@@ -116,9 +148,10 @@ export interface FunnelUnit {
   cleared: Set<StageKey>;
 }
 
-export function funnelUnits(rows: BoardRow[], mode: FunnelMode, keep: (person: MonthlyStudent) => boolean): { stages: Stage[]; units: FunnelUnit[] } {
+export function funnelUnits(rows: BoardRow[], mode: FunnelMode, keep: (person: MonthlyStudent) => boolean): { stages: Stage[]; units: FunnelUnit[]; facts: FactsOf } {
   const over = new Map(rows.map((row) => [row.jobRequestId, row.state === "ENDED"]));
   const people = rows.flatMap((row) => row.people).filter(keep);
+  const facts = factsFor(rows);
   const stages = stagesFor(rows, people);
   const jobRounds = new Map(rows.map((row) => [row.jobRequestId, new Set((row.drive?.rounds ?? []).map((round) => round.name))]));
   const perApp = people.map((person) => {
@@ -129,9 +162,9 @@ export function funnelUnits(rows: BoardRow[], mode: FunnelMode, keep: (person: M
       if (fact.reached) reached.add(stage.key);
       if (fact.cleared) cleared.add(stage.key);
     }
-    return { key: person.applicationId, person, applications: [person], stop: stopOf(person, stages, jobRounds.get(person.jobRequestId) ?? new Set(), over.get(person.jobRequestId) ?? false), reached, cleared };
+    return { key: person.applicationId, person, applications: [person], stop: stopOf(person, stages, facts, jobRounds.get(person.jobRequestId) ?? new Set(), over.get(person.jobRequestId) ?? false), reached, cleared };
   });
-  if (mode === "applications") return { stages, units: perApp };
+  if (mode === "applications") return { stages, units: perApp, facts };
 
   const byStudent = new Map<string, FunnelUnit[]>();
   for (const unit of perApp) byStudent.set(unit.person.candidateId, [...(byStudent.get(unit.person.candidateId) ?? []), unit]);
@@ -146,7 +179,7 @@ export function funnelUnits(rows: BoardRow[], mode: FunnelMode, keep: (person: M
       cleared: new Set(list.flatMap((unit) => [...unit.cleared])),
     };
   });
-  return { stages, units };
+  return { stages, units, facts };
 }
 
 export interface StageCounts { reached: number; cleared: number; rejected: number; noShow: number; waiting: number; ended: number }

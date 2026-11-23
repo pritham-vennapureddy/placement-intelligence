@@ -1,5 +1,5 @@
 import { POTENTIAL_COMPANY_STATUS_LABELS, POTENTIAL_COMPANY_STATUSES, type PotentialCompanyStatus } from "@placement/shared";
-import { Briefcase, Building2, ClipboardList, GraduationCap, UserRoundCheck } from "lucide-react";
+import { Briefcase, Building2, ClipboardList, GraduationCap, UserRoundCheck, Users } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Card } from "../../components/ui/card";
@@ -39,7 +39,7 @@ export interface BigPictureActions {
   onProcess: (state: ProcessState) => void;
   onCrmStatus: (status: PotentialCompanyStatus) => void;
   /** Open the students list for one group and outcome. */
-  onStudents: (group: "ACADEMY" | "POOL", view: StudentView | "ALL") => void;
+  onStudents: (group: "ALL" | "ACADEMY" | "POOL", view: StudentView | "ALL") => void;
   activeProcess: string[] | undefined;
   activeCrmStatus: string[] | undefined;
 }
@@ -75,7 +75,7 @@ function ProcessSplit({ counts, actions, unit }: { counts: Split; actions: BigPi
   );
 }
 
-function StudentCard({ title, icon: Icon, counts, group, actions }: { title: string; icon: typeof GraduationCap; counts: PositionCounts; group: "ACADEMY" | "POOL"; actions: BigPictureActions }) {
+function StudentCard({ title, icon: Icon, counts, group, actions }: { title: string; icon: typeof GraduationCap; counts: PositionCounts; group: "ALL" | "ACADEMY" | "POOL"; actions: BigPictureActions }) {
   const completed = counts.SELECTED + counts.ENDED_NOT_SELECTED;
   const notShared = counts.IN_SHORTLISTING + counts.REJECTED_INTERNALLY + counts.NOT_SHARED_DRIVE_OVER;
   const box = "rounded-lg px-2 py-2.5 text-center transition hover:ring-2";
@@ -150,7 +150,8 @@ export function MonthBigPictureCard({ summary, actions, filtered, totalDrives }:
           {filtered && <p className="mt-2 text-[11px] text-indigo-700">Filtered: {summary.drives.total} of {totalDrives} job drives</p>}
         </Tile>
       </div>
-      <div className="grid gap-3 px-4 pb-4 lg:grid-cols-2">
+      <div className="grid gap-3 px-4 pb-4 lg:grid-cols-2 2xl:grid-cols-3">
+        <StudentCard title="All students (incl. External)" icon={Users} counts={summary.all} group="ALL" actions={actions} />
         <StudentCard title="Academy students" icon={GraduationCap} counts={summary.academy} group="ACADEMY" actions={actions} />
         <StudentCard title="Assessed-pool students" icon={UserRoundCheck} counts={summary.pool} group="POOL" actions={actions} />
       </div>

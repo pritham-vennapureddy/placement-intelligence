@@ -142,6 +142,8 @@ export interface MonthlyStudent {
   /** Macro reason: the RSA team's tag, else the tag on the rejected round. */
   reason: { id: string; label: string; fromRsa: boolean } | null;
   rejectionNote: string | null;
+  /** Added from the company sheet without applying through our applications tab. */
+  fromCompanySheet: boolean;
   rsa: { status: string; tone: string; done: boolean; reportUrl: string | null; summary: string | null } | null;
 }
 

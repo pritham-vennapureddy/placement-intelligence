@@ -14,11 +14,14 @@ export type SortDir = "asc" | "desc";
  * apply as you tick.
  */
 export function ColumnFilter({
-  title, values, selected, onChange, sort, onSort, align = "left", children,
+  title, values: valuesProp, selected, onChange, sort, onSort, align = "left", children,
 }: {
   title: string;
-  /** Every value with its row count, given the other filters. */
-  values: { value: string; count: number }[];
+  /**
+   * Every value with its row count, given the other filters. Pass a function to
+   * work the list out only when the menu opens (big tables stay fast).
+   */
+  values: { value: string; count: number }[] | (() => { value: string; count: number }[]);
   selected: string[] | undefined;
   onChange: (next: string[] | undefined) => void;
   sort: SortDir | null;
@@ -27,7 +30,10 @@ export function ColumnFilter({
   children?: ReactNode;
 }) {
   const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
   const active = Boolean(selected && selected.length > 0);
+  // Worked out when the menu opens, not on every render of every header.
+  const values = useMemo(() => (!open ? [] : typeof valuesProp === "function" ? valuesProp() : valuesProp), [open, valuesProp]);
   const shown = useMemo(() => values.filter((item) => item.value.toLowerCase().includes(q.toLowerCase())), [values, q]);
   const isOn = (value: string) => !active || selected!.includes(value);
   const toggle = (value: string) => {
@@ -45,7 +51,7 @@ export function ColumnFilter({
   const SortIcon = sort === "asc" ? ArrowUp : sort === "desc" ? ArrowDown : null;
 
   return (
-    <Popover onOpenChange={(open) => !open && setQ("")}>
+    <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQ(""); }}>
       <PopoverTrigger asChild>
         <button
           type="button"

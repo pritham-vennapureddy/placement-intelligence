@@ -85,7 +85,10 @@ async function crmOwnerCheck(id: string | null | undefined) {
 /** Only the job drives on the month's potential list. */
 const listScope = (jobIds: string[]) => (jobIds.length ? Prisma.sql`j.id = ANY(${jobIds}::uuid[])` : Prisma.sql`FALSE`);
 
-/** Student numbers for Academy and assessed-pool students in the given drives. */
+/**
+ * Students in the given drives. The Academy / pool summaries count only those two
+ * groups; the list (`people`) has everyone, External and company-sheet-only too.
+ */
 async function students(scope: Prisma.Sql, owners: Prisma.Sql) {
   const query = { dateBy: "requested", academyCategory: "ALL_ACADEMY", segment: "ALL" } as AcademyQuery;
   const facts = academyFacts(query, owners, scope);
@@ -93,8 +96,7 @@ async function students(scope: Prisma.Sql, owners: Prisma.Sql) {
     ${facts},
     ${ROUND_LABELS},
     ppl AS (
-      SELECT f.*, (f.category IN ('ACADEMY', 'ACADEMY_INTENSIVE')) AS academy
-      FROM f WHERE f.category IN ('ACADEMY', 'ACADEMY_INTENSIVE') OR f.in_pool
+      SELECT f.*, (f.category IN ('ACADEMY', 'ACADEMY_INTENSIVE')) AS academy FROM f
     )`;
 
   const [summary, stages, rows] = await Promise.all([
@@ -137,6 +139,7 @@ async function students(scope: Prisma.Sql, owners: Prisma.Sql) {
       rs_pass: boolean; sc_pass: boolean; as_pass: boolean;
       rounds: { label: string; name: string; sequence: number; outcome: string }[];
       rejected_round: string | null; rejected_round_name: string | null; tag_id: string | null; tag_label: string | null; tag_from_rsa: boolean; rejection_note: string | null;
+      from_company_sheet: boolean | null;
       rsa_status: string | null; rsa_tone: string | null; rsa_done: boolean | null; rsa_report_url: string | null; rsa_summary: string | null; shared: boolean; interviewed: boolean; selected: boolean; pipeline: string | null;
       last_round: string | null; last_outcome: string | null; student_ended: boolean;
     }[]>`
@@ -157,6 +160,7 @@ async function students(scope: Prisma.Sql, owners: Prisma.Sql) {
           WHERE ci."nominationId" = ppl.nomination_id
         ), '[]'::json) AS rounds,
         rr.label AS rejected_round, rr.round_name AS rejected_round_name, rt.id AS tag_id, rt.label AS tag_label, (ra."rejectionTagId" IS NOT NULL) AS tag_from_rsa, rr.note AS rejection_note,
+        (ib.target::text = 'COMPANY_PIPELINE') AS from_company_sheet,
         rso.label AS rsa_status, rso.tone AS rsa_tone, rso."countsAsDone" AS rsa_done, rs."reportUrl" AS rsa_report_url, rs."reportSummary" AS rsa_summary
       FROM ppl
       JOIN "Candidate" c ON c.id = ppl.candidate_id
@@ -164,6 +168,7 @@ async function students(scope: Prisma.Sql, owners: Prisma.Sql) {
       JOIN "Company" co ON co.id = j."companyId"
       ${APPLICATION_REASON(Prisma.sql`ppl`)}
       LEFT JOIN "SupportStatusOption" rso ON rso.id = rs."statusId"
+      LEFT JOIN "ImportBatch" ib ON ib.id = ra."importBatchId"
       LEFT JOIN LATERAL (
         SELECT rounds.label, ci.outcome::text AS outcome
         FROM "CompanyInterview" ci JOIN rounds ON rounds.id = ci."roundId"
@@ -239,6 +244,8 @@ async function students(scope: Prisma.Sql, owners: Prisma.Sql) {
       /** Macro reason: the RSA team's tag, else the tag on the rejected round. */
       reason: row.tag_id ? { id: row.tag_id, label: row.tag_label!, fromRsa: row.tag_from_rsa } : null,
       rejectionNote: row.rejection_note,
+      /** Added from the company sheet: never on our applications tab, so our shortlisting does not apply. */
+      fromCompanySheet: Boolean(row.from_company_sheet),
       rsa: row.rsa_status ? { status: row.rsa_status, tone: row.rsa_tone ?? "slate", done: Boolean(row.rsa_done), reportUrl: row.rsa_report_url, summary: row.rsa_summary } : null,
     })),
   };

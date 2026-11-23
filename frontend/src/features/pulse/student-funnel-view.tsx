@@ -1,5 +1,5 @@
 import { Briefcase, Download, ExternalLink, Search, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { EmptyState } from "../../components/states";
 import { PoolBadge, ProductBadge } from "../../components/student-tags";
@@ -18,7 +18,7 @@ import { StudentDetailTable } from "./student-detail-table";
 import { applicationEnded, uniquePositions, type BoardRow, type StudentPosition } from "./potential-board";
 import { funnelUnits, matchesPick, stageCounts, type FunnelMode, type FunnelUnit, type Pick, type Stage, type StageCounts } from "./student-funnel";
 
-export type StudentGroup = "ALL" | "ACADEMY" | "POOL";
+export type StudentGroup = "ALL" | "ACADEMY" | "POOL" | "EXTERNAL";
 export type OutcomeView = "ALL" | StudentView;
 
 export const OUTCOME_LABELS: Record<OutcomeView, string> = {
@@ -172,8 +172,8 @@ export function StudentFunnelView({ rows, mode, group, onGroup, jobs, onJobs, ou
   const [rsa, setRsa] = useState(ANY);
   const [q, setQ] = useState("");
   const chosen = useMemo(() => (jobs.length ? rows.filter((row) => jobs.includes(row.jobRequestId)) : rows), [rows, jobKey]); // jobs is a new array each render
-  const keep = (person: MonthlyStudent) => group === "ALL" || (group === "ACADEMY" ? person.academy : person.inPool);
-  const { stages, units } = useMemo(() => funnelUnits(chosen, mode, keep), [chosen, mode, group]); // keep depends only on group
+  const keep = (person: MonthlyStudent) => group === "ALL" || (group === "ACADEMY" ? person.academy : group === "POOL" ? person.inPool : !person.academy && !person.inPool);
+  const { stages, units, facts } = useMemo(() => funnelUnits(chosen, mode, keep), [chosen, mode, group]); // keep depends only on group
   const counts = useMemo(() => stageCounts(stages, units), [stages, units]);
   const positions = useMemo(() => uniquePositions(chosen, keep), [chosen, group]);
   const over = new Map(chosen.map((row) => [row.jobRequestId, row.state === "ENDED"]));
@@ -193,11 +193,13 @@ export function StudentFunnelView({ rows, mode, group, onGroup, jobs, onJobs, ou
   const reasons = [...new Map(units.flatMap((unit) => unit.applications.map((person) => person.reason)).filter(Boolean).map((item) => [item!.id, item!.label])).entries()];
   const rsaStatuses = [...new Set(units.flatMap((unit) => unit.applications.map((person) => person.rsa?.status)).filter(Boolean))] as string[];
 
-  const list = units.filter((unit) => matchesPick(unit, pick) && inOutcome(unit)
+  const search = useDeferredValue(q);
+  const list = useMemo(() => units.filter((unit) => matchesPick(unit, pick) && inOutcome(unit)
     && (reason === ANY || (reason === NONE ? !reasonOf(unit) : reasonOf(unit)?.id === reason))
     && (rsa === ANY || (rsa === NONE ? !rsaOf(unit) : rsaOf(unit)?.status === rsa))
-    && (!q || `${unit.person.fullName} ${unit.person.candidateCode ?? ""} ${unit.applications.map((person) => `${person.companyName} ${person.jobCode}`).join(" ")}`.toLowerCase().includes(q.toLowerCase())))
-    .sort((x, y) => x.stop.index - y.stop.index || x.person.fullName.localeCompare(y.person.fullName));
+    && (!search || `${unit.person.fullName} ${unit.person.userId ?? ""} ${unit.person.mobile ?? ""} ${unit.applications.map((person) => `${person.companyName} ${person.jobCode}`).join(" ")}`.toLowerCase().includes(search.toLowerCase())))
+    .sort((x, y) => x.stop.index - y.stop.index || x.person.fullName.localeCompare(y.person.fullName)),
+  [units, pick, outcome, reason, rsa, search, positions]); // the helpers read only these
   const pickedStage = pick ? stages.find((stage) => stage.key === pick.stage) : null;
 
   const download = () => downloadCsv(`student-funnel-${mode}`, [
@@ -218,9 +220,9 @@ export function StudentFunnelView({ rows, mode, group, onGroup, jobs, onJobs, ou
       <div className="flex flex-wrap items-center gap-2">
         <JobPicker rows={rows} selected={jobs} onChange={onJobs} />
         <div className="flex rounded-md border border-slate-200 p-0.5" role="group" aria-label="Student group">
-          {(["ALL", "ACADEMY", "POOL"] as const).map((value) => (
+          {(["ALL", "ACADEMY", "POOL", "EXTERNAL"] as const).map((value) => (
             <Button key={value} size="sm" variant={group === value ? "secondary" : "ghost"} className="h-7" aria-pressed={group === value} onClick={() => onGroup(value)}>
-              {value === "ALL" ? "Academy + pool" : value === "ACADEMY" ? "Academy" : "Assessed pool"}
+              {value === "ALL" ? "Everyone" : value === "ACADEMY" ? "Academy" : value === "POOL" ? "Assessed pool" : "External"}
             </Button>
           ))}
         </div>
@@ -264,13 +266,13 @@ export function StudentFunnelView({ rows, mode, group, onGroup, jobs, onJobs, ou
                 </Select>
                 <div className="relative">
                   <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <Input className="h-8 w-52 pl-7 text-xs" placeholder="Name, code, company, job ID" value={q} onChange={(event) => setQ(event.target.value)} />
+                  <Input className="h-8 w-52 pl-7 text-xs" placeholder="Name, user ID, mobile, company, job ID" value={q} onChange={(event) => setQ(event.target.value)} />
                 </div>
                 {mode === "unique" && <Button size="sm" variant="outline" className="h-8" disabled={list.length === 0} onClick={download}><Download size={14} /> CSV</Button>}
                 <Link to="/rsa" className="text-xs font-medium text-indigo-700 hover:underline">Tag reasons / RSA →</Link>
               </div>
             </div>
-            {mode === "applications" ? <StudentDetailTable units={list} stages={stages} rows={chosen} /> : (
+            {mode === "applications" ? <StudentDetailTable units={list} stages={stages} rows={chosen} facts={facts} /> : (
             <div className="max-h-[560px] overflow-auto rounded-lg border border-slate-200">
               <table className="w-full min-w-[1000px] text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs text-slate-600">

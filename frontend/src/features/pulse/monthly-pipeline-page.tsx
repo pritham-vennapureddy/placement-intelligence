@@ -210,7 +210,7 @@ function useBoardParams() {
     scope: (["all", "inactive"].includes(params.get("scope") ?? "") ? params.get("scope") : "active") as Scope,
     filters,
     sort: sortKey && (sortDir === "asc" || sortDir === "desc") ? { key: sortKey, dir: sortDir } as GridSort : null,
-    group: (["ACADEMY", "POOL"].includes(params.get("group") ?? "") ? params.get("group") : "ALL") as StudentGroup,
+    group: (["ACADEMY", "POOL", "EXTERNAL"].includes(params.get("group") ?? "") ? params.get("group") : "ALL") as StudentGroup,
     view: (params.get("view") && params.get("view")! in OUTCOME_LABELS ? params.get("view") : "ALL") as OutcomeView,
     /** Jobs chosen in the student funnels (job request ids); none = every job in the grid. */
     jobs: params.get("jobs")?.split("|").filter(Boolean) ?? [],
@@ -274,7 +274,7 @@ export function MonthlyPipelinePage() {
     "Company", "Role", "Job ID", "Product", "CTC (LPA)", "Tech stack", "CRM status", "Process stage", "Company stage", "Openings",
     "Academy students", "Academy in process", "Academy completed", "Academy selected",
     "Pool students", "Pool in process", "Pool completed", "Pool selected",
-    "CRM", "Placement owner", "Requested on", "Expected start", "Started on", "Done on", "Company sheet", "Internal sheet",
+    "CRM", "Placement owner", "Job requested date", "Expected start", "Started on", "Done on", "Company sheet", "Internal sheet",
     "On list since", "On list", "Latest CRM update", "Went right", "Went wrong", "What to change",
   ], rows.map((row) => [
     row.company, row.role, row.jobCode, row.products.join(", "), row.ctcLpa ?? "", row.techStack.join(", "),
@@ -358,7 +358,7 @@ export function MonthlyPipelinePage() {
             actions={{
               onProcess: (state) => toggleFilter("state", PROCESS_STATE_LABELS[state]),
               onCrmStatus: (status) => toggleFilter("crmStatus", POTENTIAL_COMPANY_STATUS_LABELS[status]),
-              onStudents: (group, view) => board.update({ tab: "unique", group, view: view === "ALL" ? null : view, jobs: null }),
+              onStudents: (group, view) => board.update({ tab: "unique", group: group === "ALL" ? null : group, view: view === "ALL" ? null : view, jobs: null }),
               activeProcess: filters.state,
               activeCrmStatus: filters.crmStatus,
             }}
