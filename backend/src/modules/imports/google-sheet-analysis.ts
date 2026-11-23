@@ -258,6 +258,34 @@ function stageSheet(sheets: SheetAnalysis[], code: RecruitmentCode, usedSheets: 
   return sheets.find(({ name }) => pattern.test(name) && !usedSheets.has(name));
 }
 
+/** The first header matching any pattern, trying the patterns in order. */
+function firstHeader(headers: string[], patterns: RegExp[]): number | undefined {
+  for (const pattern of patterns) {
+    const index = headerColumn(headers, pattern);
+    if (index !== undefined) return index;
+  }
+  return undefined;
+}
+
+/**
+ * College, year of graduation and the other profile columns on an applications
+ * tab. Bachelor's columns win over masters / school ones (a student's year of
+ * graduation is their bachelor's year).
+ */
+function profileColumns(headers: string[]) {
+  const found = {
+    gender: firstHeader(headers, [/^gender$/]),
+    city: firstHeader(headers, [/current city|district|location/]),
+    state: firstHeader(headers, [/^(current )?state$/]),
+    college: firstHeader(headers, [/bachelor.*(college|institute|university)/, /graduation college|highest education institute/, /college|university|institute/]),
+    degree: firstHeader(headers, [/bachelor.*course/, /degree|highest education$|qualification/]),
+    department: firstHeader(headers, [/bachelor.*(department|branch)/, /department|branch/]),
+    graduationYear: firstHeader(headers, [/bachelor.*year|year of graduation|graduation year|pass out year/, /completion year/]),
+    academicScore: firstHeader(headers, [/bachelor.*percentage|graduation percentage/, /cgpa|academic score/]),
+  };
+  return Object.fromEntries(Object.entries(found).filter(([, index]) => index !== undefined)) as Partial<Record<keyof typeof found, number>>;
+}
+
 function mappingForInternal(sheets: SheetAnalysis[], selection?: GoogleInternalSelection, usedSheets: ReadonlySet<string> = new Set()) {
   const application = selection
     ? sheets.find(({ name }) => name === selection.applications.sheet)
@@ -280,6 +308,8 @@ function mappingForInternal(sheets: SheetAnalysis[], selection?: GoogleInternalS
     ...(headerColumn(appHeader, /resume|cv|curriculum vitae/) !== undefined
       ? { resumeUrl: headerColumn(appHeader, /resume|cv|curriculum vitae/) }
       : {}),
+    // Student details on the applications tab itself (e.g. the platform's "Applied Users" export).
+    ...profileColumns(appHeader),
   };
   const stageCodes: Record<DecisionStage, string> = {
     RESUME_SHORTLIST: "RS",

@@ -59,7 +59,7 @@ export interface CompanyRowData {
    */
   addToJob?: {
     candidateId: string | null;
-    newCandidate: { candidateCode: string; fullName: string; email: string | null; mobile: string } | null;
+    newCandidate: { candidateCode: string; fullName: string; email: string | null; mobile: string; college?: string | null; graduationYear?: number | null } | null;
     productId: string | null;
     /** Dashboard, the internal sheet's eligible tab, or neither (tagged "not in applicants"). */
     from?: AddedFrom;
@@ -136,6 +136,14 @@ export function planCompanyImport(
   for (const tab of config.tabs) {
     for (const round of tab.rounds) if (!roundNames.has(round.roundName)) roundNames.set(round.roundName, round.roundType);
     const sheet = read(tab.sheet, tab.headerRow);
+    // The company sheet's own college / year of graduation, kept on students it creates.
+    const headerAt = (pattern: RegExp) => { const index = sheet.headers.findIndex((header) => pattern.test(header.trim().toLowerCase())); return index < 0 ? undefined : index; };
+    const collegeColumn = headerAt(/college|university|institute/);
+    const yearColumn = headerAt(/graduation year|year of graduation|pass ?out year|completion year/);
+    const profileOf = (row: SheetRow) => {
+      const year = cellOf(row, yearColumn)?.match(/\b(19|20)\d{2}\b/)?.[0];
+      return { college: cellOf(row, collegeColumn), graduationYear: year ? Number(year) : null };
+    };
     for (const row of sheet.rows) {
       const issues: PlanIssue[] = [];
       const name = cellOf(row, tab.columns.fullName);
@@ -185,7 +193,7 @@ export function planCompanyImport(
           outsiderName = fullName;
           addToJob = {
             candidateId: null,
-            newCandidate: { candidateCode: generatedCandidateCode(studentEmail, mobile, fullName), fullName, email: studentEmail, mobile },
+            newCandidate: { candidateCode: generatedCandidateCode(studentEmail, mobile, fullName), fullName, email: studentEmail, mobile, ...profileOf(row) },
             productId: listed.product?.id ?? null,
             from: "ELIGIBLE",
             fromSheet: listed.sheet,
@@ -201,7 +209,7 @@ export function planCompanyImport(
           outsiderName = name;
           addToJob = {
             candidateId: null,
-            newCandidate: { candidateCode: generatedCandidateCode(email, mobile, name), fullName: name, email, mobile },
+            newCandidate: { candidateCode: generatedCandidateCode(email, mobile, name), fullName: name, email, mobile, ...profileOf(row) },
             productId: null,
             from: "NOT_IN_APPLICANTS",
             fromSheet: null,
