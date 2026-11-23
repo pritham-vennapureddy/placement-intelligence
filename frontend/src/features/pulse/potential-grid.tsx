@@ -5,7 +5,7 @@ import {
 } from "@placement/shared";
 import { format } from "date-fns";
 import { ChevronDown, ChevronRight, Columns3, ExternalLink, FileSpreadsheet, MessageSquarePlus, Pencil, Trash2 } from "lucide-react";
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "../../components/ui/button";
@@ -15,7 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/pop
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
 import { Textarea } from "../../components/ui/textarea";
 import { driveNotesApi, monthlyPipelineApi } from "../../services/pulse-api";
-import type { DriveStages, DriveStepCounts } from "../../types/pulse";
+import type { DriveStages, DriveStepCounts, MonthlyStudent } from "../../types/pulse";
 import { cn } from "../../utils/cn";
 import { ProcessStatusDialog } from "../tracking/tracking-dialogs";
 import { ColumnFilter, type SortDir } from "./column-filter";
@@ -456,32 +456,63 @@ export function PotentialGrid({
 // ───────────────────────────── One company's funnel (expanded row) ─────────────────────────────
 
 /** One drive's student journey: each step and each of the company's rounds, Academy / pool / everyone. */
-function DriveStagesTable({ stages }: { stages: DriveStages }) {
+type GroupKey = "academy" | "pool" | "all";
+type StepCounts = DriveStepCounts & { appliedThemselves: number; fromSheet: number; notInSheet: number };
+
+/** Unique students in each group who applied, were added from the company sheet, or applied but were not in it. */
+function entryCounts(row: BoardRow): Record<GroupKey, { appliedThemselves: number; fromSheet: number; notInSheet: number }> {
+  const keep: Record<GroupKey, (person: MonthlyStudent) => boolean> = { academy: (p) => p.academy, pool: (p) => p.inPool, all: () => true };
+  const count = (people: MonthlyStudent[]) => new Set(people.map((person) => person.candidateId)).size;
+  const result = {} as Record<GroupKey, { appliedThemselves: number; fromSheet: number; notInSheet: number }>;
+  for (const key of ["academy", "pool", "all"] as const) {
+    const people = row.people.filter(keep[key]);
+    const applied = people.filter((person) => !person.fromCompanySheet);
+    result[key] = { appliedThemselves: count(applied), fromSheet: count(people.filter((person) => person.fromCompanySheet)), notInSheet: count(applied.filter((person) => !person.shared)) };
+  }
+  return result;
+}
+
+function DriveStagesTable({ stages, row }: { stages: DriveStages; row: BoardRow }) {
   const groups = [
     { key: "academy", label: "Academy" },
     { key: "pool", label: "Assessed pool" },
     { key: "all", label: "All students" },
   ] as const;
-  const steps: { label: string; value: (counts: DriveStepCounts) => number; tone?: string }[] = [
-    { label: "Applied", value: (counts) => counts.applied },
-    { label: "Rejected in our shortlisting", value: (counts) => counts.internalRejected, tone: "text-rose-600" },
-    { label: "Made our final shortlist", value: (counts) => counts.finalShortlisted },
-    { label: "Shared with company", value: (counts) => counts.shared },
-    { label: "Got an interview", value: (counts) => counts.interviewed },
+  const extra = useMemo(() => entryCounts(row), [row]);
+  const counts = (key: GroupKey): StepCounts => ({ ...stages.steps[key], ...extra[key] });
+  const ours = row.stagesRun.length > 0;
+  const anyFromSheet = extra.all.fromSheet > 0;
+  type Step = { label: string; hint?: string; value: (counts: StepCounts) => number; tone?: string };
+  const steps: Step[] = [
+    { label: "Applied", value: (c) => c.appliedThemselves },
+    ...(ours ? [
+      { label: "Rejected in our shortlisting", hint: row.stagesRun.map((stage) => INTERNAL_LABELS[stage]).join(" → "), value: (c: StepCounts) => c.internalRejected, tone: "text-rose-600" },
+      ...(row.stagesRun.includes("final") ? [{ label: "Made our final shortlist", value: (c: StepCounts) => c.finalShortlisted }] : []),
+    ] : [
+      { label: "Applied, not in company sheet", hint: "No shortlisting by us: the company picked from the applicants", value: (c: StepCounts) => c.notInSheet, tone: "text-slate-500" },
+    ]),
+    ...(anyFromSheet ? [{ label: "Added from company sheet (did not apply)", value: (c: StepCounts) => c.fromSheet, tone: "text-violet-700" }] : []),
+    { label: ours ? "Shared with company" : "In company sheet", value: (c) => c.shared, tone: "font-medium text-slate-900" },
+    { label: "Got an interview", value: (c) => c.interviewed },
   ];
-  const outcomes: typeof steps = [
-    { label: "Still in company process", value: (counts) => counts.inProcess },
-    { label: "Rejected by company", value: (counts) => counts.companyRejected, tone: "text-rose-600" },
-    { label: "Selected", value: (counts) => counts.selected, tone: "font-semibold text-emerald-700" },
+  const outcomes: Step[] = [
+    { label: "Still in company process", value: (c) => c.inProcess },
+    { label: "Rejected by company", value: (c) => c.companyRejected, tone: "text-rose-600" },
+    { label: "Selected", value: (c) => c.selected, tone: "font-semibold text-emerald-700" },
   ];
-  const stepRow = (step: (typeof steps)[number]) => (
+  const stepRow = (step: Step) => (
     <tr key={step.label}>
-      <td className="py-1 pr-3 text-slate-700">{step.label}</td>
-      {groups.map((group) => <td key={group.key} className={cn("px-2 text-right tabular-nums", step.tone)} colSpan={4}>{step.value(stages.steps[group.key])}</td>)}
+      <td className="py-1 pr-3 text-slate-700">{step.label}{step.hint && <span className="block text-[10px] text-slate-400">{step.hint}</span>}</td>
+      {groups.map((group) => <td key={group.key} className={cn("px-2 text-right tabular-nums", step.tone)} colSpan={4}>{step.value(counts(group.key))}</td>)}
     </tr>
   );
   return (
     <div className="overflow-x-auto">
+      {!ours && (
+        <p className="mb-2 rounded-md bg-amber-50 px-2.5 py-1.5 text-xs text-amber-800">
+          <b>No shortlisting by us</b> on this drive (no resume shortlist, no final shortlist sheet). The company sheet decided who went ahead.
+        </p>
+      )}
       <table className="w-full min-w-[640px] text-xs">
         <thead className="text-slate-500">
           <tr>
@@ -618,7 +649,7 @@ function CompanyFunnel({ row, canWrite }: { row: BoardRow; canWrite: boolean }) 
       </Section>
       <div className="grid gap-3 xl:grid-cols-2">
         <Section title="Student funnel" action={<Link to={`/job-requests/${row.jobRequestId}?tab=pipeline`} className="inline-flex items-center gap-1 text-xs font-medium text-indigo-700 hover:underline">Students <ExternalLink size={11} /></Link>}>
-          {drive?.stages ? <DriveStagesTable stages={drive.stages} /> : <p className="text-xs text-slate-500">No students on this drive yet.</p>}
+          {drive?.stages ? <DriveStagesTable stages={drive.stages} row={row} /> : <p className="text-xs text-slate-500">No students on this drive yet.</p>}
         </Section>
         <Section title="CRM updates from the company">
           <CrmLog row={row} canWrite={canWrite} />
