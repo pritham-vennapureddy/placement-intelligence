@@ -19,6 +19,7 @@ const TONE: Record<string, string> = {
   Cleared: "bg-emerald-50 text-emerald-700", Shared: "bg-emerald-50 text-emerald-700", Selected: "bg-emerald-100 text-emerald-800 font-semibold",
   Rejected: "bg-rose-50 text-rose-700", "No show": "bg-orange-50 text-orange-700", "Not shared": "bg-amber-50 text-amber-800",
   Pending: "bg-sky-50 text-sky-700", Scheduled: "bg-sky-50 text-sky-700", "On hold": "bg-amber-50 text-amber-700", "Not cleared": "bg-slate-100 text-slate-600",
+  "Not done": "bg-slate-50 text-slate-400 italic", "Did not apply": "bg-violet-50 text-violet-700", "Not in company sheet": "bg-slate-100 text-slate-500",
 };
 
 interface DetailColumn {
@@ -52,9 +53,18 @@ export function StudentDetailTable({ units, stages, rows, facts }: { units: Funn
     const stageText = (person: MonthlyStudent, stage: Stage) => {
       const fact = facts(person, stage.key);
       const over = applicationEnded(person, jobs.get(person.jobRequestId)?.state === "ENDED");
-      if (stage.key === "shared") return fact.rejected ? "Rejected" : person.shared ? "Shared" : fact.reached ? "Not shared" : "";
+      const ran = jobs.get(person.jobRequestId)?.stagesRun ?? [];
+      if (stage.key === "shared") {
+        if (fact.rejected) return "Rejected";
+        if (person.shared) return "Shared";
+        // No shortlisting by us on this drive: only the company sheet decided.
+        if (!person.fromCompanySheet && ran.length === 0) return "Not in company sheet";
+        return fact.reached ? "Not shared" : "";
+      }
       // Students added from the company sheet never went through our shortlisting.
       if (person.fromCompanySheet && stage.group === "ours") return "Did not apply";
+      // The drive never ran this stage (or any of our shortlisting).
+      if (stage.group === "ours" && !ran.includes(stage.key as never)) return "Not done";
       if (fact.rejected) return "Rejected";
       if (fact.noShow) return "No show";
       if (fact.cleared) return "Cleared";

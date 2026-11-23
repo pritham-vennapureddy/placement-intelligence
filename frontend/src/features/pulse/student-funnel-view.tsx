@@ -235,6 +235,12 @@ export function StudentFunnelView({ rows, mode, group, onGroup, jobs, onJobs, ou
 
       {units.length === 0 ? <EmptyState title="No students on these job drives yet" className="py-10" /> : (
         <>
+          {chosen.some((row) => row.stagesRun.length === 0) && (
+            <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <b>No shortlisting by us</b> on {chosen.filter((row) => row.stagesRun.length === 0).map((row) => row.company).join(", ")}: no resume shortlist and no final shortlist sheet, so the company sheet alone decided who went ahead.
+              Applicants there who are not in the company sheet show as "Not in company sheet", not as rejected by us.
+            </p>
+          )}
           <FunnelTable stages={stages} counts={counts} total={units.length} pick={pick} onPick={setPick} unit={unitWord} />
 
           <div className="grid gap-2">

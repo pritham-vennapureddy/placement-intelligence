@@ -20,7 +20,7 @@ import { cn } from "../../utils/cn";
 import { ProcessStatusDialog } from "../tracking/tracking-dialogs";
 import { ColumnFilter, type SortDir } from "./column-filter";
 import { STATUS_TONE } from "./month-big-picture";
-import { applyFilters, filterValues, PROCESS_STATE_LABELS, type BoardRow, type ColumnFilters, type DriveStudentCounts, type FilterKey, type ProcessState } from "./potential-board";
+import { applyFilters, filterValues, INTERNAL_LABELS, PROCESS_STATE_LABELS, type BoardRow, type ColumnFilters, type DriveStudentCounts, type FilterKey, type ProcessState } from "./potential-board";
 
 const dateText = (value: string | null | undefined) => (value ? format(new Date(`${value}T00:00:00`), "d MMM yy") : "—");
 const today = () => format(new Date(), "yyyy-MM-dd");
@@ -207,6 +207,15 @@ const COLUMNS: Column[] = [
     cell: (row) => <span className={cn("inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ring-1", STATE_TONE[row.state])}>{PROCESS_STATE_LABELS[row.state]}</span> },
   { key: "phase", label: "Company stage", filter: "phase", sort: (row) => row.phaseLabel,
     cell: (row, ctx) => <StageCell row={row} canEdit={ctx.canWrite} /> },
+  { key: "shortlisting", label: "Our shortlisting", filter: "shortlisting", sort: (row) => row.stagesRun.length, className: "min-w-[140px]",
+    cell: (row) => row.stagesRun.length ? (
+      <span className="text-slate-700" title="Stages with results recorded">{row.stagesRun.map((stage) => INTERNAL_LABELS[stage]).join(" → ")}</span>
+    ) : (
+      <span className="inline-flex flex-col">
+        <span className="w-fit rounded-full bg-amber-50 px-1.5 py-px text-[10px] font-medium text-amber-800" title="No resume shortlist and no final shortlist sheet: the company sheet alone decided">Not done</span>
+        {row.fromCompanySheet > 0 && <span className="text-[10px] text-slate-400">{row.fromCompanySheet} added from company sheet</span>}
+      </span>
+    ) },
   { key: "openings", label: "Openings", align: "right", sort: (row) => row.openings,
     cell: (row) => <span className="font-semibold tabular-nums text-slate-900">{row.openings}</span>, footer: (rows) => sum(rows, (row) => row.openings) },
   { key: "allTotal", label: "Total", group: "all", align: "right", sort: (row) => row.all.total,

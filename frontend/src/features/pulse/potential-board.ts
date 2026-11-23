@@ -27,6 +27,29 @@ function companyState(states: ProcessState[]): ProcessState {
 
 export const INACTIVE_STATUSES: PotentialCompanyStatus[] = ["DROPPED", "NO_RESPONSE"];
 
+/** Our shortlisting stages, in order. */
+export const INTERNAL = ["resume", "screening", "assignment", "final"] as const;
+export type Internal = (typeof INTERNAL)[number];
+export const INTERNAL_LABELS: Record<Internal, string> = { resume: "Resume shortlist", screening: "Screening", assignment: "Assignment", final: "Final shortlist" };
+
+/**
+ * Signs that a drive really ran a stage. Passing a later stage implies the
+ * earlier flags, so those alone do not count; a rejection or a stop at the
+ * stage does. A drive with none of them had no shortlisting by us: no resume
+ * shortlist and no final shortlist (SP) sheet, so only the company sheet decides.
+ */
+const RAN: Record<Internal, (person: MonthlyStudent) => boolean> = {
+  resume: (person) => person.rejectedAt.resume || (person.passed.resume && !person.passed.screening),
+  screening: (person) => person.rejectedAt.screening || person.rejectedAt.screeningNoShow || (person.passed.screening && !person.passed.assignment),
+  assignment: (person) => person.rejectedAt.assignment || (person.passed.assignment && !person.passed.finalShortlist),
+  final: (person) => person.passed.finalShortlist,
+};
+
+export const stagesRunBy = (people: MonthlyStudent[]): Internal[] => {
+  const applied = people.filter((person) => !person.fromCompanySheet);
+  return INTERNAL.filter((stage) => applied.some(RAN[stage]));
+};
+
 const TERMINAL = new Set(["SELECTED", "OFFER_RELEASED", "OFFER_ACCEPTED", "JOINED", "REJECTED", "DROPPED"]);
 
 /** The company is done with this student on this drive. */
@@ -87,6 +110,10 @@ export interface BoardRow {
   pool: DriveStudentCounts;
   /** Everyone on the drive: Academy, pool, External, and students added from the company sheet. */
   all: DriveStudentCounts;
+  /** Our shortlisting stages this drive ran; empty = no shortlisting by us. */
+  stagesRun: Internal[];
+  /** Students added from the company sheet without applying. */
+  fromCompanySheet: number;
   people: MonthlyStudent[];
   lastUpdate: { on: string | null; text: string } | null;
 }
@@ -140,6 +167,8 @@ export function buildRows(data: MonthlyPipeline): BoardRow[] {
       academy: driveCounts(people.filter((person) => person.academy), over),
       pool: driveCounts(people.filter((person) => person.inPool), over),
       all: driveCounts(people, over),
+      stagesRun: stagesRunBy(people),
+      fromCompanySheet: people.filter((person) => person.fromCompanySheet).length,
       people,
       lastUpdate,
     };
@@ -160,6 +189,7 @@ export const FILTER_COLUMNS: Record<string, { label: string; value: (row: BoardR
   origin: { label: "On list", value: (row: BoardRow) => row.origin },
   listedSince: { label: "On list since", value: (row: BoardRow) => row.listedSince },
   requestMonth: { label: "Job requested month", value: (row: BoardRow) => (row.requestDate ? monthLabel(row.requestDate.slice(0, 7)) : "Not set") },
+  shortlisting: { label: "Our shortlisting", value: (row: BoardRow) => (row.stagesRun.length ? "Done" : "Not done") },
   review: { label: "Went right / wrong", value: (row: BoardRow) => (row.review.wentRight || row.review.wentWrong ? "Written" : "Not written") },
 };
 export type FilterKey = string;
