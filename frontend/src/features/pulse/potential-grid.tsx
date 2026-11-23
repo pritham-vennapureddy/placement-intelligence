@@ -20,7 +20,8 @@ import { cn } from "../../utils/cn";
 import { ProcessStatusDialog } from "../tracking/tracking-dialogs";
 import { ColumnFilter, type SortDir } from "./column-filter";
 import { STATUS_TONE } from "./month-big-picture";
-import { applyFilters, filterValues, INTERNAL_LABELS, PROCESS_STATE_LABELS, type BoardRow, type ColumnFilters, type DriveStudentCounts, type FilterKey, type ProcessState } from "./potential-board";
+import { POOL_SOURCE_LABELS, productNames, type PoolSource } from "../../components/student-tags";
+import { applyFilters, filterValues, INTERNAL_LABELS, notWithCompany, PROCESS_STATE_LABELS, type BoardRow, type ColumnFilters, type DriveStudentCounts, type FilterKey, type ProcessState } from "./potential-board";
 
 const dateText = (value: string | null | undefined) => (value ? format(new Date(`${value}T00:00:00`), "d MMM yy") : "—");
 const today = () => format(new Date(), "yyyy-MM-dd");
@@ -226,12 +227,16 @@ const COLUMNS: Column[] = [
     cell: (row) => completedCell(row.all), footer: (rows) => <>{sum(rows, (row) => row.all.completed)} <span className="text-emerald-700">({sum(rows, (row) => row.all.selected)}✓)</span></> },
   { key: "academyTotal", label: "Total", group: "academy", align: "right", sort: (row) => row.academy.total,
     cell: (row) => num(row.academy.total, "font-medium text-slate-800"), footer: (rows) => sum(rows, (row) => row.academy.total) },
+  { key: "academyNotWithCompany", label: "Not with company", group: "academy", align: "right", sort: (row) => row.academy.notWithCompany,
+    cell: (row) => num(row.academy.notWithCompany, "font-medium text-amber-700"), footer: (rows) => <span className="text-amber-700">{sum(rows, (row) => row.academy.notWithCompany)}</span> },
   { key: "academyInProcess", label: "In process", group: "academy", align: "right", sort: (row) => row.academy.inProcess,
     cell: (row) => num(row.academy.inProcess, "font-medium text-sky-700"), footer: (rows) => <span className="text-sky-700">{sum(rows, (row) => row.academy.inProcess)}</span> },
   { key: "academyCompleted", label: "Completed", group: "academy", align: "right", sort: (row) => row.academy.completed,
     cell: (row) => completedCell(row.academy), footer: (rows) => <>{sum(rows, (row) => row.academy.completed)} <span className="text-emerald-700">({sum(rows, (row) => row.academy.selected)}✓)</span></> },
   { key: "poolTotal", label: "Total", group: "pool", align: "right", sort: (row) => row.pool.total,
     cell: (row) => num(row.pool.total, "font-medium text-slate-800"), footer: (rows) => sum(rows, (row) => row.pool.total) },
+  { key: "poolNotWithCompany", label: "Not with company", group: "pool", align: "right", sort: (row) => row.pool.notWithCompany,
+    cell: (row) => num(row.pool.notWithCompany, "font-medium text-amber-700"), footer: (rows) => <span className="text-amber-700">{sum(rows, (row) => row.pool.notWithCompany)}</span> },
   { key: "poolInProcess", label: "In process", group: "pool", align: "right", sort: (row) => row.pool.inProcess,
     cell: (row) => num(row.pool.inProcess, "font-medium text-sky-700"), footer: (rows) => <span className="text-sky-700">{sum(rows, (row) => row.pool.inProcess)}</span> },
   { key: "poolCompleted", label: "Completed", group: "pool", align: "right", sort: (row) => row.pool.completed,
@@ -619,6 +624,60 @@ function Section({ title, children, action }: { title: string; children: ReactNo
   );
 }
 
+/**
+ * Academy and assessed-pool students who applied but are not with the company
+ * (not in its sheet / not shared, and not rejected by us). Academy first: they
+ * are the ones to push to the company.
+ */
+function NotWithCompany({ row }: { row: BoardRow }) {
+  const people = useMemo(() => {
+    const seen = new Set<string>();
+    return row.people
+      .filter((person) => (person.academy || person.inPool) && notWithCompany(person))
+      .filter((person) => !seen.has(person.candidateId) && Boolean(seen.add(person.candidateId)))
+      .sort((x, y) => Number(y.academy) - Number(x.academy) || x.fullName.localeCompare(y.fullName));
+  }, [row.people]);
+  const academy = people.filter((person) => person.academy).length;
+  const over = row.state === "ENDED";
+  return (
+    <Section title={`Academy and pool students not with the company · ${people.length}`}>
+      {people.length === 0 ? <p className="text-xs text-slate-500">Every Academy and assessed-pool applicant is with the company or was rejected in our shortlisting.</p> : (
+        <>
+          <p className="mb-2 text-xs text-slate-600">
+            They applied but are {row.stagesRun.length ? "not shared with the company yet" : "not in the company sheet"}.{" "}
+            {over ? "The drive is over." : <b className="text-amber-800">Push them to the company, Academy first ({academy} Academy, {people.length - academy} pool).</b>}
+          </p>
+          <div className="max-h-72 overflow-auto rounded-md border border-slate-200">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-slate-50 text-left text-slate-500">
+                <tr>{["Student name", "Group", "User ID", "Product", "Year of graduation", "College", "Mobile", "Email", "Where they are"].map((h) => <th key={h} className="whitespace-nowrap px-2 py-1.5 font-medium">{h}</th>)}</tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {people.map((person) => (
+                  <tr key={person.candidateId} className={person.academy ? "bg-indigo-50/40" : ""}>
+                    <td className="whitespace-nowrap px-2 py-1 font-medium text-slate-800">{person.fullName}</td>
+                    <td className="whitespace-nowrap px-2 py-1">
+                      {person.academy && <span className="mr-1 rounded-full bg-indigo-100 px-1.5 py-px text-[10px] font-medium text-indigo-700">Academy</span>}
+                      {person.inPool && <span className="rounded-full bg-emerald-50 px-1.5 py-px text-[10px] font-medium text-emerald-700">Assessed pool{person.poolSource ? ` · ${POOL_SOURCE_LABELS[person.poolSource as PoolSource].replace("Assessed pool · ", "")}` : ""}</span>}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1 font-mono text-[11px] text-slate-600">{person.userId ?? "—"}</td>
+                    <td className="whitespace-nowrap px-2 py-1">{productNames(person.product).join(", ") || "—"}</td>
+                    <td className="px-2 py-1 tabular-nums">{person.yog ?? "—"}</td>
+                    <td className="max-w-[200px] truncate px-2 py-1" title={person.college ?? ""}>{person.college ?? "—"}</td>
+                    <td className="whitespace-nowrap px-2 py-1 tabular-nums">{person.mobile ?? "—"}</td>
+                    <td className="max-w-[200px] truncate px-2 py-1" title={person.email ?? ""}>{person.email ?? "—"}</td>
+                    <td className="whitespace-nowrap px-2 py-1 text-slate-600">{!row.stagesRun.length ? (over ? "Not in company sheet" : "Not in company sheet yet") : person.passed.finalShortlist ? "On our final shortlist, not shared" : "In our shortlisting"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+
 /** Everything about one company drive: details, student funnel, CRM updates, and the went right / wrong summary. */
 function CompanyFunnel({ row, canWrite }: { row: BoardRow; canWrite: boolean }) {
   const { entry, drive } = row;
@@ -655,6 +714,7 @@ function CompanyFunnel({ row, canWrite }: { row: BoardRow; canWrite: boolean }) 
           <CrmLog row={row} canWrite={canWrite} />
         </Section>
       </div>
+      <NotWithCompany row={row} />
       <Section title="Summary: what went right and what went wrong">
         <ReviewEditor row={row} canWrite={canWrite} />
       </Section>

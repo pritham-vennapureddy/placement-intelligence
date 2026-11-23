@@ -58,16 +58,24 @@ export function applicationEnded(person: MonthlyStudent, driveOver: boolean) {
 }
 
 /** Per drive: Academy or pool students and where they are on it. */
-export interface DriveStudentCounts { total: number; notShared: number; inProcess: number; completed: number; selected: number }
+export interface DriveStudentCounts {
+  total: number; notShared: number; inProcess: number; completed: number; selected: number;
+  /** Applied, not rejected by us, and not with the company (not in its sheet / not shared). */
+  notWithCompany: number;
+}
+
+/** Applied, not rejected in our shortlisting, and not with the company: the students to push. */
+export const notWithCompany = (person: MonthlyStudent) => !person.shared && !person.internalRejected && !person.fromCompanySheet;
 
 function driveCounts(people: MonthlyStudent[], driveOver: boolean): DriveStudentCounts {
-  const counts = { total: 0, notShared: 0, inProcess: 0, completed: 0, selected: 0 };
+  const counts = { total: 0, notShared: 0, inProcess: 0, completed: 0, selected: 0, notWithCompany: 0 };
   const seen = new Set<string>();
   for (const person of people) {
     if (seen.has(person.candidateId)) continue;
     seen.add(person.candidateId);
     counts.total++;
     if (person.selected) counts.selected++;
+    if (notWithCompany(person)) counts.notWithCompany++;
     if (!person.shared) counts.notShared++;
     else if (applicationEnded(person, driveOver)) counts.completed++;
     else counts.inProcess++;
