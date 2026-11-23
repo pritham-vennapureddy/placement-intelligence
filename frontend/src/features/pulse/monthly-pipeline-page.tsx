@@ -34,6 +34,7 @@ import { MonthBigPictureCard } from "./month-big-picture";
 import {
   applyFilters, buildRows, FILTER_COLUMNS, INACTIVE_STATUSES, matchesSearch, PROCESS_STATE_LABELS, summarize,
   type BoardRow, type ColumnFilters, type FilterKey,
+  INTERNAL_LABELS,
 } from "./potential-board";
 import { ColumnPicker, PotentialGrid, sortRows, useHiddenColumns, type GridSort } from "./potential-grid";
 import { OUTCOME_LABELS, StudentFunnelView, type OutcomeView, type StudentGroup } from "./student-funnel-view";
@@ -271,16 +272,19 @@ export function MonthlyPipelinePage() {
   };
 
   const exportGrid = () => downloadCsv(`company-funnel-${month}`, [
-    "Company", "Role", "Job ID", "Product", "CTC (LPA)", "Tech stack", "CRM status", "Process stage", "Company stage", "Openings",
-    "Academy students", "Academy in process", "Academy completed", "Academy selected",
-    "Pool students", "Pool in process", "Pool completed", "Pool selected",
+    "Company", "Role", "Job ID", "Product", "CTC (LPA)", "Tech stack", "CRM status", "Process stage", "Company stage", "Our shortlisting", "Company rounds (took → cleared)", "Openings",
+    "Academy students", "Academy not with company", "Academy in process", "Academy completed", "Academy selected",
+    "Pool students", "Pool not with company", "Pool in process", "Pool completed", "Pool selected",
     "CRM", "Placement owner", "Job requested date", "Expected start", "Started on", "Done on", "Company sheet", "Internal sheet",
     "On list since", "On list", "Latest CRM update", "Went right", "Went wrong", "What to change",
   ], rows.map((row) => [
     row.company, row.role, row.jobCode, row.products.join(", "), row.ctcLpa ?? "", row.techStack.join(", "),
-    POTENTIAL_COMPANY_STATUS_LABELS[row.crmStatus], PROCESS_STATE_LABELS[row.state], row.phaseLabel, row.openings,
-    row.academy.total, row.academy.inProcess, row.academy.completed, row.academy.selected,
-    row.pool.total, row.pool.inProcess, row.pool.completed, row.pool.selected,
+    POTENTIAL_COMPANY_STATUS_LABELS[row.crmStatus], PROCESS_STATE_LABELS[row.state], row.phaseLabel,
+    row.stagesRun.length ? row.stagesRun.map((stage) => INTERNAL_LABELS[stage]).join(" → ") : "Not done",
+    (row.drive?.stages?.rounds ?? []).map((round) => `${round.name}: ${round.all.attended} → ${round.all.cleared}`).join("; "),
+    row.openings,
+    row.academy.total, row.academy.notWithCompany, row.academy.inProcess, row.academy.completed, row.academy.selected,
+    row.pool.total, row.pool.notWithCompany, row.pool.inProcess, row.pool.completed, row.pool.selected,
     row.crmOwner, row.psm, row.requestDate ?? "", row.entry.expectedStartDate ?? "", row.processStart ?? "", row.processEnd ?? "", row.companySheetUrl ?? "", row.internalSheetUrl ?? "",
     row.listedSince, row.origin, row.lastUpdate?.text ?? "", row.review.wentRight ?? "", row.review.wentWrong ?? "", row.review.actionItems ?? "",
   ]));

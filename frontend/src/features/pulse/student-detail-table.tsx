@@ -18,7 +18,7 @@ const OUTCOME_TEXT: Record<string, string> = { CLEARED: "Cleared", REJECTED: "Re
 const TONE: Record<string, string> = {
   Cleared: "bg-emerald-50 text-emerald-700", Shared: "bg-emerald-50 text-emerald-700", Selected: "bg-emerald-100 text-emerald-800 font-semibold",
   Rejected: "bg-rose-50 text-rose-700", "No show": "bg-orange-50 text-orange-700", "Not shared": "bg-amber-50 text-amber-800",
-  Pending: "bg-sky-50 text-sky-700", Scheduled: "bg-sky-50 text-sky-700", "On hold": "bg-amber-50 text-amber-700", "Not cleared": "bg-slate-100 text-slate-600",
+  Pending: "bg-sky-50 text-sky-700", Scheduled: "bg-sky-50 text-sky-700", "On hold": "bg-amber-50 text-amber-700", "Not cleared": "bg-slate-100 text-slate-600", "Not reached": "bg-slate-50 text-slate-500",
   "Not done": "bg-slate-50 text-slate-400 italic", "Did not apply": "bg-violet-50 text-violet-700", "Not in company sheet": "bg-slate-100 text-slate-500",
 };
 
@@ -71,20 +71,16 @@ export function StudentDetailTable({ units, stages, rows, facts }: { units: Funn
       if (fact.reached) return over ? "Not cleared" : "Pending";
       return "";
     };
-    // Company rounds by position in each job (round 1, 2, …), named when every job agrees.
-    const maxRounds = Math.max(0, ...rows.map((row) => row.drive?.rounds.length ?? 0));
-    const roundColumns: DetailColumn[] = Array.from({ length: maxRounds }, (_, index) => {
-      const names = new Set(rows.map((row) => row.drive?.rounds[index]?.name).filter(Boolean));
-      const label = names.size === 1 ? [...names][0]! : `Company round ${index + 1}`;
-      const named = names.size !== 1;
+    // One column per company round, by its real name (Assessment Round, TR Round 1, …), in round order.
+    const roundColumns: DetailColumn[] = stages.filter((stage) => stage.key.startsWith("round:")).map((stage) => {
       const value = (person: MonthlyStudent) => {
-        const round = jobs.get(person.jobRequestId)?.drive?.rounds[index];
-        if (!round) return "";
-        const outcome = person.rounds.find((item) => item.name === round.name)?.outcome;
-        const text = outcome ? OUTCOME_TEXT[outcome] ?? outcome : "";
-        return text && named ? `${round.name}: ${text}` : text;
+        const outcome = person.rounds.find((item) => item.name === stage.label)?.outcome;
+        if (outcome) return OUTCOME_TEXT[outcome] ?? outcome;
+        const inJob = (jobs.get(person.jobRequestId)?.drive?.rounds ?? []).some((round) => round.name === stage.label);
+        if (!inJob) return "";
+        return person.shared ? "Not reached" : "";
       };
-      return { key: `round${index}`, label, value, filter: true, stage: true };
+      return { key: stage.key, label: stage.label, value, filter: true, stage: true };
     });
     const internal = stages.filter((stage) => (stage.group === "ours" && stage.key !== "applied") || stage.key === "shared");
     return [

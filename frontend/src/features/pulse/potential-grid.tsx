@@ -217,6 +217,8 @@ const COLUMNS: Column[] = [
         {row.fromCompanySheet > 0 && <span className="text-[10px] text-slate-400">{row.fromCompanySheet} added from company sheet</span>}
       </span>
     ) },
+  { key: "companyRounds", label: "Company rounds", sort: (row) => row.drive?.stages?.rounds.length ?? 0, className: "min-w-[220px]",
+    cell: (row) => <CompanyRoundsCell row={row} /> },
   { key: "openings", label: "Openings", align: "right", sort: (row) => row.openings,
     cell: (row) => <span className="font-semibold tabular-nums text-slate-900">{row.openings}</span>, footer: (rows) => sum(rows, (row) => row.openings) },
   { key: "allTotal", label: "Total", group: "all", align: "right", sort: (row) => row.all.total,
@@ -455,6 +457,30 @@ export function PotentialGrid({
         )}
       </table>
     </div>
+  );
+}
+
+/** The company's own rounds in order: how many took each and how many cleared it (all students). */
+function CompanyRoundsCell({ row }: { row: BoardRow }) {
+  const counts = new Map((row.drive?.stages?.rounds ?? []).map((round) => [round.name, round.all]));
+  const rounds = row.drive?.rounds ?? [];
+  if (rounds.length === 0) return <span className="text-slate-300">No rounds yet</span>;
+  return (
+    <ol className="flex flex-wrap items-center gap-1">
+      {rounds.map((round, index) => {
+        const c = counts.get(round.name);
+        return (
+          <li key={round.id} className="flex items-center gap-1">
+            {index > 0 && <ChevronRight size={11} className="text-slate-300" />}
+            <span className="whitespace-nowrap rounded bg-slate-50 px-1.5 py-px text-[11px] ring-1 ring-slate-200"
+              title={c ? `${round.name}: ${c.attended} attended, ${c.cleared} cleared, ${c.rejected} rejected, ${c.scheduled} scheduled` : `${round.name}: no results yet`}>
+              <span className="text-slate-600">{round.name}</span>{" "}
+              {c ? <><b className="tabular-nums text-slate-800">{c.attended}</b><span className="text-slate-400">→</span><b className="tabular-nums text-emerald-700">{c.cleared}</b></> : <span className="text-slate-400">—</span>}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
